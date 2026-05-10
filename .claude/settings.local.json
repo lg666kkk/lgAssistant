@@ -5,7 +5,18 @@
       "Bash(chmod +x /Users/lg/.claude/hooks/stop-gate.sh)",
       "Bash(npx tsc *)",
       "WebFetch(domain:sitor.ai)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js|jsx|sql|json\\)$\")",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(sed -i '' 's/^### 2\\\\.2 /#### 2A.2 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.3 /#### 2A.3 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.4 /#### 2A.4 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.5 /#### 2A.5 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.6 /#### 2A.6 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.8 /#### 2A.8 /g' ROADMAP.md)",
+      "Bash(sed -i '' 's/^### 2\\\\.9 /#### 2A.9 /g' ROADMAP.md)"
     ]
   }
 }
