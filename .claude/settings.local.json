@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(chmod +x /Users/lg/.claude/hooks/stop-gate.sh)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

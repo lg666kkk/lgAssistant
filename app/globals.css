@@ -10,6 +10,27 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-msg .typing-cursor {
+  display: none;
+}
+
+.streaming-msg p:last-of-type .typing-cursor {
+  display: inline;
+}
+
+.typing-cursor::after {
+  content: "│";
+  animation: blink 1s step-end infinite;
+  color: #22d3ee;
 }
