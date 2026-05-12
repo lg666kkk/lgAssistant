@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { RAGRetriever } from '@/lib/server/retriever';
 
 // 创建 Anthropic 客户端，从环境变量读取 API Key 和中转站地址
 const client = new Anthropic({
@@ -11,11 +12,69 @@ export async function POST(req: Request) {
     // 从请求体中提取消息列表，格式: [{ role: 'user', content: '你好' }, ...]
     const { messages } = await  req.json()
 
+    // RAG 检索：获取用户最后一条消息
+    const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
+    let ragContext = '';
+
+    console.log('[RAG] 开始检索，用户问题:', lastUserMessage?.content);
+
+    if (lastUserMessage) {
+        try {
+            const retriever = new RAGRetriever();
+            const results = await retriever.search(lastUserMessage.content, {
+                matchThreshold: 0.5,
+                matchCount: 3,
+            });
+
+            console.log(`[RAG] 检索结果数量: ${results.length}`);
+
+            if (results.length > 0) {
+                ragContext = retriever.formatContext(results);
+                console.log(`[RAG] 找到 ${results.length} 个相关文档`);
+                console.log('[RAG] 上下文长度:', ragContext.length);
+            } else {
+                console.log('[RAG] 未找到相关文档');
+            }
+        } catch (error) {
+            console.error('[RAG] 检索失败:', error);
+            // 检索失败不影响正常对话，继续执行
+        }
+    }
+
+    // 如果有 RAG 上下文，注入到消息中
+    const enhancedMessages = ragContext
+        ? [
+            {
+                role: 'user',
+                content: `# 知识库参考资料
+
+${ragContext}
+
+---
+
+# 用户问题
+${lastUserMessage.content}
+
+# 回答要求
+1. **优先使用上述知识库内容回答**
+2. 如果知识库中有相关信息，请直接引用并说明来源
+3. 如果知识库中没有相关信息，可以使用你的通用知识回答，但请说明这不是来自知识库`,
+            },
+            ...messages.slice(0, -1), // 保留历史消息（除了最后一条）
+        ]
+        : messages;
+
+    console.log('[RAG] 是否注入:', !!ragContext);
+    console.log('[RAG] 最终消息数量:', enhancedMessages.length);
+    if (ragContext) {
+        console.log('[RAG] 发送给 LLM 的完整消息:', JSON.stringify(enhancedMessages[0], null, 2));
+    }
+
     // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
     const stream = await client.messages.create({
         model: 'deepseek-v4-pro',
         max_tokens: 1024,
-        messages,
+        messages: enhancedMessages,
         stream: true,
     })
 
