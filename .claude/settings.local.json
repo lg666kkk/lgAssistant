@@ -16,7 +16,10 @@
       "Bash(sed -i '' 's/^### 2\\\\.5 /#### 2A.5 /g' ROADMAP.md)",
       "Bash(sed -i '' 's/^### 2\\\\.6 /#### 2A.6 /g' ROADMAP.md)",
       "Bash(sed -i '' 's/^### 2\\\\.8 /#### 2A.8 /g' ROADMAP.md)",
-      "Bash(sed -i '' 's/^### 2\\\\.9 /#### 2A.9 /g' ROADMAP.md)"
+      "Bash(sed -i '' 's/^### 2\\\\.9 /#### 2A.9 /g' ROADMAP.md)",
+      "WebFetch(domain:mp.weixin.qq.com)",
+      "Bash(npx tsx:*)",
+      "Bash(ls -la /Users/lg/Desktop/personal-assistant/.env*)"
     ]
   }
 }
