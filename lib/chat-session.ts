@@ -1,6 +1,13 @@
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  sources?: Array<{
+    title: string;
+    notionPageId: string;
+    pageUrl: string;
+    similarity: number;
+    excerpt: string;
+  }>;
 }
 
 export class ChatSession {
@@ -51,11 +58,34 @@ export class ChatSession {
       this.streaming = true;
       onUpdate();
 
+      let fullText = '';
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         const text = decoder.decode(value);
-        this.messages[this.messages.length - 1].content += text;
+        fullText += text;
+
+        // 检查是否包含来源标记
+        const sourcesMarkerIndex = fullText.indexOf('\n\n__SOURCES__\n');
+        if (sourcesMarkerIndex !== -1) {
+          // 分离正文和来源数据
+          const content = fullText.substring(0, sourcesMarkerIndex);
+          const sourcesJson = fullText.substring(sourcesMarkerIndex + 14); // 14 = '\n\n__SOURCES__\n'.length
+
+          try {
+            const sources = JSON.parse(sourcesJson);
+            this.messages[this.messages.length - 1].content = content;
+            this.messages[this.messages.length - 1].sources = sources;
+          } catch (e) {
+            // JSON 解析失败，继续累积文本
+            this.messages[this.messages.length - 1].content = fullText;
+          }
+        } else {
+          // 还没有收到来源标记，继续累积文本
+          this.messages[this.messages.length - 1].content = fullText;
+        }
+
         onUpdate();
       }
     } catch (err) {

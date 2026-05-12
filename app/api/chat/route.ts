@@ -15,22 +15,23 @@ export async function POST(req: Request) {
     // RAG 检索：获取用户最后一条消息
     const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
     let ragContext = '';
+    let ragResults: any[] = [];
 
     console.log('[RAG] 开始检索，用户问题:', lastUserMessage?.content);
 
     if (lastUserMessage) {
         try {
             const retriever = new RAGRetriever();
-            const results = await retriever.search(lastUserMessage.content, {
+            ragResults = await retriever.search(lastUserMessage.content, {
                 matchThreshold: 0.5,
                 matchCount: 3,
             });
 
-            console.log(`[RAG] 检索结果数量: ${results.length}`);
+            console.log(`[RAG] 检索结果数量: ${ragResults.length}`);
 
-            if (results.length > 0) {
-                ragContext = retriever.formatContext(results);
-                console.log(`[RAG] 找到 ${results.length} 个相关文档`);
+            if (ragResults.length > 0) {
+                ragContext = retriever.formatContext(ragResults);
+                console.log(`[RAG] 找到 ${ragResults.length} 个相关文档`);
                 console.log('[RAG] 上下文长度:', ragContext.length);
             } else {
                 console.log('[RAG] 未找到相关文档');
@@ -46,19 +47,11 @@ export async function POST(req: Request) {
         ? [
             {
                 role: 'user',
-                content: `# 知识库参考资料
-
-${ragContext}
+                content: `${ragContext}
 
 ---
 
-# 用户问题
-${lastUserMessage.content}
-
-# 回答要求
-1. **优先使用上述知识库内容回答**
-2. 如果知识库中有相关信息，请直接引用并说明来源
-3. 如果知识库中没有相关信息，可以使用你的通用知识回答，但请说明这不是来自知识库`,
+${lastUserMessage.content}`,
             },
             ...messages.slice(0, -1), // 保留历史消息（除了最后一条）
         ]
@@ -96,6 +89,31 @@ ${lastUserMessage.content}
                     }
                 }
             }
+
+            // 流式响应结束后，附加引用来源信息
+            if (ragResults.length > 0) {
+                // 按页面去重，保留每个页面相似度最高的 chunk
+                const uniquePages = new Map<string, typeof ragResults[0]>();
+                for (const doc of ragResults) {
+                    const existing = uniquePages.get(doc.pageId);
+                    if (!existing || doc.similarity > existing.similarity) {
+                        uniquePages.set(doc.pageId, doc);
+                    }
+                }
+
+                const sources = Array.from(uniquePages.values()).map(doc => ({
+                    title: doc.pageTitle,
+                    notionPageId: doc.pageId,
+                    pageUrl: doc.pageUrl,
+                    similarity: doc.similarity,
+                    excerpt: doc.content.substring(0, 100),
+                }));
+
+                // 使用特殊分隔符标记来源数据
+                const sourcesMarker = '\n\n__SOURCES__\n' + JSON.stringify(sources);
+                controller.enqueue(encoder.encode(sourcesMarker));
+            }
+
             // 所有事件处理完毕，关闭流，告诉浏览器"传输结束"
             controller.close();
         }

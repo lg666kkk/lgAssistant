@@ -116,12 +116,7 @@ export default function Home() {
                   <ReactMarkdown
                     components={{
                       p({ children }) {
-                        return (
-                          <p>
-                            {children}
-                            {isStreaming && <span className="typing-cursor" />}
-                          </p>
-                        );
+                        return <p>{children}</p>;
                       },
                       code({ className, children }) {
                         const language = className?.replace("language-", "");
@@ -142,6 +137,29 @@ export default function Home() {
                   >
                     {msg.content || (loading ? "思考中..." : "")}
                   </ReactMarkdown>
+
+                  {/* 显示引用来源 */}
+                  {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-700">
+                      <div className="text-xs text-slate-400 mb-2">📚 参考来源</div>
+                      <div className="space-y-1.5">
+                        {msg.sources.map((source, idx) => (
+                          <a
+                            key={idx}
+                            href={source.pageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+                          >
+                            [{idx + 1}] {source.title}
+                            <span className="text-slate-500 ml-1">
+                              (相似度: {(source.similarity * 100).toFixed(0)}%)
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
