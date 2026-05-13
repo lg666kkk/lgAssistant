@@ -14,24 +14,34 @@ export default function Home() {
     switchSession,
     deleteSession,
     rerender,
+    loading: sessionsLoading,
   } = useChatManager();
 
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { messages, loading, streaming, error } = activeSession;
+  const { messages, loading, streaming, error } = activeSession || {};
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, messages.length > 0 ? messages[messages.length - 1].content : ""]);
+  }, [messages, messages?.length > 0 ? messages[messages.length - 1]?.content : ""]);
 
   const handleSend = async () => {
-    if (!input.trim() || loading) return;
+    if (!input.trim() || loading || !activeSession) return;
     const text = input;
     setInput("");
     await activeSession.send(text, rerender);
   };
+
+  // 加载中状态
+  if (sessionsLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950">
+        <div className="text-slate-400">加载中...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-950">
@@ -93,12 +103,12 @@ export default function Home() {
         </header>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {messages.length === 0 && (
+          {messages && messages.length === 0 && (
             <p className="text-center text-slate-500 mt-20">
               发送一条消息开始对话
             </p>
           )}
-          {messages.map((msg, i) => {
+          {messages && messages.map((msg, i) => {
             const isStreaming =
               streaming && msg.role === "assistant" && i === messages.length - 1;
             return (

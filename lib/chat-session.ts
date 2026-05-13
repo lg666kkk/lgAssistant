@@ -1,3 +1,5 @@
+import { SessionManager } from './session-manager';
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -18,9 +20,29 @@ export class ChatSession {
   streaming = false;
   error: string | null = null;
   private abortController: AbortController | null = null;
+  private sessionManager = new SessionManager();
+  private isNewSession = true;
 
   constructor(id?: string) {
     this.id = id ?? crypto.randomUUID();
+  }
+
+  /**
+   * 从数据库加载会话数据
+   */
+  async loadFromDatabase(): Promise<void> {
+    try {
+      const dbMessages = await this.sessionManager.getMessages(this.id);
+      this.messages = dbMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        sources: msg.sources,
+      }));
+      this.isNewSession = false;
+    } catch (error) {
+      console.error('加载会话失败:', error);
+      // 如果加载失败，可能是新会话，继续使用内存数据
+    }
   }
 
   async send(input: string, onUpdate: () => void) {
@@ -31,8 +53,31 @@ export class ChatSession {
     const userMessage: Message = { role: "user", content: input };
     this.messages.push(userMessage);
 
+    // 如果是新会话，先创建数据库记录
+    if (this.isNewSession) {
+      try {
+        await this.sessionManager.createSession(this.title);
+        this.isNewSession = false;
+      } catch (error) {
+        console.error('创建会话失败:', error);
+      }
+    }
+
+    // 保存用户消息到数据库
+    try {
+      await this.sessionManager.saveUserMessage(this.id, input);
+    } catch (error) {
+      console.error('保存用户消息失败:', error);
+    }
+
     if (this.messages.length === 1) {
       this.title = input.slice(0, 20) || "新对话";
+      // 更新数据库中的标题
+      try {
+        await this.sessionManager.updateSessionTitle(this.id, this.title);
+      } catch (error) {
+        console.error('更新标题失败:', error);
+      }
     }
 
     this.messages.push({ role: "assistant", content: "" });
@@ -87,6 +132,21 @@ export class ChatSession {
         }
 
         onUpdate();
+      }
+
+      // 保存 AI 回复到数据库
+      const lastMessage = this.messages[this.messages.length - 1];
+      try {
+        await this.sessionManager.saveAssistantMessage(
+          this.id,
+          lastMessage.content,
+          {
+            sources: lastMessage.sources,
+            model: 'deepseek-v4-pro',
+          }
+        );
+      } catch (error) {
+        console.error('保存 AI 回复失败:', error);
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
