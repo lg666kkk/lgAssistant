@@ -11,6 +11,26 @@
 - ✅ 多会话管理（内存存储，未持久化）
 - ✅ Supabase 向量存储基础设施
 - ✅ Markdown 渲染 + 代码高亮
+- ✅ 输入框升级：textarea、Enter 发送、Shift+Enter 换行、发送后聚焦
+- ✅ 停止生成：前端 abort、后端安全中断、部分回复落库
+- ✅ 基础质量检查：TypeScript / lint / build 已跑通
+
+---
+
+## 暂缓 TODO
+
+- [ ] **M0.5 数据库 migration / 建表说明**
+  - 补齐 `sessions` / `messages` / `documents` 的 SQL migration 或建表文档
+  - 确认 `messages.session_id` 外键开启 `ON DELETE CASCADE`
+
+- [ ] **M0.7 会话标题手动重命名**
+  - 会话列表支持进入编辑态
+  - 标题修改后调用 `updateSessionTitle`
+  - 刷新后标题保持不变
+
+- [ ] **M0 Dev Server 缓存稳定性**
+  - 排查 `.next/cache/webpack` 偶发 ENOENT
+  - 必要时补充清理和重启说明
 
 ---
 

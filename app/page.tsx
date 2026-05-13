@@ -20,18 +20,26 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { messages, loading, streaming, error } = activeSession || {};
+  const lastMessageContent = messages?.length ? messages[messages.length - 1]?.content : "";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, messages?.length > 0 ? messages[messages.length - 1]?.content : ""]);
+  }, [messages, lastMessageContent]);
 
   const handleSend = async () => {
     if (!input.trim() || loading || !activeSession) return;
     const text = input;
     setInput("");
+    requestAnimationFrame(() => inputRef.current?.focus());
     await activeSession.send(text, rerender);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleStop = () => {
+    activeSession?.abort();
   };
 
   // 加载中状态
@@ -186,21 +194,36 @@ export default function Home() {
 
         <div className="border-t border-slate-800 bg-slate-900 p-4">
           <div className="mx-auto flex max-w-3xl gap-3">
-            <input
-              type="text"
+            <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder="输入消息..."
-              className="flex-1 rounded-xl bg-slate-800 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-cyan-500"
+              rows={1}
+              className="max-h-40 min-h-[46px] flex-1 resize-none rounded-xl bg-slate-800 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-cyan-500"
             />
-            <button
-              onClick={handleSend}
-              disabled={loading}
-              className="rounded-xl bg-cyan-600 px-6 py-3 text-sm font-medium text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
-            >
-              {loading ? "思考中..." : "发送"}
-            </button>
+            {loading || streaming ? (
+              <button
+                onClick={handleStop}
+                className="rounded-xl bg-red-600 px-6 py-3 text-sm font-medium text-white hover:bg-red-500 transition-colors"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="rounded-xl bg-cyan-600 px-6 py-3 text-sm font-medium text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
+              >
+                发送
+              </button>
+            )}
           </div>
         </div>
       </main>

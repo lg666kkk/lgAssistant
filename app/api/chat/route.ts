@@ -1,16 +1,50 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { RAGRetriever } from '@/lib/server/retriever';
+import { deepseekConfig, ragConfig } from '@/lib/config';
 
-// 创建 Anthropic 客户端，从环境变量读取 API Key 和中转站地址
+// 创建 Anthropic 客户端，从配置读取
 const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    baseURL: process.env.ANTHROPIC_BASE_URL,
+    apiKey: deepseekConfig.apiKey,
+    baseURL: deepseekConfig.baseURL,
 })
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
-    // 从请求体中提取消息列表，格式: [{ role: 'user', content: '你好' }, ...]
-    const { messages } = await  req.json()
+    // 解析请求体
+    let body;
+    try {
+        body = await req.json();
+    } catch (error) {
+        return new Response(
+            JSON.stringify({ error: '请求体格式错误，需要有效的 JSON' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    // 校验 messages 字段
+    const { messages } = body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        return new Response(
+            JSON.stringify({ error: 'messages 字段必须是非空数组' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    // 校验消息格式
+    for (const msg of messages) {
+        if (!msg.role || !msg.content || typeof msg.content !== 'string') {
+            return new Response(
+                JSON.stringify({ error: '消息格式错误，每条消息需要 role 和 content 字段' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+        if (!['user', 'assistant'].includes(msg.role)) {
+            return new Response(
+                JSON.stringify({ error: 'role 必须是 user 或 assistant' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+    }
 
     // RAG 检索：获取用户最后一条消息
     const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
@@ -23,8 +57,8 @@ export async function POST(req: Request) {
         try {
             const retriever = new RAGRetriever();
             ragResults = await retriever.search(lastUserMessage.content, {
-                matchThreshold: 0.5,
-                matchCount: 3,
+                matchThreshold: ragConfig.similarityThreshold,
+                matchCount: ragConfig.maxResults,
             });
 
             console.log(`[RAG] 检索结果数量: ${ragResults.length}`);
@@ -64,12 +98,28 @@ ${lastUserMessage.content}`,
     }
 
     // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
-    const stream = await client.messages.create({
-        model: 'deepseek-v4-pro',
-        max_tokens: 1024,
-        messages: enhancedMessages,
-        stream: true,
-    })
+    let stream;
+    try {
+        stream = await client.messages.create({
+            model: deepseekConfig.model,
+            max_tokens: deepseekConfig.maxTokens,
+            messages: enhancedMessages,
+            stream: true,
+        });
+    } catch (error: any) {
+        console.error('[LLM] 调用失败:', error);
+        return new Response(
+            JSON.stringify({
+                error: '模型调用失败',
+                message: error.message || '未知错误',
+                code: error.status || 500
+            }),
+            {
+                status: error.status || 500,
+                headers: { 'Content-Type': 'application/json' }
+            }
+        );
+    }
 
     // TextEncoder 将字符串转为字节流（浏览器接收的是字节，不是字符串）
     const encoder = new TextEncoder();
@@ -77,45 +127,97 @@ ${lastUserMessage.content}`,
     // 构建 Web 标准的 ReadableStream，将 API 的流式事件转发给浏览器
     const readable = new ReadableStream({
         async start(controller) {
-            // 遍历 API 推送的每个事件块（chunk）
-            // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
-            // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
-            for await (const chunk of stream) {
-                if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-                    const text = chunk.delta.text;
-                    if (text) {
-                        // 将文字编码后推入流中，浏览器会实时接收到这段文字
-                        controller.enqueue(encoder.encode(text));
+            let closed = false;
+            const enqueueText = (text: string) => {
+                if (closed || req.signal.aborted) return false;
+                try {
+                    controller.enqueue(encoder.encode(text));
+                    return true;
+                } catch (error: any) {
+                    if (error?.code !== 'ERR_INVALID_STATE') {
+                        console.error('[Stream] 写入响应失败:', error);
+                    }
+                    closed = true;
+                    return false;
+                }
+            };
+            const closeStream = () => {
+                if (closed) return;
+                try {
+                    controller.close();
+                } catch (error: any) {
+                    if (error?.code !== 'ERR_INVALID_STATE') {
+                        console.error('[Stream] 关闭响应失败:', error);
+                    }
+                } finally {
+                    closed = true;
+                }
+            };
+
+            try {
+                // 遍历 API 推送的每个事件块（chunk）
+                // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
+                // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
+                for await (const chunk of stream) {
+                    if (req.signal.aborted || closed) {
+                        break;
+                    }
+                    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+                        const text = chunk.delta.text;
+                        if (text) {
+                            // 将文字编码后推入流中，浏览器会实时接收到这段文字
+                            if (!enqueueText(text)) {
+                                break;
+                            }
+                        }
                     }
                 }
-            }
 
-            // 流式响应结束后，附加引用来源信息
-            if (ragResults.length > 0) {
-                // 按页面去重，保留每个页面相似度最高的 chunk
-                const uniquePages = new Map<string, typeof ragResults[0]>();
-                for (const doc of ragResults) {
-                    const existing = uniquePages.get(doc.pageId);
-                    if (!existing || doc.similarity > existing.similarity) {
-                        uniquePages.set(doc.pageId, doc);
-                    }
+                if (req.signal.aborted || closed) {
+                    closeStream();
+                    return;
                 }
 
-                const sources = Array.from(uniquePages.values()).map(doc => ({
-                    title: doc.pageTitle,
-                    notionPageId: doc.pageId,
-                    pageUrl: doc.pageUrl,
-                    similarity: doc.similarity,
-                    excerpt: doc.content.substring(0, 100),
-                }));
+                // 流式响应结束后，附加引用来源信息
+                if (ragResults.length > 0) {
+                    // 按页面去重，保留每个页面相似度最高的 chunk
+                    const uniquePages = new Map<string, typeof ragResults[0]>();
+                    for (const doc of ragResults) {
+                        const existing = uniquePages.get(doc.pageId);
+                        if (!existing || doc.similarity > existing.similarity) {
+                            uniquePages.set(doc.pageId, doc);
+                        }
+                    }
 
-                // 使用特殊分隔符标记来源数据
-                const sourcesMarker = '\n\n__SOURCES__\n' + JSON.stringify(sources);
-                controller.enqueue(encoder.encode(sourcesMarker));
+                    const sources = Array.from(uniquePages.values()).map(doc => ({
+                        title: doc.pageTitle,
+                        notionPageId: doc.pageId,
+                        pageUrl: doc.pageUrl,
+                        similarity: doc.similarity,
+                        excerpt: doc.content.substring(0, 100),
+                    }));
+
+                    // 使用特殊分隔符标记来源数据
+                    const sourcesMarker = '\n\n__SOURCES__\n' + JSON.stringify(sources);
+                    enqueueText(sourcesMarker);
+                }
+
+                // 所有事件处理完毕，关闭流，告诉浏览器"传输结束"
+                closeStream();
+            } catch (error: any) {
+                if (req.signal.aborted || closed) {
+                    closeStream();
+                    return;
+                }
+                console.error('[Stream] 流式处理失败:', error);
+                // 发送错误标记
+                const errorMarker = '\n\n__ERROR__\n' + JSON.stringify({
+                    error: '流式响应中断',
+                    message: error.message || '未知错误'
+                });
+                enqueueText(errorMarker);
+                closeStream();
             }
-
-            // 所有事件处理完毕，关闭流，告诉浏览器"传输结束"
-            controller.close();
         }
     })
 

@@ -50,13 +50,14 @@ export class ChatSession {
 
     this.loading = true;
     this.error = null;
+    let assistantMessageSaved = false;
     const userMessage: Message = { role: "user", content: input };
     this.messages.push(userMessage);
 
     // 如果是新会话，先创建数据库记录
     if (this.isNewSession) {
       try {
-        await this.sessionManager.createSession(this.title);
+        await this.sessionManager.createSession(this.title, this.id);
         this.isNewSession = false;
       } catch (error) {
         console.error('创建会话失败:', error);
@@ -95,7 +96,8 @@ export class ChatSession {
       });
 
       if (!response.ok) {
-        throw new Error("请求失败, 请稍后重试");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || "请求失败, 请稍后重试");
       }
 
       const reader = response.body!.getReader();
@@ -110,6 +112,21 @@ export class ChatSession {
         if (done) break;
         const text = decoder.decode(value);
         fullText += text;
+
+        // 检查是否包含错误标记
+        const errorMarkerIndex = fullText.indexOf('\n\n__ERROR__\n');
+        if (errorMarkerIndex !== -1) {
+          const errorJson = fullText.substring(errorMarkerIndex + 12); // 12 = '\n\n__ERROR__\n'.length
+          try {
+            const errorData = JSON.parse(errorJson);
+            throw new Error(errorData.message || errorData.error || '流式响应中断');
+          } catch (e) {
+            if (e instanceof Error && e.message !== '流式响应中断') {
+              throw new Error('流式响应中断');
+            }
+            throw e;
+          }
+        }
 
         // 检查是否包含来源标记
         const sourcesMarkerIndex = fullText.indexOf('\n\n__SOURCES__\n');
@@ -134,22 +151,14 @@ export class ChatSession {
         onUpdate();
       }
 
-      // 保存 AI 回复到数据库
-      const lastMessage = this.messages[this.messages.length - 1];
-      try {
-        await this.sessionManager.saveAssistantMessage(
-          this.id,
-          lastMessage.content,
-          {
-            sources: lastMessage.sources,
-            model: 'deepseek-v4-pro',
-          }
-        );
-      } catch (error) {
-        console.error('保存 AI 回复失败:', error);
-      }
+      assistantMessageSaved = await this.saveCurrentAssistantMessage();
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
+      if ((err as Error).name === "AbortError") {
+        if (!assistantMessageSaved) {
+          await this.saveCurrentAssistantMessage({ interrupted: true });
+        }
+        return;
+      }
       this.error = err instanceof Error ? err.message : "发生未知错误";
       const last = this.messages[this.messages.length - 1];
       if (last.role === "assistant" && !last.content) {
@@ -165,5 +174,28 @@ export class ChatSession {
 
   abort() {
     this.abortController?.abort();
+  }
+
+  private async saveCurrentAssistantMessage(metadata?: Record<string, unknown>): Promise<boolean> {
+    const lastMessage = this.messages[this.messages.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant" || !lastMessage.content.trim()) {
+      return false;
+    }
+
+    try {
+      await this.sessionManager.saveAssistantMessage(
+        this.id,
+        lastMessage.content,
+        {
+          sources: lastMessage.sources,
+          model: 'deepseek-v4-pro',
+          metadata,
+        }
+      );
+      return true;
+    } catch (error) {
+      console.error('保存 AI 回复失败:', error);
+      return false;
+    }
   }
 }

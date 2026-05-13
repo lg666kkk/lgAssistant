@@ -37,6 +37,10 @@ export class NotionClient {
   async getPageInfo(pageId: string): Promise<NotionPageInfo> {
     const page = await this.client.pages.retrieve({ page_id: pageId });
 
+    if (!('url' in page) || !('last_edited_time' in page)) {
+      throw new Error('无法读取 Notion 页面完整信息');
+    }
+
     // 提取标题
     let title = 'Untitled';
     if ('properties' in page && page.properties.title) {

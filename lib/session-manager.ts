@@ -68,10 +68,10 @@ export class SessionManager {
   /**
    * 创建新会话
    */
-  async createSession(title = '新对话'): Promise<Session> {
+  async createSession(title = '新对话', id?: string): Promise<Session> {
     const { data, error } = await this.supabase
       .from('sessions')
-      .insert({ title })
+      .insert(id ? { id, title } : { title })
       .select()
       .single();
 
