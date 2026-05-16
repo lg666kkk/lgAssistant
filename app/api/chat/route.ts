@@ -1,6 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { RAGRetriever } from "@/lib/server/retriever";
-import { deepseekConfig, ragConfig } from "@/lib/config";
+import { deepseekConfig } from "@/lib/config";
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 
@@ -50,47 +49,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // RAG 检索：获取用户最后一条消息
-  const lastUserMessage = messages.filter((m: any) => m.role === "user").pop();
-  let ragContext = "";
-  let ragResults: any[] = [];
-
-  console.log("[RAG] 开始检索，用户问题:", lastUserMessage?.content);
-
-  if (lastUserMessage) {
-    try {
-      const retriever = new RAGRetriever();
-      ragResults = await retriever.search(lastUserMessage.content, {
-        matchThreshold: ragConfig.similarityThreshold,
-        matchCount: ragConfig.maxResults,
-      });
-
-      if (ragResults.length > 0) {
-        ragContext = retriever.formatContext(ragResults);
-      } else {
-        console.log("[RAG] 未找到相关文档");
-      }
-    } catch (error) {
-      console.error("[RAG] 检索失败:", error);
-      // 检索失败不影响正常对话，继续执行
-    }
-  }
-
-  // 如果有 RAG 上下文，注入到消息中
-  const enhancedMessages = ragContext
-    ? [
-        {
-          role: "user",
-          content: `${ragContext}
-
----
-
-${lastUserMessage.content}`,
-        },
-        ...messages.slice(0, -1), // 保留历史消息（除了最后一条）
-      ]
-    : messages;
-
   const toolRegistry = createBuiltinToolRegistry();
   const tools = toolRegistry.listForModel();
   // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
@@ -100,7 +58,7 @@ ${lastUserMessage.content}`,
     initialResponse = await client.messages.create({
       model: deepseekConfig.model,
       max_tokens: deepseekConfig.maxTokens,
-      messages: enhancedMessages,
+      messages,
       //   stream: true,
       tools,
     });
@@ -176,12 +134,54 @@ ${lastUserMessage.content}`,
           content: string;
           is_error: boolean;
         }> = [];
+        const toolSources: Array<{
+          title: string;
+          notionPageId: string;
+          pageUrl: string;
+          similarity: number;
+          excerpt: string;
+        }> = [];
         for (let toolUse of toolUses) {
           const toolResult = await executeToolCall(toolRegistry, {
             id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
           });
+          if (
+            toolUse.name === "search_notes" &&
+            toolResult.ok &&
+            toolResult.data &&
+            typeof toolResult.data === "object" &&
+            "results" in toolResult.data
+          ) {
+            const results = (toolResult.data as { results?: unknown }).results;
+            if (Array.isArray(results)) {
+              for (const result of results) {
+                const doc = result as {
+                  pageTitle?: unknown;
+                  pageId?: unknown;
+                  pageUrl?: unknown;
+                  similarity?: unknown;
+                  content?: unknown;
+                };
+                if (
+                  typeof doc.pageTitle === "string" &&
+                  typeof doc.pageId === "string" &&
+                  typeof doc.pageUrl === "string" &&
+                  typeof doc.similarity === "number" &&
+                  typeof doc.content === "string"
+                ) {
+                  toolSources.push({
+                    title: doc.pageTitle,
+                    notionPageId: doc.pageId,
+                    pageUrl: doc.pageUrl,
+                    similarity: doc.similarity,
+                    excerpt: doc.content.substring(0, 100),
+                  });
+                }
+              }
+            }
+          }
           // 放入单工具执行结果
           toolResultBlocks.push({
             type: "tool_result",
@@ -206,7 +206,7 @@ ${lastUserMessage.content}`,
           model: deepseekConfig.model,
           max_tokens: deepseekConfig.maxTokens,
           messages: [
-            ...enhancedMessages,
+            ...messages,
             {
               role: "assistant",
               content: initialResponse.content,
@@ -243,31 +243,11 @@ ${lastUserMessage.content}`,
           closeStream();
           return;
         }
-
-        // 流式响应结束后，附加引用来源信息
-        if (ragResults.length > 0) {
-          // 按页面去重，保留每个页面相似度最高的 chunk
-          const uniquePages = new Map<string, (typeof ragResults)[0]>();
-          for (const doc of ragResults) {
-            const existing = uniquePages.get(doc.pageId);
-            if (!existing || doc.similarity > existing.similarity) {
-              uniquePages.set(doc.pageId, doc);
-            }
-          }
-
-          const sources = Array.from(uniquePages.values()).map((doc) => ({
-            title: doc.pageTitle,
-            notionPageId: doc.pageId,
-            pageUrl: doc.pageUrl,
-            similarity: doc.similarity,
-            excerpt: doc.content.substring(0, 100),
-          }));
-
-          // 使用特殊分隔符标记来源数据
-          const sourcesMarker = "\n\n__SOURCES__\n" + JSON.stringify(sources);
+        if (toolSources.length > 0) {
+          const sourcesMarker =
+            "\n\n__SOURCES__\n" + JSON.stringify(toolSources);
           enqueueText(sourcesMarker);
         }
-
         // 所有事件处理完毕，关闭流，告诉浏览器"传输结束"
         closeStream();
       } catch (error: any) {

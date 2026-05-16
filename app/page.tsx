@@ -189,7 +189,7 @@ export default function Home() {
                                     {toolCall.name}
                                   </span>
                                 </div>
-                                {toolCall.input !== undefined && (
+                                {/* {toolCall.input !== undefined && (
                                   <div>
                                     <span className="text-slate-400">
                                       输入：
@@ -198,7 +198,7 @@ export default function Home() {
                                       {JSON.stringify(toolCall.input)}
                                     </code>
                                   </div>
-                                )}
+                                )} */}
                                 <div>
                                   <span className="text-slate-400">状态：</span>
                                   <span
@@ -231,9 +231,11 @@ export default function Home() {
                                 href={source.pageUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="block text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+                                className="block text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
                               >
-                                [{idx + 1}] {source.title}
+                                <span className="font-medium hover:underline">
+                                  [{idx + 1}] {source.title}
+                                </span>
                                 <span className="text-slate-500 ml-1">
                                   (相似度:{" "}
                                   {(source.similarity * 100).toFixed(0)}%)
