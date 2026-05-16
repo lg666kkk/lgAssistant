@@ -87,7 +87,6 @@ export function useChatManager() {
     },
     [activeId, rerender],
   );
-  console.log('2222', activeSession)
   return {
     sessions,
     activeId,

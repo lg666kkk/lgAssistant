@@ -59,7 +59,6 @@ export async function POST(req: Request) {
       model: deepseekConfig.model,
       max_tokens: deepseekConfig.maxTokens,
       messages,
-      //   stream: true,
       tools,
     });
   } catch (error: any) {
@@ -197,6 +196,7 @@ export async function POST(req: Request) {
               ok: toolResult.ok,
               content: toolResult.content,
               error: toolResult.error,
+              metadata: toolResult.metadata,
             }) +
             "\n__END_TOOL_CALL__\n";
 

@@ -203,13 +203,97 @@ export default function Home() {
                                   <span className="text-slate-400">状态：</span>
                                   <span
                                     className={
-                                      toolCall.ok
-                                        ? "text-emerald-400"
-                                        : "text-red-400"
+                                      String(toolCall.metadata?.status) ===
+                                      "pending_confirmation"
+                                        ? "font-medium text-amber-300"
+                                        : String(toolCall.metadata?.status) ===
+                                            "confirmed"
+                                          ? "font-medium text-emerald-300"
+                                          : toolCall.ok
+                                            ? "font-medium text-emerald-400"
+                                            : "font-medium text-red-400"
                                     }
                                   >
-                                    {toolCall.ok ? "成功" : "失败"}
+                                    {String(toolCall.metadata?.status) ===
+                                    "pending_confirmation"
+                                      ? "待确认"
+                                      : String(toolCall.metadata?.status) ===
+                                          "confirmed"
+                                        ? "已确认执行"
+                                        : toolCall.ok
+                                          ? "成功"
+                                          : "失败"}
                                   </span>
+                                </div>
+                                <div>
+                                  {String(toolCall.metadata?.status) ===
+                                    "pending_confirmation" && (
+                                    <div className="mt-2 flex gap-2">
+                                      <button
+                                        onClick={async () => {
+                                          const response = await fetch(
+                                            "/api/tools/confirm",
+                                            {
+                                              method: "POST",
+                                              headers: {
+                                                "Content-Type":
+                                                  "application/json",
+                                              },
+                                              body: JSON.stringify({
+                                                toolCall:
+                                                  typeof toolCall.metadata
+                                                    ?.toolCall === "object" &&
+                                                  toolCall.metadata.toolCall !==
+                                                    null
+                                                    ? toolCall.metadata.toolCall
+                                                    : {
+                                                        name: toolCall.name,
+                                                        input: toolCall.input,
+                                                      },
+                                              }),
+                                            },
+                                          );
+                                          const result = await response.json();
+                                          toolCall.ok = Boolean(result.ok);
+                                          toolCall.content = String(
+                                            result.content ?? "",
+                                          );
+                                          toolCall.error =
+                                            typeof result.error === "string"
+                                              ? result.error
+                                              : undefined;
+                                          toolCall.metadata = {
+                                            ...toolCall.metadata,
+                                            status: result.ok
+                                              ? "confirmed"
+                                              : "failed",
+                                            confirmedAt:
+                                              new Date().toISOString(),
+                                            result,
+                                          };
+                                          rerender();
+                                        }}
+                                        type="button"
+                                        className="rounded-md bg-emerald-500/20 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/30"
+                                      >
+                                        确认执行
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          toolCall.ok = false;
+                                          toolCall.content = "用户已取消执行";
+                                          toolCall.metadata = {
+                                            ...toolCall.metadata,
+                                            status: "cancelled",
+                                          };
+                                        }}
+                                        type="button"
+                                        className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600"
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             ))}

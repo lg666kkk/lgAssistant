@@ -16,7 +16,7 @@
  *      content: "当前时间：...",
  * }
  */
-import type { ToolCall, ToolExecutionResult } from "./types";
+import type { ToolCall, ToolExecutionResult, ExecuteToolCallOptions } from "./types";
 import { ToolRegistry } from "./registry";
 
 /**
@@ -30,6 +30,7 @@ import { ToolRegistry } from "./registry";
 export async function executeToolCall(
   registry: ToolRegistry,
   toolCall: ToolCall,
+  options: ExecuteToolCallOptions = {},
 ): Promise<ToolExecutionResult> {
   const tool = registry.get(toolCall.name);
   if (!tool) {
@@ -41,14 +42,36 @@ export async function executeToolCall(
       error: `Unknown tool: ${toolCall.name}`,
     };
   }
-  // TODO: 检查工具风险等级，如果需要用户确认，则返回需要确认的结果
-  if (tool.riskLevel !== "safe") {
+  if (tool.riskLevel === "confirm" && !options.approved) {
     return {
       ok: false,
       toolName: tool.name,
       toolCallId: toolCall.id,
       content: `工具 ${tool.name} 需要用户确认后才能执行`,
       error: `Tool requires approval: ${tool.name}`,
+      metadata: {
+        status: "pending_confirmation",
+        riskLevel: tool.riskLevel,
+        toolCall: {
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+        },
+      },
+    };
+  }
+
+  if (tool.riskLevel === "dangerous") {
+    return {
+      ok: false,
+      toolName: tool.name,
+      toolCallId: toolCall.id,
+      content: `工具 ${tool.name} 风险过高，已拒绝执行`,
+      error: `Dangerous tool blocked: ${tool.name}`,
+      metadata: {
+        status: "blocked",
+        riskLevel: tool.riskLevel,
+      },
     };
   }
   const result = await tool.execute(toolCall.input);

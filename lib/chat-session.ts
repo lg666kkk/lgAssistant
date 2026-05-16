@@ -16,6 +16,7 @@ export interface Message {
     ok: boolean;
     content: string;
     error?: string;
+    metadata?: Record<string, unknown>;
   }>;
 }
 

@@ -35,9 +35,14 @@ export interface ToolCall {
   id?: string; // 工具调用ID
   name: string; // 工具名称
   input: unknown; // 工具参数
+  metadata?: Record<string, unknown>;
 }
 
 export interface ToolExecutionResult extends ToolResult {
   toolName: string; // 工具名称
   toolCallId?: string; // 工具调用ID
 }
+
+export type ExecuteToolCallOptions = {
+  approved?: boolean;
+};
