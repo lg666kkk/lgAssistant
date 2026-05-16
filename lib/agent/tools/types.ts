@@ -1,38 +1,43 @@
-
-
 /***
  * safe 可以自动执行的工具
  * confirm 需要用户确认的工具
  * dangerous 默认拒绝
  */
-export type ToolRiskLevel = 'safe' | 'confirm' | 'dangerous'
+export type ToolRiskLevel = "safe" | "confirm" | "dangerous";
 
 /**
  * 工具返回结果
  */
 export interface ToolResult {
-    ok: boolean // 工具是否执行成功
-    content: string // 给模型看的主要文本结果
-    data?: unknown // 给程序用的结构化数据
-    error?: string // 失败时的错误信息
-    metadata?: Record<string, unknown> // 额外信息, 比如耗时、来源
+  ok: boolean; // 工具是否执行成功
+  content: string; // 给模型看的主要文本结果
+  data?: unknown; // 给程序用的结构化数据
+  error?: string; // 失败时的错误信息
+  metadata?: Record<string, unknown>; // 额外信息, 比如耗时、来源
 }
 
+export type ToolInputSchema = {
+  type: "object";
+  properties?: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+};
+
 export interface ToolDefinition {
-    name: string // 工具名称
-    description: string // 工具说明
-    input_schema: Record<string, unknown> // 工具参数
-    riskLevel: ToolRiskLevel // 工具风险等级
-    execute(params: unknown): Promise<ToolResult> // 执行工具的函数
+  name: string; // 工具名称
+  description: string; // 工具说明
+  input_schema: ToolInputSchema; // 工具参数
+  riskLevel: ToolRiskLevel; // 工具风险等级
+  execute(params: unknown): Promise<ToolResult>; // 执行工具的函数
 }
 // 它表示 一次工具调用请求。
 export interface ToolCall {
-    id?: string // 工具调用ID
-    name: string // 工具名称
-    input: unknown // 工具参数
+  id?: string; // 工具调用ID
+  name: string; // 工具名称
+  input: unknown; // 工具参数
 }
 
 export interface ToolExecutionResult extends ToolResult {
-    toolName: string // 工具名称
-    toolCallId?: string // 工具调用ID
+  toolName: string; // 工具名称
+  toolCallId?: string; // 工具调用ID
 }

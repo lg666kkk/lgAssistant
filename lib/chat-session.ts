@@ -1,4 +1,4 @@
-import { SessionManager } from './session-manager';
+import { SessionManager } from "./session-manager";
 
 export interface Message {
   role: "user" | "assistant";
@@ -9,6 +9,13 @@ export interface Message {
     pageUrl: string;
     similarity: number;
     excerpt: string;
+  }>;
+  toolCalls?: Array<{
+    name: string;
+    input?: unknown;
+    ok: boolean;
+    content: string;
+    error?: string;
   }>;
 }
 
@@ -33,14 +40,15 @@ export class ChatSession {
   async loadFromDatabase(): Promise<void> {
     try {
       const dbMessages = await this.sessionManager.getMessages(this.id);
-      this.messages = dbMessages.map(msg => ({
+      this.messages = dbMessages.map((msg) => ({
         role: msg.role,
         content: msg.content,
         sources: msg.sources,
+        toolCalls: msg.metadata?.toolCalls,
       }));
       this.isNewSession = false;
     } catch (error) {
-      console.error('加载会话失败:', error);
+      console.error("加载会话失败:", error);
       // 如果加载失败，可能是新会话，继续使用内存数据
     }
   }
@@ -60,7 +68,7 @@ export class ChatSession {
         await this.sessionManager.createSession(this.title, this.id);
         this.isNewSession = false;
       } catch (error) {
-        console.error('创建会话失败:', error);
+        console.error("创建会话失败:", error);
       }
     }
 
@@ -68,7 +76,7 @@ export class ChatSession {
     try {
       await this.sessionManager.saveUserMessage(this.id, input);
     } catch (error) {
-      console.error('保存用户消息失败:', error);
+      console.error("保存用户消息失败:", error);
     }
 
     if (this.messages.length === 1) {
@@ -77,7 +85,7 @@ export class ChatSession {
       try {
         await this.sessionManager.updateSessionTitle(this.id, this.title);
       } catch (error) {
-        console.error('更新标题失败:', error);
+        console.error("更新标题失败:", error);
       }
     }
 
@@ -97,15 +105,20 @@ export class ChatSession {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.message || "请求失败, 请稍后重试");
+        throw new Error(
+          errorData.error || errorData.message || "请求失败, 请稍后重试",
+        );
       }
 
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       this.streaming = true;
       onUpdate();
-
-      let fullText = '';
+      // fullText：原始响应，包含协议标记
+      let fullText = "";
+      const toolMarker = "__TOOL_CALL__";
+      const sourcesMarker = "\n\n__SOURCES__\n";
+      const endToolMarker = "__END_TOOL_CALL__";
 
       while (true) {
         const { value, done } = await reader.read();
@@ -114,26 +127,52 @@ export class ChatSession {
         fullText += text;
 
         // 检查是否包含错误标记
-        const errorMarkerIndex = fullText.indexOf('\n\n__ERROR__\n');
+        const errorMarkerIndex = fullText.indexOf("\n\n__ERROR__\n");
         if (errorMarkerIndex !== -1) {
           const errorJson = fullText.substring(errorMarkerIndex + 12); // 12 = '\n\n__ERROR__\n'.length
           try {
             const errorData = JSON.parse(errorJson);
-            throw new Error(errorData.message || errorData.error || '流式响应中断');
+            throw new Error(
+              errorData.message || errorData.error || "流式响应中断",
+            );
           } catch (e) {
-            if (e instanceof Error && e.message !== '流式响应中断') {
-              throw new Error('流式响应中断');
+            if (e instanceof Error && e.message !== "流式响应中断") {
+              throw new Error("流式响应中断");
             }
             throw e;
           }
         }
+        // displayText 是去掉标记后的显示内容
+        let displayText = fullText;
+        // 检测工具调用
+        const toolMarkerIndex = displayText.indexOf(toolMarker);
+        const endToolMarkerIndex = displayText.indexOf(endToolMarker);
+        if (toolMarkerIndex !== -1 && endToolMarkerIndex !== -1) {
+          const toolJson = displayText.substring(
+            toolMarkerIndex + toolMarker.length,
+            endToolMarkerIndex,
+          );
 
+          try {
+            const toolCall = JSON.parse(toolJson);
+            this.messages[this.messages.length - 1].toolCalls = [toolCall];
+
+            displayText =
+              displayText.substring(0, toolMarkerIndex) +
+              displayText.substring(endToolMarkerIndex + endToolMarker.length);
+            displayText = displayText.trimStart();
+          } catch (e) {
+            // JSON 解析失败，先保留原始文本
+          }
+        }
         // 检查是否包含来源标记
-        const sourcesMarkerIndex = fullText.indexOf('\n\n__SOURCES__\n');
+        const sourcesMarkerIndex = displayText.indexOf(sourcesMarker);
         if (sourcesMarkerIndex !== -1) {
           // 分离正文和来源数据
-          const content = fullText.substring(0, sourcesMarkerIndex);
-          const sourcesJson = fullText.substring(sourcesMarkerIndex + 14); // 14 = '\n\n__SOURCES__\n'.length
+          const content = displayText.substring(0, sourcesMarkerIndex);
+          const sourcesJson = displayText.substring(
+            sourcesMarkerIndex + sourcesMarker.length,
+          );
 
           try {
             const sources = JSON.parse(sourcesJson);
@@ -141,11 +180,11 @@ export class ChatSession {
             this.messages[this.messages.length - 1].sources = sources;
           } catch (e) {
             // JSON 解析失败，继续累积文本
-            this.messages[this.messages.length - 1].content = fullText;
+            this.messages[this.messages.length - 1].content = displayText;
           }
         } else {
           // 还没有收到来源标记，继续累积文本
-          this.messages[this.messages.length - 1].content = fullText;
+          this.messages[this.messages.length - 1].content = displayText;
         }
 
         onUpdate();
@@ -176,9 +215,15 @@ export class ChatSession {
     this.abortController?.abort();
   }
 
-  private async saveCurrentAssistantMessage(metadata?: Record<string, unknown>): Promise<boolean> {
+  private async saveCurrentAssistantMessage(
+    metadata?: Record<string, unknown>,
+  ): Promise<boolean> {
     const lastMessage = this.messages[this.messages.length - 1];
-    if (!lastMessage || lastMessage.role !== "assistant" || !lastMessage.content.trim()) {
+    if (
+      !lastMessage ||
+      lastMessage.role !== "assistant" ||
+      !lastMessage.content.trim()
+    ) {
       return false;
     }
 
@@ -188,13 +233,16 @@ export class ChatSession {
         lastMessage.content,
         {
           sources: lastMessage.sources,
-          model: 'deepseek-v4-pro',
-          metadata,
-        }
+          model: "deepseek-v4-pro",
+          metadata: {
+            ...metadata,
+            toolCalls: lastMessage.toolCalls,
+          },
+        },
       );
       return true;
     } catch (error) {
-      console.error('保存 AI 回复失败:', error);
+      console.error("保存 AI 回复失败:", error);
       return false;
     }
   }

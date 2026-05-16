@@ -23,7 +23,9 @@ export default function Home() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { messages, loading, streaming, error } = activeSession || {};
-  const lastMessageContent = messages?.length ? messages[messages.length - 1]?.content : "";
+  const lastMessageContent = messages?.length
+    ? messages[messages.length - 1]?.content
+    : "";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,7 +104,16 @@ export default function Home() {
             onClick={() => setSidebarOpen((v) => !v)}
             className="text-slate-400 hover:text-white transition-colors"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
@@ -116,72 +127,120 @@ export default function Home() {
               发送一条消息开始对话
             </p>
           )}
-          {messages && messages.map((msg, i) => {
-            const isStreaming =
-              streaming && msg.role === "assistant" && i === messages.length - 1;
-            return (
-              <div
-                key={i}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
+          {messages &&
+            messages.map((msg, i) => {
+              const isStreaming =
+                streaming &&
+                msg.role === "assistant" &&
+                i === messages.length - 1;
+              return (
                 <div
-                  className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-cyan-600 text-white"
-                      : "bg-slate-800 text-slate-200"
-                  } ${isStreaming ? "streaming-msg" : ""}`}
+                  key={i}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  <ReactMarkdown
-                    components={{
-                      p({ children }) {
-                        return <p>{children}</p>;
-                      },
-                      code({ className, children }) {
-                        const language = className?.replace("language-", "");
-                        if (!language) {
-                          return (
-                            <code className="bg-slate-700 px-1.5 py-0.5 rounded text-sm">
-                              {children}
-                            </code>
-                          );
-                        }
-                        return (
-                          <SyntaxHighlighter language={language} style={oneDark}>
-                            {String(children).replace(/\n$/, "")}
-                          </SyntaxHighlighter>
-                        );
-                      },
-                    }}
+                  <div
+                    className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-cyan-600 text-white"
+                        : "bg-slate-800 text-slate-200"
+                    } ${isStreaming ? "streaming-msg" : ""}`}
                   >
-                    {msg.content || (loading ? "思考中..." : "")}
-                  </ReactMarkdown>
-
-                  {/* 显示引用来源 */}
-                  {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-700">
-                      <div className="text-xs text-slate-400 mb-2">📚 参考来源</div>
-                      <div className="space-y-1.5">
-                        {msg.sources.map((source, idx) => (
-                          <a
-                            key={idx}
-                            href={source.pageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
-                          >
-                            [{idx + 1}] {source.title}
-                            <span className="text-slate-500 ml-1">
-                              (相似度: {(source.similarity * 100).toFixed(0)}%)
-                            </span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    <ReactMarkdown
+                      components={{
+                        p({ children }) {
+                          return <p>{children}</p>;
+                        },
+                        code({ className, children }) {
+                          const language = className?.replace("language-", "");
+                          if (!language) {
+                            return (
+                              <code className="bg-slate-700 px-1.5 py-0.5 rounded text-sm">
+                                {children}
+                              </code>
+                            );
+                          }
+                          return (
+                            <SyntaxHighlighter
+                              language={language}
+                              style={oneDark}
+                            >
+                              {String(children).replace(/\n$/, "")}
+                            </SyntaxHighlighter>
+                          );
+                        },
+                      }}
+                    >
+                      {msg.content || (loading ? "思考中..." : "")}
+                    </ReactMarkdown>
+                    {/* 显示工具调用 */}
+                    {msg.role === "assistant" &&
+                      msg.toolCalls &&
+                      msg.toolCalls.length > 0 && (
+                        <div className="mt-3 rounded-lg border border-cyan-800 bg-cyan-950/30">
+                          <div className="mb-2 text-xs font-medium text-cyan-300">
+                            🔧 工具调用
+                          </div>
+                          <div className="space-y-2">
+                            {msg.toolCalls.map((toolCall, idx) => (
+                              <div key={idx} className="text-xs text-slate-300">
+                                <div>
+                                  <span className="text-slate-400">工具：</span>
+                                  <span className="font-mono text-cyan-300">
+                                    {toolCall.name}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">状态：</span>
+                                  <span
+                                    className={
+                                      toolCall.ok
+                                        ? "text-emerald-400"
+                                        : "text-red-400"
+                                    }
+                                  >
+                                    {toolCall.ok ? "成功" : "失败"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">结果：</span>
+                                  <span>{toolCall.content}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    {/* 显示引用来源 */}
+                    {msg.role === "assistant" &&
+                      msg.sources &&
+                      msg.sources.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-slate-700">
+                          <div className="text-xs text-slate-400 mb-2">
+                            📚 参考来源
+                          </div>
+                          <div className="space-y-1.5">
+                            {msg.sources.map((source, idx) => (
+                              <a
+                                key={idx}
+                                href={source.pageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+                              >
+                                [{idx + 1}] {source.title}
+                                <span className="text-slate-500 ml-1">
+                                  (相似度:{" "}
+                                  {(source.similarity * 100).toFixed(0)}%)
+                                </span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
           <div ref={messagesEndRef} />
           {error && (
             <div className="flex justify-start">
