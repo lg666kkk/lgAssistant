@@ -118,10 +118,10 @@ ${lastUserMessage.content}`,
       },
     );
   }
-  const toolUse = initialResponse.content.find(
+  const toolUses = initialResponse.content.filter(
     (block) => block.type === "tool_use",
   );
-
+  const toolUse = toolUses[0];
   const directText = initialResponse.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -169,23 +169,39 @@ ${lastUserMessage.content}`,
           closeStream();
           return;
         }
-        const toolResult = await executeToolCall(toolRegistry, {
-          id: toolUse.id,
-          name: toolUse.name,
-          input: toolUse.input,
-        });
-        const toolMarker =
-          "\n\n__TOOL_CALL__\n" +
-          JSON.stringify({
+        // 给模型用，作为 Anthropic tool_result 消息
+        const toolResultBlocks: Array<{
+          type: "tool_result";
+          tool_use_id: string;
+          content: string;
+          is_error: boolean;
+        }> = [];
+        for (let toolUse of toolUses) {
+          const toolResult = await executeToolCall(toolRegistry, {
+            id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
-            ok: toolResult.ok,
+          });
+          // 放入单工具执行结果
+          toolResultBlocks.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
             content: toolResult.content,
-            error: toolResult.error,
-          }) +
-          "\n__END_TOOL_CALL__\n";
+            is_error: !toolResult.ok,
+          });
+          const toolMarker =
+            "\n\n__TOOL_CALL__\n" +
+            JSON.stringify({
+              name: toolUse.name,
+              input: toolUse.input,
+              ok: toolResult.ok,
+              content: toolResult.content,
+              error: toolResult.error,
+            }) +
+            "\n__END_TOOL_CALL__\n";
 
-        enqueueText(toolMarker);
+          enqueueText(toolMarker);
+        }
         stream = await client.messages.create({
           model: deepseekConfig.model,
           max_tokens: deepseekConfig.maxTokens,
@@ -197,14 +213,7 @@ ${lastUserMessage.content}`,
             },
             {
               role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: toolUse.id,
-                  content: toolResult.content,
-                  is_error: !toolResult.ok,
-                },
-              ],
+              content: toolResultBlocks,
             },
           ],
           stream: true,

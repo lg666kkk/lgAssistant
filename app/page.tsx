@@ -189,6 +189,16 @@ export default function Home() {
                                     {toolCall.name}
                                   </span>
                                 </div>
+                                {toolCall.input !== undefined && (
+                                  <div>
+                                    <span className="text-slate-400">
+                                      输入：
+                                    </span>
+                                    <code className="rounded bg-slate-900/60 px-1.5 py-0.5 font-mono text-cyan-100">
+                                      {JSON.stringify(toolCall.input)}
+                                    </code>
+                                  </div>
+                                )}
                                 <div>
                                   <span className="text-slate-400">状态：</span>
                                   <span
@@ -200,10 +210,6 @@ export default function Home() {
                                   >
                                     {toolCall.ok ? "成功" : "失败"}
                                   </span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400">结果：</span>
-                                  <span>{toolCall.content}</span>
                                 </div>
                               </div>
                             ))}

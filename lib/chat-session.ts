@@ -119,7 +119,7 @@ export class ChatSession {
       const toolMarker = "__TOOL_CALL__";
       const sourcesMarker = "\n\n__SOURCES__\n";
       const endToolMarker = "__END_TOOL_CALL__";
-
+      const parsedToolCallJsonSet = new Set<string>(); // 防止工具被重复追加
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -145,22 +145,32 @@ export class ChatSession {
         // displayText 是去掉标记后的显示内容
         let displayText = fullText;
         // 检测工具调用
-        const toolMarkerIndex = displayText.indexOf(toolMarker);
-        const endToolMarkerIndex = displayText.indexOf(endToolMarker);
-        if (toolMarkerIndex !== -1 && endToolMarkerIndex !== -1) {
+        let toolMarkerIndex = displayText.indexOf(toolMarker);
+        let endToolMarkerIndex = displayText.indexOf(endToolMarker);
+        while (toolMarkerIndex !== -1 && endToolMarkerIndex !== -1) {
           const toolJson = displayText.substring(
             toolMarkerIndex + toolMarker.length,
             endToolMarkerIndex,
           );
 
           try {
-            const toolCall = JSON.parse(toolJson);
-            this.messages[this.messages.length - 1].toolCalls = [toolCall];
+            if (!parsedToolCallJsonSet.has(toolJson)) {
+              const toolCall = JSON.parse(toolJson);
+              const currentToolCalls =
+                this.messages[this.messages.length - 1].toolCalls ?? [];
 
+              this.messages[this.messages.length - 1].toolCalls = [
+                ...currentToolCalls,
+                toolCall,
+              ];
+              parsedToolCallJsonSet.add(toolJson);
+            }
             displayText =
               displayText.substring(0, toolMarkerIndex) +
               displayText.substring(endToolMarkerIndex + endToolMarker.length);
             displayText = displayText.trimStart();
+            toolMarkerIndex = displayText.indexOf(toolMarker);
+            endToolMarkerIndex = displayText.indexOf(endToolMarker);
           } catch (e) {
             // JSON 解析失败，先保留原始文本
           }
