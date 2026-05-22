@@ -19,7 +19,13 @@
       "Bash(sed -i '' 's/^### 2\\\\.9 /#### 2A.9 /g' ROADMAP.md)",
       "WebFetch(domain:mp.weixin.qq.com)",
       "Bash(npx tsx:*)",
-      "Bash(ls -la /Users/lg/Desktop/personal-assistant/.env*)"
+      "Bash(ls -la /Users/lg/Desktop/personal-assistant/.env*)",
+      "Bash(pkill -f \"test-chunking\")",
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(kill 42495 42494 42369 42368)",
+      "Bash(node -r dotenv/config -r tsx/register lib/server/test-db.ts)",
+      "Bash(curl -X POST http://localhost:3000/api/chat -H 'Content-Type: application/json' -d '{:*)"
     ]
   }
 }

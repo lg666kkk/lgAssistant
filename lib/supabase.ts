@@ -3,10 +3,30 @@ import { createClient } from '@supabase/supabase-js';
 // 初始化 Supabase 客户端
 // SUPABASE_URL: 项目地址（如 https://xxx.supabase.co）
 // SUPABASE_SERVICE_ROLE_KEY: 服务端密钥，拥有最高权限，只能在后端使用
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+let supabaseClient: any | null = null;
+
+export function getSupabase(): any {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('缺少 Supabase 环境变量：SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  supabaseClient = createClient(supabaseUrl, supabaseKey);
+  return supabaseClient;
+}
+
+export function hasSupabaseConfig(): boolean {
+  return Boolean(
+    (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+}
 
 // 文档 chunk 的类型定义
 export interface DocumentChunk {
@@ -34,7 +54,7 @@ export interface SearchResult {
 // 批量插入文档 chunk 到 documents 表
 // 注意：supabase 操作是异步的，必须用 async/await
 export async function insertDocuments(chunks: DocumentChunk[]) {
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from('documents')
     .insert(chunks.map(chunk => ({
       content: chunk.content,
@@ -49,7 +69,7 @@ export async function insertDocuments(chunks: DocumentChunk[]) {
 // 重新同步某个 Notion 页面前，先删掉它之前的所有 chunk
 // metadata->>page_id 是 PostgreSQL 提取 JSON 字段的语法
 export async function deleteDocumentsByPageId(pageId: string) {
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from('documents')
     .delete()
     .eq('metadata->>page_id', pageId);
@@ -64,7 +84,7 @@ export async function searchDocuments(
   threshold = 0.7,
   count = 5
 ): Promise<SearchResult[]> {
-  const { data, error } = await supabase.rpc('match_documents', {
+  const { data, error } = await getSupabase().rpc('match_documents', {
     query_embedding: queryEmbedding,
     match_threshold: threshold,
     match_count: count,

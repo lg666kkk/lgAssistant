@@ -48,9 +48,13 @@ export async function POST(req: Request) {
       );
     }
   }
-
+  // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry();
+  // 给模型看的工具说明
   const tools = toolRegistry.listForModel();
+  // 最大工具调用次数
+  const maxToolIterations = 8;
+
   // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
   let initialResponse;
   let stream;
