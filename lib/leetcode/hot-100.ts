@@ -55,6 +55,7 @@ export const LEETCODE_HOT_100_PROBLEMS = [
   createProblem(53, "最大子数组和", "maximum-subarray", "中等", ["数组", "动态规划"]),
   createProblem(54, "螺旋矩阵", "spiral-matrix", "中等", ["数组", "矩阵"]),
   createProblem(55, "跳跃游戏", "jump-game", "中等", ["数组", "贪心"]),
+  createProblem(45, "跳跃游戏 II", "jump-game-ii", "中等", ["数组", "贪心"]),
   createProblem(56, "合并区间", "merge-intervals", "中等", ["数组", "排序"]),
   createProblem(62, "不同路径", "unique-paths", "中等", ["数学", "动态规划"]),
   createProblem(64, "最小路径和", "minimum-path-sum", "中等", ["数组", "动态规划"]),

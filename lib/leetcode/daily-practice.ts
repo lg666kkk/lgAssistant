@@ -235,12 +235,13 @@ export function formatDailyLeetCodePractice(practice: DailyLeetCodePractice): st
   const problemLines = practice.problems
     .map(
       (problem, index) =>
-        `${index + 1}. ${problem.id}. ${problem.title}（${problem.difficulty}）\n   ${problem.url}\n   标签：${problem.tags.join("、")}`,
+        `${index + 1}. ${problem.id} - ${problem.title}（${problem.difficulty}）\n   - 链接：${problem.url}\n   - 标签：${problem.tags.join("、")}`,
     )
-    .join("\n");
+    .join("\n\n");
 
   return [
-    `今天的 LeetCode 热题 100 练习（${practice.date}）：`,
+    `## 今日 LeetCode 练习（热题 100）`,
+    `日期：${practice.date}`,
     problemLines,
     `当前第 ${practice.roundNo} 轮：已安排 ${practice.completedInRound}/${practice.total} 道，剩余 ${practice.remainingInRound} 道。`,
   ].join("\n\n");

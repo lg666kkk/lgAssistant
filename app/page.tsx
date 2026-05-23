@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useChatManager } from "@/hooks/use-chat-manager";
+import remarkGfm from "remark-gfm";
 
 export default function Home() {
   const {
@@ -146,9 +147,76 @@ export default function Home() {
                     } ${isStreaming ? "streaming-msg" : ""}`}
                   >
                     <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
                       components={{
+                        h2({ children }) {
+                          return (
+                            <h2 className="mb-2 text-base font-semibold text-white">
+                              {children}
+                            </h2>
+                          );
+                        },
                         p({ children }) {
-                          return <p>{children}</p>;
+                          return <p className="mb-2 last:mb-0">{children}</p>;
+                        },
+                        ul({ children }) {
+                          return (
+                            <ul className="my-2 list-disc space-y-1 pl-5">
+                              {children}
+                            </ul>
+                          );
+                        },
+                        ol({ children }) {
+                          return (
+                            <ol className="my-2 list-decimal space-y-2 pl-5">
+                              {children}
+                            </ol>
+                          );
+                        },
+                        li({ children }) {
+                          return <li className="leading-relaxed">{children}</li>;
+                        },
+                        a({ href, children }) {
+                          return (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="break-all text-cyan-300 underline decoration-cyan-500/60 underline-offset-2 hover:text-cyan-200"
+                            >
+                              {children}
+                            </a>
+                          );
+                        },
+                        table({ children }) {
+                          return (
+                            <table className="my-3 w-full border-collapse overflow-hidden rounded-lg border border-slate-700 text-left text-sm">
+                              {children}
+                            </table>
+                          );
+                        },
+                        thead({ children }) {
+                          return <thead className="bg-slate-900/80">{children}</thead>;
+                        },
+                        tbody({ children }) {
+                          return <tbody className="divide-y divide-slate-700">{children}</tbody>;
+                        },
+                        tr({ children }) {
+                          return <tr className="border-b border-slate-700 last:border-b-0">{children}</tr>;
+                        },
+                        th({ children }) {
+                          return (
+                            <th className="border border-slate-700 px-3 py-2 font-semibold text-slate-300">
+                              {children}
+                            </th>
+                          );
+                        },
+                        td({ children }) {
+                          return (
+                            <td className="border border-slate-700 px-3 py-2 align-top text-slate-200">
+                              {children}
+                            </td>
+                          );
                         },
                         code({ className, children }) {
                           const language = className?.replace("language-", "");

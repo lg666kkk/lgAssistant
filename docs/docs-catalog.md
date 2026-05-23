@@ -46,6 +46,7 @@
 | [database-schema-clean.sql](./schemas/database-schema-clean.sql) | SQL Schema | 清理旧表并重新创建 RAG 相关表和函数的初始化脚本。 |
 | [disable-rls.sql](./schemas/disable-rls.sql) | SQL Schema | 会话和消息表的 Row Level Security 策略配置脚本。 |
 | [leetcode-practice-schema.sql](./schemas/leetcode-practice-schema.sql) | SQL Schema | LeetCode 热题 100 每日练习计划表结构，记录每天抽题结果和练习轮次。 |
+| [leetcode-wrong-book-schema.sql](./schemas/leetcode-wrong-book-schema.sql) | SQL Schema | LeetCode 错题本表结构，记录错题、错因和复习计划。 |
 | [sessions-schema.sql](./schemas/sessions-schema.sql) | SQL Schema | 会话和消息表结构，用于保存聊天会话与消息记录。 |
 
 ## 7. 当前目录结构
@@ -74,6 +75,7 @@ docs/
     database-schema.sql
     disable-rls.sql
     leetcode-practice-schema.sql
+    leetcode-wrong-book-schema.sql
     sessions-schema.sql
 ```
 
