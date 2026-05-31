@@ -1,6 +1,6 @@
 import { SessionManager } from "./session-manager";
-
 export interface Message {
+  id?: string;
   role: "user" | "assistant";
   content: string;
   sources?: Array<{
@@ -42,6 +42,7 @@ export class ChatSession {
     try {
       const dbMessages = await this.sessionManager.getMessages(this.id);
       this.messages = dbMessages.map((msg) => ({
+        id: msg.id,
         role: msg.role,
         content: msg.content,
         sources: msg.sources,
@@ -239,7 +240,7 @@ export class ChatSession {
     }
 
     try {
-      await this.sessionManager.saveAssistantMessage(
+      const save = await this.sessionManager.saveAssistantMessage(
         this.id,
         lastMessage.content,
         {
@@ -251,10 +252,71 @@ export class ChatSession {
           },
         },
       );
+      console.log("xxxx", save);
+      lastMessage.id = save.id;
       return true;
     } catch (error) {
       console.error("保存 AI 回复失败:", error);
       return false;
+    }
+  }
+
+  async confirmToolCall(messageIndex: number, toolCallIndex: number) {
+    const message = this.messages[messageIndex];
+    const toolCall = message?.toolCalls?.[toolCallIndex];
+    if (!message || !toolCall) return;
+    const response = await fetch("/api/tools/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toolCall:
+          typeof toolCall.metadata?.toolCall === "object" &&
+          toolCall.metadata.toolCall !== null
+            ? toolCall.metadata.toolCall
+            : { name: toolCall.name, input: toolCall.input },
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.error || errorData.message || "确认工具调用失败",
+      );
+    }
+    const result = await response.json();
+    toolCall.ok = Boolean(result.ok);
+    toolCall.content = String(result.content ?? "");
+    toolCall.error =
+      typeof result.error === "string" ? result.error : undefined;
+    toolCall.metadata = {
+      ...toolCall.metadata,
+      status: result.ok ? "confirmed" : "failed",
+      confirmedAt: new Date().toISOString(),
+      result,
+    };
+    if (message.id) {
+      await this.sessionManager.updateMessageMetadata(message.id, {
+        toolCalls: message.toolCalls,
+      });
+    }
+  }
+  async cancelToolCall(messageIndex: number, toolCallIndex: number) {
+    const message = this.messages[messageIndex];
+    const toolCall = message?.toolCalls?.[toolCallIndex];
+
+    if (!message || !toolCall) return;
+
+    toolCall.ok = false;
+    toolCall.content = "用户已取消执行";
+    toolCall.metadata = {
+      ...toolCall.metadata,
+      status: "cancelled",
+      cancelledAt: new Date().toISOString(),
+    };
+
+    if (message.id) {
+      await this.sessionManager.updateMessageMetadata(message.id, {
+        toolCalls: message.toolCalls,
+      });
     }
   }
 }

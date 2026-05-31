@@ -65,6 +65,15 @@ export class SessionManager {
     return data || [];
   }
 
+  // 确认/取消工具后，把新的 toolCalls 写回当前 assistant 消息的 metadata。
+  async updateMessageMetadata(messageId: string, metadata: any): Promise<void> {
+    const { error } = await this.supabase
+      .from('messages')
+      .update({ metadata })
+      .eq('id', messageId);
+    if (error) throw error;
+  }
+
   /**
    * 创建新会话
    */

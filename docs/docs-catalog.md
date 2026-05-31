@@ -21,6 +21,8 @@
 |---|---|---|
 | [agent-learning-plan.md](./agent/agent-learning-plan.md) | 学习计划 | 基于 Agent-Learning-Hub，并结合当前项目制定的 Agent 系统学习路线。 |
 | [agent-tool-calling-learning-roadmap.md](./agent/agent-tool-calling-learning-roadmap.md) | 学习路线图 | 面向 Agent 工具调用的系统学习路线，覆盖 Tool Use、Tool Registry、Tool Router、Agent Loop 等。 |
+| [agent-loop-interview-summary.md](./agent/agent-loop-interview-summary.md) | 面试总结 / 实战复盘 | 从面试官和面试者两个视角总结当前项目的 Agent Loop 流程、核心问题和高分回答。 |
+| [agent-core-capabilities-roadmap.md](./agent/agent-core-capabilities-roadmap.md) | 核心能力路线图 | 针对当前运行时真实缺口，按学习价值排序的 7 个核心能力（上下文/记忆/可观测/事件协议/规划/类型/MCP），含每项实现步骤和面试视角。 |
 | [tool-calling-hands-on-get-current-time.md](./agent/tool-calling-hands-on-get-current-time.md) | 实战笔记 | 从 0 实现 `get_current_time` 工具，验证 Registry、Router、Tool、Result 最小闭环。 |
 | [tool-calling-ui-calculator-multi-tool.md](./agent/tool-calling-ui-calculator-multi-tool.md) | 实战总结 | 记录工具调用 UI、`calculator` 工具、多工具调用和工具调用信息落库等能力。 |
 

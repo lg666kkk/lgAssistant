@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 
 type CreateTodoInput = {
   title: string;
@@ -41,6 +41,9 @@ function parseInput(input: unknown): CreateTodoInput {
 }
 
 export const createTodoTool: ToolDefinition = {
+  runtime: {
+    ...defaultToolRuntimePolicy
+  },
   name: "create_todo",
   description:
     "创建一个待办事项。适合用户要求记录任务、提醒事项、计划安排时使用。这个工具会写入数据，必须先经过用户确认。",

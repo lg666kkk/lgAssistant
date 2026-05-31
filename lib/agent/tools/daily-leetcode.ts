@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 import {
   formatDailyLeetCodePractice,
   getDailyLeetCodePractice,
@@ -32,6 +32,9 @@ export const dailyLeetCodeTool: ToolDefinition = {
       },
     },
     additionalProperties: false,
+  },
+  runtime: {
+    ...defaultToolRuntimePolicy
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {

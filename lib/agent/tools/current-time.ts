@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 
 type CurrentTimeInput = {
   timezone?: string;
@@ -21,6 +21,9 @@ export const getCurrentTimeTool: ToolDefinition = {
   name: "get_current_time",
   description:
     "获取服务器当前时间，可按指定 timezone 和 locale 格式化。适合回答当前日期、当前时间、今天是星期几等问题。",
+  runtime: {
+    ...defaultToolRuntimePolicy
+  },
   input_schema: {
     type: "object",
     properties: {

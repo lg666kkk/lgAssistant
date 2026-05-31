@@ -4,6 +4,7 @@ import {
   runAgentLoop,
   enqueueSources,
   streamModelResponse,
+  forwardTextStream,
 } from "@/lib/agent/runtime";
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
@@ -100,30 +101,22 @@ export async function POST(req: Request) {
           closeStream();
           return;
         }
-        enqueueText("\n\n工具调用轮数已达到上限，我会基于当前结果总结。\n\n");
+        if (agentLoopResult.stopReason === "max_iterations") {
+          enqueueText("\n\n工具调用轮数已达到上限，我会基于当前结果总结。\n\n");
+        } else if (agentLoopResult.stopReason === "repeated_tool_call") {
+          enqueueText("\n\n检测到重复工具调用，我会基于当前结果总结。\n\n");
+        }
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
         stream = await streamModelResponse(loopMessages);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
-        for await (const chunk of stream) {
-          if (req.signal.aborted || closed) {
-            break;
-          }
-          if (
-            chunk.type === "content_block_delta" &&
-            chunk.delta.type === "text_delta"
-          ) {
-            const text = chunk.delta.text;
-            if (text) {
-              // 将文字编码后推入流中，浏览器会实时接收到这段文字
-              if (!enqueueText(text)) {
-                break;
-              }
-            }
-          }
-        }
+        await forwardTextStream(
+          stream,
+          enqueueText,
+          () => req.signal.aborted || closed,
+        );
 
         if (req.signal.aborted || closed) {
           closeStream();

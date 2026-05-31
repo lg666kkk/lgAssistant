@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 import { ragConfig } from "@/lib/config";
 import { RAGRetriever } from "@/lib/server/retriever";
 type SearchNoteInput = {
@@ -36,6 +36,10 @@ export const searchNotesTool: ToolDefinition = {
     },
     required: ["query"],
     additionalProperties: false,
+  },
+  runtime: {
+    ...defaultToolRuntimePolicy,
+    rateLimit: 20,
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {

@@ -23,12 +23,23 @@ export type ToolInputSchema = {
   additionalProperties?: boolean;
 };
 
+export interface ToolRuntimePolicy {
+  requiresAuth: boolean;
+  rateLimit?: number;
+  timeoutSeconds: number;
+  memoryLimitMb: number;
+  sandboxed: boolean;
+  dangerous: boolean;
+  costPerUse: number;
+}
+
 export interface ToolDefinition {
   name: string; // 工具名称
   description: string; // 工具说明
   input_schema: ToolInputSchema; // 工具参数
   riskLevel: ToolRiskLevel; // 工具风险等级
   execute(params: unknown): Promise<ToolResult>; // 执行工具的函数
+  runtime: ToolRuntimePolicy;
 }
 // 它表示 一次工具调用请求。
 export interface ToolCall {
@@ -45,4 +56,14 @@ export interface ToolExecutionResult extends ToolResult {
 
 export type ExecuteToolCallOptions = {
   approved?: boolean;
+};
+
+export const defaultToolRuntimePolicy: ToolRuntimePolicy = {
+  requiresAuth: false,
+  rateLimit: undefined,
+  timeoutSeconds: 30,
+  memoryLimitMb: 512,
+  sandboxed: true,
+  dangerous: false,
+  costPerUse: 0,
 };

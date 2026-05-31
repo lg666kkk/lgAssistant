@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 import {
   formatLeetCodeWrongProblems,
   getDueLeetCodeReviews,
@@ -59,6 +59,9 @@ export const leetCodeWrongBookTool: ToolDefinition = {
   name: "leetcode_wrong_book",
   description:
     "管理 LeetCode 错题本。支持记录做错的题、查看全部错题、查看今日到期复习题、标记复习结果。适合用户说“这题我做错了”“帮我看看该复习哪些题”“我复习完了”时使用。",
+  runtime: {
+    ...defaultToolRuntimePolicy
+  },
   input_schema: {
     type: "object",
     properties: {

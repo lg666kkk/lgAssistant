@@ -174,7 +174,9 @@ export default function Home() {
                           );
                         },
                         li({ children }) {
-                          return <li className="leading-relaxed">{children}</li>;
+                          return (
+                            <li className="leading-relaxed">{children}</li>
+                          );
                         },
                         a({ href, children }) {
                           return (
@@ -196,13 +198,25 @@ export default function Home() {
                           );
                         },
                         thead({ children }) {
-                          return <thead className="bg-slate-900/80">{children}</thead>;
+                          return (
+                            <thead className="bg-slate-900/80">
+                              {children}
+                            </thead>
+                          );
                         },
                         tbody({ children }) {
-                          return <tbody className="divide-y divide-slate-700">{children}</tbody>;
+                          return (
+                            <tbody className="divide-y divide-slate-700">
+                              {children}
+                            </tbody>
+                          );
                         },
                         tr({ children }) {
-                          return <tr className="border-b border-slate-700 last:border-b-0">{children}</tr>;
+                          return (
+                            <tr className="border-b border-slate-700 last:border-b-0">
+                              {children}
+                            </tr>
+                          );
                         },
                         th({ children }) {
                           return (
@@ -298,62 +312,24 @@ export default function Home() {
                                     "pending_confirmation" && (
                                     <div className="mt-2 flex gap-2">
                                       <button
+                                        className="bg-slate-700/70 rounded-md px-2"
                                         onClick={async () => {
-                                          const response = await fetch(
-                                            "/api/tools/confirm",
-                                            {
-                                              method: "POST",
-                                              headers: {
-                                                "Content-Type":
-                                                  "application/json",
-                                              },
-                                              body: JSON.stringify({
-                                                toolCall:
-                                                  typeof toolCall.metadata
-                                                    ?.toolCall === "object" &&
-                                                  toolCall.metadata.toolCall !==
-                                                    null
-                                                    ? toolCall.metadata.toolCall
-                                                    : {
-                                                        name: toolCall.name,
-                                                        input: toolCall.input,
-                                                      },
-                                              }),
-                                            },
+                                          await activeSession?.confirmToolCall(
+                                            i,
+                                            idx,
                                           );
-                                          const result = await response.json();
-                                          toolCall.ok = Boolean(result.ok);
-                                          toolCall.content = String(
-                                            result.content ?? "",
-                                          );
-                                          toolCall.error =
-                                            typeof result.error === "string"
-                                              ? result.error
-                                              : undefined;
-                                          toolCall.metadata = {
-                                            ...toolCall.metadata,
-                                            status: result.ok
-                                              ? "confirmed"
-                                              : "failed",
-                                            confirmedAt:
-                                              new Date().toISOString(),
-                                            result,
-                                          };
                                           rerender();
                                         }}
-                                        type="button"
-                                        className="rounded-md bg-emerald-500/20 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/30"
                                       >
                                         确认执行
                                       </button>
                                       <button
-                                        onClick={() => {
-                                          toolCall.ok = false;
-                                          toolCall.content = "用户已取消执行";
-                                          toolCall.metadata = {
-                                            ...toolCall.metadata,
-                                            status: "cancelled",
-                                          };
+                                        onClick={async () => {
+                                          await activeSession?.cancelToolCall(
+                                            i,
+                                            idx,
+                                          );
+                                          rerender();
                                         }}
                                         type="button"
                                         className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600"

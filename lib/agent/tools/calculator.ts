@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
 
 type CalculatorInput = {
   expression?: string;
@@ -20,6 +20,12 @@ function isSafeExpression(expression: string): boolean {
 }
 
 export const calculatorTool: ToolDefinition = {
+  runtime: {
+    ...defaultToolRuntimePolicy,
+    rateLimit: 10,
+    memoryLimitMb: 10,
+    timeoutSeconds: 3,
+  },
   name: "calculator",
   description: "计算数学表达式",
   riskLevel: "safe",
