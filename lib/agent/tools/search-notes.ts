@@ -53,10 +53,18 @@ export const searchNotesTool: ToolDefinition = {
     }
     try {
       const retriever = new RAGRetriever();
-      const results = await retriever.search(query, {
+      let results = await retriever.search(query, {
         matchThreshold: ragConfig.similarityThreshold,
         matchCount: limit ?? ragConfig.maxResults,
       });
+
+      if (results.length === 0) {
+        results = await retriever.search(query, {
+          matchThreshold: 0,
+          matchCount: limit ?? ragConfig.maxResults,
+        });
+      }
+
       if (results.length === 0) {
         return {
           ok: true,

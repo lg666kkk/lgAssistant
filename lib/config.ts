@@ -56,7 +56,7 @@ export const supabaseConfig = {
  */
 export const ragConfig = {
   // 向量检索配置
-  similarityThreshold: 0.7,  // 相似度阈值
+  similarityThreshold: 0.5,  // 相似度阈值
   maxResults: 5,              // 最多返回结果数
 
   // 上下文配置

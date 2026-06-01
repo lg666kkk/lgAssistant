@@ -5,11 +5,23 @@ import {
   estimateTokens,
   truncateToolContent,
 } from "@/lib/agent/runtime/budget";
+import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
 import Anthropic from "@anthropic-ai/sdk";
 
 type ModelMessage = any;
 type ModelContentBlock = any;
 type ToolUseBlock = any;
+
+type AgentLoopMetrics = {
+  estimatedTokensSpent: number;
+  modelCallCount: number;
+  toolCallCount: number;
+  totalToolCost: number;
+  toolDurations: Array<{
+    name: string;
+    durationMs?: number;
+  }>;
+};
 
 type AgentLoopStopReason =
   | "completed"
@@ -21,6 +33,7 @@ type AgentLoopResult = {
   loopMessages: ModelMessage[];
   completed: boolean;
   stopReason: AgentLoopStopReason;
+  metrics: AgentLoopMetrics;
 };
 
 export interface ToolSourceType {
@@ -115,12 +128,31 @@ export async function executeTools(
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
   let toolMarkers: string[] = [];
-
+  const toolMetrics: Array<{
+    name: string;
+    durationMs?: number;
+    costPerUse: number;
+  }> = [];
   for (const toolUse of toolUses) {
     const toolResult = await executeToolCall(toolRegistry, {
       name: toolUse.name,
       input: toolUse.input,
       id: toolUse.id,
+    });
+    const durationMs =
+      typeof toolResult.metadata?.durationMs === "number"
+        ? toolResult.metadata.durationMs
+        : undefined;
+
+    const costPerUse =
+      typeof toolResult.metadata?.costPerUse === "number"
+        ? toolResult.metadata.costPerUse
+        : 0;
+
+    toolMetrics.push({
+      name: toolUse.name,
+      durationMs,
+      costPerUse,
     });
     if (
       toolUse.name === "search_notes" &&
@@ -152,7 +184,7 @@ export async function executeTools(
         }
       }
     }
-    const truncated = truncateToolContent(toolResult.content, 20000);
+    const truncated = truncateToolContent(toolResult.content, 2000);
     toolResultBlocks.push({
       type: "tool_result",
       tool_use_id: toolUse.id,
@@ -179,6 +211,7 @@ export async function executeTools(
     toolResultBlocks,
     toolSources,
     toolMarkers,
+    toolMetrics,
   };
 }
 
@@ -201,7 +234,25 @@ export async function runAgentLoop(
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
   const tokenBudget = new TokenBudget(24_000);
+  const metrics: AgentLoopMetrics = {
+    estimatedTokensSpent: 0,
+    modelCallCount: 0,
+    toolCallCount: 0,
+    totalToolCost: 0,
+    toolDurations: [],
+  };
   for (let i = 0; i < maxToolIterations; i++) {
+    const compacted = compactLoopMessages(loopMessages, {
+      maxTokens: 16_000,
+      keepRecentMessages: 4,
+    });
+    loopMessages = compacted.messages;
+    if (compacted.compacted) {
+      console.log("[AgentLoopCompaction]", {
+        beforeTokens: compacted.beforeTokens,
+        afterTokens: compacted.afterTokens,
+      });
+    }
     // Agent 每轮调模型前先问一句，当前上下文还塞得下吗
     const estimatedContextTokens = estimateTokens(JSON.stringify(loopMessages));
     if (!tokenBudget.canAfford(estimatedContextTokens)) {
@@ -212,9 +263,12 @@ export async function runAgentLoop(
         loopMessages,
         completed: false,
         stopReason: "token_budget_exceeded",
+        metrics,
       };
     }
     tokenBudget.spend(estimatedContextTokens);
+    metrics.estimatedTokensSpent = tokenBudget.spent;
+    metrics.modelCallCount += 1;
     let initialResponse = await callModel(loopMessages, tools);
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
@@ -230,6 +284,7 @@ export async function runAgentLoop(
         loopMessages,
         completed: true,
         stopReason: "completed",
+        metrics,
       };
     }
     const toolCallKeys = toolUses.map(getToolCallKey);
@@ -245,15 +300,25 @@ export async function runAgentLoop(
         loopMessages,
         completed: false,
         stopReason: "repeated_tool_call",
+        metrics,
       };
     }
     for (const key of toolCallKeys) {
       seenToolCalls.add(key);
     }
     // 给模型用，作为 Anthropic tool_result 消息
-    const { toolResultBlocks, toolSources, toolMarkers } = await executeTools(
-      toolUses,
-      toolRegistry,
+    const { toolResultBlocks, toolSources, toolMarkers, toolMetrics } =
+      await executeTools(toolUses, toolRegistry);
+    metrics.toolCallCount += toolMetrics.length;
+    metrics.totalToolCost += toolMetrics.reduce(
+      (sum, item) => sum + item.costPerUse,
+      0,
+    );
+    metrics.toolDurations.push(
+      ...toolMetrics.map((item) => ({
+        name: item.name,
+        durationMs: item.durationMs,
+      })),
     );
     enqueueToolMarkers(toolMarkers, enqueueText);
     allToolSources.push(...toolSources);
@@ -267,6 +332,7 @@ export async function runAgentLoop(
     loopMessages,
     completed: false,
     stopReason: "max_iterations",
+    metrics,
   };
 }
 

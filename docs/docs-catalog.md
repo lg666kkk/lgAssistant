@@ -25,6 +25,7 @@
 | [agent-core-capabilities-roadmap.md](./agent/agent-core-capabilities-roadmap.md) | 核心能力路线图 | 针对当前运行时真实缺口，按学习价值排序的 7 个核心能力（上下文/记忆/可观测/事件协议/规划/类型/MCP），含每项实现步骤和面试视角。 |
 | [tool-calling-hands-on-get-current-time.md](./agent/tool-calling-hands-on-get-current-time.md) | 实战笔记 | 从 0 实现 `get_current_time` 工具，验证 Registry、Router、Tool、Result 最小闭环。 |
 | [tool-calling-ui-calculator-multi-tool.md](./agent/tool-calling-ui-calculator-multi-tool.md) | 实战总结 | 记录工具调用 UI、`calculator` 工具、多工具调用和工具调用信息落库等能力。 |
+| [context-token-budget.md](./agent/context-token-budget.md) | 实战笔记 | 能力 1：上下文与 Token 预算管理，含预算计数器、工具结果截断、滚动压缩三层防爆策略。 |
 
 ## 4. RAG 知识库系统
 

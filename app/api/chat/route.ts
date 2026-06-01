@@ -96,6 +96,7 @@ export async function POST(req: Request) {
           allToolSources,
           enqueueText,
         );
+        console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
         if (agentLoopResult.completed) {
           closeStream();
