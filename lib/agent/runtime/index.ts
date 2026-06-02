@@ -6,13 +6,14 @@ import {
   truncateToolContent,
 } from "@/lib/agent/runtime/budget";
 import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
+import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import Anthropic from "@anthropic-ai/sdk";
 
 type ModelMessage = any;
 type ModelContentBlock = any;
 type ToolUseBlock = any;
 
-type AgentLoopMetrics = {
+export type AgentLoopMetrics = {
   estimatedTokensSpent: number;
   modelCallCount: number;
   toolCallCount: number;
@@ -23,7 +24,13 @@ type AgentLoopMetrics = {
   }>;
 };
 
-type AgentLoopStopReason =
+import type {
+  AgentTrace,
+  ModelTraceStep,
+  ToolTraceStep,
+} from "@/lib/agent/runtime/trace";
+
+export type AgentLoopStopReason =
   | "completed"
   | "token_budget_exceeded"
   | "repeated_tool_call"
@@ -34,6 +41,7 @@ type AgentLoopResult = {
   completed: boolean;
   stopReason: AgentLoopStopReason;
   metrics: AgentLoopMetrics;
+  trace: AgentTrace;
 };
 
 export interface ToolSourceType {
@@ -128,6 +136,7 @@ export async function executeTools(
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
   let toolMarkers: string[] = [];
+  const toolSteps: ToolTraceStep[] = [];
   const toolMetrics: Array<{
     name: string;
     durationMs?: number;
@@ -206,12 +215,28 @@ export async function executeTools(
       }) +
       "\n__END_TOOL_CALL__\n";
     toolMarkers.push(toolMarker);
+    toolSteps.push({
+      type: "tool",
+      index: 0,
+      startedAt: Date.now(),
+      durationMs,
+      name: toolUse.name,
+      input: toolUse.input,
+      ok: toolResult.ok,
+      toolCallId: toolUse.id,
+      contentSummary: truncated.content,
+      contentTruncated: truncated.truncated,
+      contentOriginalChars: truncated.originalChars,
+      error: toolResult.error,
+      costPerUse,
+    });
   }
   return {
     toolResultBlocks,
     toolSources,
     toolMarkers,
     toolMetrics,
+    toolSteps,
   };
 }
 
@@ -230,10 +255,14 @@ export async function runAgentLoop(
   maxToolIterations: number,
   allToolSources: ToolSourceType[],
   enqueueText: any,
+  requestId: string = "",
+  sessionId?: string,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
   const tokenBudget = new TokenBudget(24_000);
+  const trace = createTrace(requestId, sessionId);
+  let stepIndex = 0; // model/tool step 共享的全局递增序号
   const metrics: AgentLoopMetrics = {
     estimatedTokensSpent: 0,
     modelCallCount: 0,
@@ -241,6 +270,19 @@ export async function runAgentLoop(
     totalToolCost: 0,
     toolDurations: [],
   };
+  // 在每个 return 出口前调用，把 trace 的总览字段回填成真实值
+  const finalizeTrace = (
+    stopReason: AgentLoopStopReason,
+    completed: boolean,
+  ) => {
+    trace.stopReason = stopReason;
+    trace.completed = completed;
+    trace.endedAt = Date.now();
+    trace.totalDurationMs = trace.endedAt - trace.startedAt;
+    trace.metrics = metrics;
+    return trace;
+  };
+
   for (let i = 0; i < maxToolIterations; i++) {
     const compacted = compactLoopMessages(loopMessages, {
       maxTokens: 16_000,
@@ -264,14 +306,39 @@ export async function runAgentLoop(
         completed: false,
         stopReason: "token_budget_exceeded",
         metrics,
+        trace: finalizeTrace('token_budget_exceeded', false),
       };
     }
     tokenBudget.spend(estimatedContextTokens);
     metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
+    const modelStartedAt = Date.now();
     let initialResponse = await callModel(loopMessages, tools);
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
+    const textSummary = summarizeText(directText);
+    const modelStep: ModelTraceStep = {
+      type: "model",
+      index: stepIndex++,
+      startedAt: modelStartedAt,
+      durationMs: Date.now() - modelStartedAt,
+      textSummary: textSummary.content,
+      textTruncated: textSummary.truncated,
+      textOriginalChars: textSummary.originalChars,
+      requestedToolCalls: toolUses.map((t: ToolUseBlock) => ({
+        name: t.name,
+        id: t.id,
+        input: t.input,
+      })),
+      estimatedContextTokens,
+      usage: initialResponse.usage
+        ? {
+            inputTokens: initialResponse.usage.input_tokens,
+            outputTokens: initialResponse.usage.output_tokens,
+          }
+        : undefined,
+    };
+    trace.steps.push(modelStep);
     if (toolUses.length === 0) {
       // 直接返回文本
       if (directText) {
@@ -285,6 +352,7 @@ export async function runAgentLoop(
         completed: true,
         stopReason: "completed",
         metrics,
+        trace: finalizeTrace('completed', true),
       };
     }
     const toolCallKeys = toolUses.map(getToolCallKey);
@@ -301,14 +369,20 @@ export async function runAgentLoop(
         completed: false,
         stopReason: "repeated_tool_call",
         metrics,
+        trace: finalizeTrace('repeated_tool_call', false),
       };
     }
     for (const key of toolCallKeys) {
       seenToolCalls.add(key);
     }
     // 给模型用，作为 Anthropic tool_result 消息
-    const { toolResultBlocks, toolSources, toolMarkers, toolMetrics } =
-      await executeTools(toolUses, toolRegistry);
+    const {
+      toolResultBlocks,
+      toolSources,
+      toolMarkers,
+      toolMetrics,
+      toolSteps,
+    } = await executeTools(toolUses, toolRegistry);
     metrics.toolCallCount += toolMetrics.length;
     metrics.totalToolCost += toolMetrics.reduce(
       (sum, item) => sum + item.costPerUse,
@@ -320,6 +394,10 @@ export async function runAgentLoop(
         durationMs: item.durationMs,
       })),
     );
+    for (const step of toolSteps) {
+      step.index = stepIndex++;
+      trace.steps.push(step);
+    }
     enqueueToolMarkers(toolMarkers, enqueueText);
     allToolSources.push(...toolSources);
     loopMessages = appendToolResults(
@@ -333,6 +411,7 @@ export async function runAgentLoop(
     completed: false,
     stopReason: "max_iterations",
     metrics,
+    trace: finalizeTrace('max_iterations', false),
   };
 }
 

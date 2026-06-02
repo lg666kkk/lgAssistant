@@ -6,6 +6,7 @@ import {
   streamModelResponse,
   forwardTextStream,
 } from "@/lib/agent/runtime";
+import { formatTraceTree } from "@/lib/agent/runtime/trace";
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
   // 解析请求体
@@ -96,6 +97,7 @@ export async function POST(req: Request) {
           allToolSources,
           enqueueText,
         );
+        console.log('=== Agent Loop Trace ===', formatTraceTree(agentLoopResult.trace));
         console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
         if (agentLoopResult.completed) {
