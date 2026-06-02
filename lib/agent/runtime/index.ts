@@ -257,6 +257,7 @@ export async function runAgentLoop(
   enqueueText: any,
   requestId: string = "",
   sessionId?: string,
+  deps: { callModel: typeof callModel } = { callModel },
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -306,14 +307,14 @@ export async function runAgentLoop(
         completed: false,
         stopReason: "token_budget_exceeded",
         metrics,
-        trace: finalizeTrace('token_budget_exceeded', false),
+        trace: finalizeTrace("token_budget_exceeded", false),
       };
     }
     tokenBudget.spend(estimatedContextTokens);
     metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
     const modelStartedAt = Date.now();
-    let initialResponse = await callModel(loopMessages, tools);
+    let initialResponse = await deps.callModel(loopMessages, tools);
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
@@ -352,7 +353,7 @@ export async function runAgentLoop(
         completed: true,
         stopReason: "completed",
         metrics,
-        trace: finalizeTrace('completed', true),
+        trace: finalizeTrace("completed", true),
       };
     }
     const toolCallKeys = toolUses.map(getToolCallKey);
@@ -369,7 +370,7 @@ export async function runAgentLoop(
         completed: false,
         stopReason: "repeated_tool_call",
         metrics,
-        trace: finalizeTrace('repeated_tool_call', false),
+        trace: finalizeTrace("repeated_tool_call", false),
       };
     }
     for (const key of toolCallKeys) {
@@ -411,7 +412,7 @@ export async function runAgentLoop(
     completed: false,
     stopReason: "max_iterations",
     metrics,
-    trace: finalizeTrace('max_iterations', false),
+    trace: finalizeTrace("max_iterations", false),
   };
 }
 
