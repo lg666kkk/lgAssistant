@@ -26,6 +26,7 @@
 | [tool-calling-hands-on-get-current-time.md](./agent/tool-calling-hands-on-get-current-time.md) | 实战笔记 | 从 0 实现 `get_current_time` 工具，验证 Registry、Router、Tool、Result 最小闭环。 |
 | [tool-calling-ui-calculator-multi-tool.md](./agent/tool-calling-ui-calculator-multi-tool.md) | 实战总结 | 记录工具调用 UI、`calculator` 工具、多工具调用和工具调用信息落库等能力。 |
 | [context-token-budget.md](./agent/context-token-budget.md) | 实战笔记 | 能力 1：上下文与 Token 预算管理，含预算计数器、工具结果截断、滚动压缩三层防爆策略。 |
+| [observability-trace-eval.md](./agent/observability-trace-eval.md) | 实战笔记 | 能力 3：可观测性 Trace（结构化调用树 + 落库）与 Eval（双轨 mock/live），含判别联合、依赖注入、vitest 踩坑。 |
 
 ## 4. RAG 知识库系统
 
@@ -51,6 +52,7 @@
 | [leetcode-practice-schema.sql](./schemas/leetcode-practice-schema.sql) | SQL Schema | LeetCode 热题 100 每日练习计划表结构，记录每天抽题结果和练习轮次。 |
 | [leetcode-wrong-book-schema.sql](./schemas/leetcode-wrong-book-schema.sql) | SQL Schema | LeetCode 错题本表结构，记录错题、错因和复习计划。 |
 | [sessions-schema.sql](./schemas/sessions-schema.sql) | SQL Schema | 会话和消息表结构，用于保存聊天会话与消息记录。 |
+| [traces-schema.sql](./schemas/traces-schema.sql) | SQL Schema | Agent 运行 Trace 表（agent_traces），一行一次 runAgentLoop 执行轨迹，steps/metrics 存 JSONB。 |
 
 ## 7. 当前目录结构
 

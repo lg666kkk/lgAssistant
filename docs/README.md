@@ -42,5 +42,6 @@
 | 01 | Agent Loop 面试总结 | [agent-loop-interview-summary.md](./agent/agent-loop-interview-summary.md) | 已完成 |
 | 02 | Agent 核心能力实现路线图 | [agent-core-capabilities-roadmap.md](./agent/agent-core-capabilities-roadmap.md) | 规划 |
 | 03 | 上下文与 Token 预算管理（能力 1） | [context-token-budget.md](./agent/context-token-budget.md) | 已完成 |
+| 04 | 可观测性 Trace 与 Eval（能力 3） | [observability-trace-eval.md](./agent/observability-trace-eval.md) | 已完成 |
 
 > 后续每实现一个功能，在此表格追加一行。
