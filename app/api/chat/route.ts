@@ -7,6 +7,7 @@ import {
   forwardTextStream,
 } from "@/lib/agent/runtime";
 import { formatTraceTree } from "@/lib/agent/runtime/trace";
+import { saveTrace } from "@/lib/agent/runtime/trace-store";
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
   // 解析请求体
@@ -21,7 +22,9 @@ export async function POST(req: Request) {
   }
 
   // 校验 messages 字段
-  const { messages } = body;
+  const requestId = crypto.randomUUID();
+  const { messages, sessionId } = body;
+
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(
       JSON.stringify({ error: "messages 字段必须是非空数组" }),
@@ -96,8 +99,14 @@ export async function POST(req: Request) {
           maxToolIterations,
           allToolSources,
           enqueueText,
+          requestId,
+          sessionId
         );
-        console.log('=== Agent Loop Trace ===', formatTraceTree(agentLoopResult.trace));
+        console.log(
+          "=== Agent Loop Trace ===",
+          formatTraceTree(agentLoopResult.trace),
+        );
+        await saveTrace(agentLoopResult.trace)
         console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
         if (agentLoopResult.completed) {
