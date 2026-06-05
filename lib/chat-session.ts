@@ -101,6 +101,7 @@ export class ChatSession {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: this.messages.slice(0, -1),
+          sessionId: this.id, // 带上 session ID，让后端能读写 Redis 会话记忆
         }),
         signal: this.abortController.signal,
       });

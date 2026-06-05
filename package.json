@@ -23,6 +23,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.3",
+    "ioredis": "^5.11.1",
     "next": "^14.2.3",
     "openai": "^6.37.0",
     "postcss": "^8.4.38",

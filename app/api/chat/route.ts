@@ -8,6 +8,12 @@ import {
 } from "@/lib/agent/runtime";
 import { formatTraceTree } from "@/lib/agent/runtime/trace";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
+import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
+import { RedisSessionStore } from "@/lib/agent/memory/session-store";
+
+// 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
+const sessionStore = new RedisSessionStore();
+
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
   // 解析请求体
@@ -90,8 +96,36 @@ export async function POST(req: Request) {
       };
 
       try {
+        // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
+        // 前端传完整历史时（messages.length > 1）直接用，不覆盖
         let loopMessages = [...messages];
+        if (sessionId && messages.length === 1) {
+          try {
+            const history = await sessionStore.getHistory(sessionId);
+            if (history.length > 0) {
+              // 把 Redis 里的历史拼在本轮消息前面
+              loopMessages = [...history, ...messages];
+            }
+          } catch (e: any) {
+            console.error("[session] 读取历史失败，跳过:", e.message);
+          }
+        }
+
         let allToolSources: ToolSourceType[] = [];
+
+        // ① 召回：用最后一条 user 消息当 query，捞出相关记忆，拼成 system 注入
+        const lastUser = [...messages]
+          .reverse()
+          .find((m: any) => m.role === "user");
+        let memorySystem = "";
+        if (lastUser) {
+          try {
+            memorySystem = await recallForPrompt(lastUser.content);
+          } catch (e: any) {
+            console.error("[memory] 召回失败，跳过注入:", e.message);
+          }
+        }
+
         const agentLoopResult = await runAgentLoop(
           loopMessages,
           tools,
@@ -100,7 +134,9 @@ export async function POST(req: Request) {
           allToolSources,
           enqueueText,
           requestId,
-          sessionId
+          sessionId,
+          undefined, // deps 用默认
+          memorySystem, // ② 注入召回的记忆
         );
         console.log(
           "=== Agent Loop Trace ===",
@@ -109,6 +145,41 @@ export async function POST(req: Request) {
         await saveTrace(agentLoopResult.trace)
         console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
+
+        // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
+        void consolidate(messages, { sessionId }).catch((e: any) =>
+          console.error("[memory] 沉淀失败:", e.message),
+        );
+
+        // ④ 会话记忆写入：把本轮 user + assistant 消息追加进 Redis
+        if (sessionId) {
+          void (async () => {
+            try {
+              // 只存本轮最后一条 user 消息（前端传的是完整历史，避免重复追加）
+              const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
+              if (lastUser2) {
+                await sessionStore.append(sessionId, { role: "user", content: lastUser2.content });
+                console.log("[session] 已写入 user 消息");
+              }
+              // 助手回复：content 是 ContentBlock[]，用 extractText 取文本
+              const lastAssistant = [...agentLoopResult.loopMessages]
+                .reverse()
+                .find((m: any) => m.role === "assistant");
+              if (lastAssistant) {
+                const text = Array.isArray(lastAssistant.content)
+                  ? lastAssistant.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
+                  : lastAssistant.content;
+                if (text) {
+                  await sessionStore.append(sessionId, { role: "assistant", content: text });
+                  console.log("[session] 已写入 assistant 消息");
+                }
+              }
+            } catch (e: any) {
+              console.error("[session] 写入历史失败:", e.message);
+            }
+          })();
+        }
+
         if (agentLoopResult.completed) {
           closeStream();
           return;
@@ -120,7 +191,7 @@ export async function POST(req: Request) {
         }
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
-        stream = await streamModelResponse(loopMessages);
+        stream = await streamModelResponse(loopMessages, memorySystem);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容

@@ -120,12 +120,15 @@ const client = new Anthropic({
 export async function callModel(
   messages: ModelMessage[],
   tools: any[],
+  system?: string, // 召回的记忆作为 system 注入（Anthropic 的 system 是顶层参数，不在 messages 里）
 ): Promise<any> {
   return await client.messages.create({
     model: deepseekConfig.model,
     max_tokens: deepseekConfig.maxTokens,
     messages,
     tools,
+    // 只有非空才传：空串没必要占 system，也省 token
+    ...(system ? { system } : {}),
   });
 }
 
@@ -258,6 +261,7 @@ export async function runAgentLoop(
   requestId: string = "",
   sessionId?: string,
   deps: { callModel: typeof callModel } = { callModel },
+  system?: string, // 召回的记忆，透传给每轮 callModel 作为 system 注入
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -314,7 +318,7 @@ export async function runAgentLoop(
     metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
     const modelStartedAt = Date.now();
-    let initialResponse = await deps.callModel(loopMessages, tools);
+    let initialResponse = await deps.callModel(loopMessages, tools, system);
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
@@ -416,12 +420,13 @@ export async function runAgentLoop(
   };
 }
 
-export async function streamModelResponse(messages: ModelMessage[]) {
+export async function streamModelResponse(messages: ModelMessage[], system?: string) {
   return client.messages.create({
     model: deepseekConfig.model,
     max_tokens: deepseekConfig.maxTokens,
     messages,
     stream: true,
+    ...(system ? { system } : {}),
   });
 }
 

@@ -11,6 +11,7 @@ export default defineConfig({
   plugins: [tsconfigPaths()], // 坑1：解析 @/* 别名
   test: {
     environment: "node",
+    setupFiles: ["./lib/test-setup.ts"], // 坑3：注入 WebSocket，见该文件注释
     include: ["lib/**/*.test.ts"],
     testTimeout: 30_000, // eval 真调模型时单 case 可能好几秒，给宽松超时
   },
