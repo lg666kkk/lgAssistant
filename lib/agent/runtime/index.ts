@@ -114,16 +114,24 @@ const client = new Anthropic({
 export async function callModel(
   messages: ModelMessage[],
   tools: Anthropic.Tool[],
-  system?: string, // 召回的记忆作为 system 注入（Anthropic 的 system 是顶层参数，不在 messages 里）
+  system?: string,
+  onTextDelta?: (text: string) => void,
 ): Promise<Anthropic.Message> {
-  return await client.messages.create({
+  const stream = client.messages.stream({
     model: deepseekConfig.model,
     max_tokens: deepseekConfig.maxTokens,
     messages,
     tools,
-    // 只有非空才传：空串没必要占 system，也省 token
     ...(system ? { system } : {}),
   });
+
+  // text delta 逐 token 推给前端；tool_use block 由 SDK 在 finalMessage() 里累积
+  // 模型要么输出文本、要么调工具，两者不会混在同一轮 → 工具调用轮 text delta 为空，推空串无害
+  if (onTextDelta) {
+    stream.on("text", (text) => onTextDelta(text));
+  }
+
+  return stream.finalMessage();
 }
 
 export async function executeTools(
@@ -312,7 +320,10 @@ export async function runAgentLoop(
     metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
     const modelStartedAt = Date.now();
-    let initialResponse = await deps.callModel(loopMessages, tools, system);
+    // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
+    const onTextDelta = (text: string) =>
+      enqueueEvent({ type: "text", content: text }, enqueueText);
+    let initialResponse = await deps.callModel(loopMessages, tools, system, onTextDelta);
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
@@ -339,10 +350,7 @@ export async function runAgentLoop(
     };
     trace.steps.push(modelStep);
     if (toolUses.length === 0) {
-      // 直接返回文本
-      if (directText) {
-        enqueueEvent({ type: "text", content: directText }, enqueueText);
-      }
+      // 文本已在 callModel 流式过程中逐 token 推出，这里只处理来源
       if (allToolSources.length > 0) {
         enqueueSources(allToolSources, enqueueText);
       }
