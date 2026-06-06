@@ -186,6 +186,10 @@ export class ChatSession {
     this.abortController?.abort();
   }
 
+  get isRunning() {
+    return this.loading || this.streaming;
+  }
+
   private async saveCurrentAssistantMessage(
     metadata?: Record<string, unknown>,
   ): Promise<boolean> {
@@ -228,6 +232,7 @@ export class ChatSession {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionId: this.id,
         toolCall:
           typeof toolCall.metadata?.toolCall === "object" &&
           toolCall.metadata.toolCall !== null

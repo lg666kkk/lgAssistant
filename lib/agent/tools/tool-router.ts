@@ -31,7 +31,11 @@ const toolRateLimitBuckets = new Map<
   }
 >();
 
-function checkRateLimit(toolName: string, rateLimit?: number) {
+function getRateLimitBucketKey(toolName: string, scopeId?: string) {
+  return `${scopeId ?? "global"}:${toolName}`;
+}
+
+function checkRateLimit(toolName: string, rateLimit?: number, scopeId?: string) {
   if (!rateLimit) {
     return {
       ok: true,
@@ -40,9 +44,10 @@ function checkRateLimit(toolName: string, rateLimit?: number) {
   }
   const now = Date.now();
   const windowMs = 60 * 1000; // 窗口大小是1分钟
-  const bucket = toolRateLimitBuckets.get(toolName);
+  const bucketKey = getRateLimitBucketKey(toolName, scopeId);
+  const bucket = toolRateLimitBuckets.get(bucketKey);
   if (!bucket || now - bucket.windowStartedAt >= windowMs) {
-    toolRateLimitBuckets.set(toolName, {
+    toolRateLimitBuckets.set(bucketKey, {
       windowStartedAt: now,
       count: 1,
     });
@@ -118,9 +123,14 @@ export async function executeToolCall(
       },
     };
   }
-  const rateLimitCheck = checkRateLimit(tool.name, tool.runtime.rateLimit);
+  const rateLimitCheck = checkRateLimit(
+    tool.name,
+    tool.runtime.rateLimit,
+    options.scopeId,
+  );
   console.log("[RateLimit]", {
     toolName: tool.name,
+    scopeId: options.scopeId,
     rateLimit: tool.runtime.rateLimit,
     result: rateLimitCheck,
   });

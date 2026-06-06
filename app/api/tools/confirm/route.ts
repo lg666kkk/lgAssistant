@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "请求体格式错误" }, { status: 400 });
   }
 
-  const { toolCall } = body;
+  const { toolCall, sessionId } = body;
 
   if (!toolCall || typeof toolCall !== "object") {
     return Response.json({ error: "缺少 toolCall" }, { status: 400 });
@@ -29,7 +29,10 @@ export async function POST(req: Request) {
       name: toolCall.name,
       input: toolCall.input,
     },
-    { approved: true },
+    {
+      approved: true,
+      scopeId: typeof sessionId === "string" ? sessionId : undefined,
+    },
   );
 
   return Response.json(result);

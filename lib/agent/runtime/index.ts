@@ -137,6 +137,7 @@ export async function callModel(
 export async function executeTools(
   toolUses: ToolUseBlock[],
   toolRegistry: ToolRegistry,
+  scopeId?: string,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -152,7 +153,7 @@ export async function executeTools(
       name: toolUse.name,
       input: toolUse.input,
       id: toolUse.id,
-    });
+    }, { scopeId });
     const durationMs =
       typeof toolResult.metadata?.durationMs === "number"
         ? toolResult.metadata.durationMs
@@ -394,7 +395,7 @@ export async function runAgentLoop(
       toolCalls,
       toolMetrics,
       toolSteps,
-    } = await executeTools(toolUses, toolRegistry);
+    } = await executeTools(toolUses, toolRegistry, sessionId ?? requestId);
     metrics.toolCallCount += toolMetrics.length;
     metrics.totalToolCost += toolMetrics.reduce(
       (sum, item) => sum + item.costPerUse,

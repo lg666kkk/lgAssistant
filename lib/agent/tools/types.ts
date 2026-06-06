@@ -56,6 +56,7 @@ export interface ToolExecutionResult extends ToolResult {
 
 export type ExecuteToolCallOptions = {
   approved?: boolean;
+  scopeId?: string;
 };
 
 export const defaultToolRuntimePolicy: ToolRuntimePolicy = {

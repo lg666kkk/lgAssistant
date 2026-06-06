@@ -12,6 +12,7 @@ export default function Home() {
     activeId,
     activeSession,
     createSession,
+    moveSessionToTop,
     switchSession,
     deleteSession,
     rerender,
@@ -36,6 +37,7 @@ export default function Home() {
     if (!input.trim() || loading || !activeSession) return;
     const text = input;
     setInput("");
+    moveSessionToTop(activeSession.id);
     requestAnimationFrame(() => inputRef.current?.focus());
     await activeSession.send(text, rerender);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -43,6 +45,12 @@ export default function Home() {
 
   const handleStop = () => {
     activeSession?.abort();
+  };
+
+  const handleSwitchSession = (id: string) => {
+    switchSession(id);
+    setInput("");
+    requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   // 加载中状态
@@ -74,21 +82,43 @@ export default function Home() {
           {sessions.map((session) => (
             <div
               key={session.id}
-              onClick={() => switchSession(session.id)}
-              className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm cursor-pointer transition-colors whitespace-nowrap ${
+              onClick={() => handleSwitchSession(session.id)}
+              className={`group flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm cursor-pointer transition-colors whitespace-nowrap ${
                 session.id === activeId
                   ? "bg-slate-800 text-white"
                   : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-300"
               }`}
             >
-              <span className="truncate">{session.title}</span>
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  session.isRunning ? "bg-emerald-400" : "bg-slate-700"
+                }`}
+                title={session.isRunning ? "运行中" : "空闲"}
+              />
+              <span className="min-w-0 flex-1 truncate">{session.title}</span>
+              {session.isRunning && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    session.abort();
+                    rerender();
+                  }}
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-red-300 opacity-80 transition-opacity hover:bg-red-950/50 hover:text-red-200 group-hover:opacity-100"
+                  title="停止这个会话"
+                >
+                  停止
+                </button>
+              )}
               {sessions.length > 1 && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteSession(session.id);
                   }}
-                  className="ml-2 shrink-0 text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+                  className="shrink-0 text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                  title="删除会话"
                 >
                   ✕
                 </button>

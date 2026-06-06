@@ -54,10 +54,24 @@ export function useChatManager() {
 
   const createSession = useCallback(() => {
     const session = new ChatSession();
-    sessionsRef.current.push(session);
+    sessionsRef.current = [session, ...sessionsRef.current];
     setActiveId(session.id);
     rerender();
   }, [rerender]);
+
+  const moveSessionToTop = useCallback(
+    (id: string) => {
+      const session = sessionsRef.current.find((s) => s.id === id);
+      if (!session || sessionsRef.current[0]?.id === id) return;
+
+      sessionsRef.current = [
+        session,
+        ...sessionsRef.current.filter((s) => s.id !== id),
+      ];
+      rerender();
+    },
+    [rerender],
+  );
 
   const switchSession = useCallback((id: string) => {
     setActiveId(id);
@@ -92,6 +106,7 @@ export function useChatManager() {
     activeId,
     activeSession,
     createSession,
+    moveSessionToTop,
     switchSession,
     deleteSession,
     rerender,
