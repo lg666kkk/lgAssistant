@@ -1,3 +1,5 @@
+import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
+import type { AgentEvent } from "./agent/runtime/events";
 import { SessionManager } from "./session-manager";
 export interface Message {
   id?: string;
@@ -96,112 +98,68 @@ export class ChatSession {
 
     try {
       this.abortController = new AbortController();
-      const response = await fetch("/api/chat", {
+      this.streaming = true;
+      onUpdate();
+
+      const last = () => this.messages[this.messages.length - 1];
+
+      // 按事件类型分发，handleEvent 逻辑不变——只是"怎么收事件"换成了库
+      const handleEvent = (evt: AgentEvent) => {
+        switch (evt.type) {
+          case "text":
+            last().content += evt.content;
+            break;
+          case "tool_call":
+            (last().toolCalls ??= []).push(evt.toolCall);
+            break;
+          case "sources":
+            last().sources = evt.sources;
+            break;
+          case "error":
+            throw new Error(evt.message || evt.error || "流式响应中断");
+          case "done":
+            break;
+        }
+      };
+
+      await fetchEventSource("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: this.messages.slice(0, -1),
-          sessionId: this.id, // 带上 session ID，让后端能读写 Redis 会话记忆
+          sessionId: this.id,
         }),
         signal: this.abortController.signal,
+        onopen: async (response) => {
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            // FatalError：告诉库这是不可重试的错误，直接 reject 不重连
+            throw new Error(errorData.error || errorData.message || "请求失败");
+          }
+          // 检查 Content-Type，不是 SSE 就 throw（和库的 defaultOnOpen 行为一致）
+          const ct = response.headers.get("content-type");
+          if (!ct?.startsWith(EventStreamContentType)) {
+            throw new Error(`非 SSE 响应: ${ct}`);
+          }
+        },
+        onmessage: (ev) => {
+          if (!ev.data) return;
+          try {
+            const evt: AgentEvent = JSON.parse(ev.data);
+            handleEvent(evt);
+            onUpdate();
+          } catch {
+            // 忽略 parse 失败的单条事件
+          }
+        },
+        onclose: () => {
+          // 服务端正常关闭流，不需要任何处理
+        },
+        onerror: (err) => {
+          // throw 让库停止重连，交给外层 catch 处理
+          throw err;
+        },
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.error || errorData.message || "请求失败, 请稍后重试",
-        );
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      this.streaming = true;
-      onUpdate();
-      // fullText：原始响应，包含协议标记
-      let fullText = "";
-      const toolMarker = "__TOOL_CALL__";
-      const sourcesMarker = "\n\n__SOURCES__\n";
-      const endToolMarker = "__END_TOOL_CALL__";
-      const parsedToolCallJsonSet = new Set<string>(); // 防止工具被重复追加
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value);
-        fullText += text;
-
-        // 检查是否包含错误标记
-        const errorMarkerIndex = fullText.indexOf("\n\n__ERROR__\n");
-        if (errorMarkerIndex !== -1) {
-          const errorJson = fullText.substring(errorMarkerIndex + 12); // 12 = '\n\n__ERROR__\n'.length
-          try {
-            const errorData = JSON.parse(errorJson);
-            throw new Error(
-              errorData.message || errorData.error || "流式响应中断",
-            );
-          } catch (e) {
-            if (e instanceof Error && e.message !== "流式响应中断") {
-              throw new Error("流式响应中断");
-            }
-            throw e;
-          }
-        }
-        // displayText 是去掉标记后的显示内容
-        let displayText = fullText;
-        // 检测工具调用
-        let toolMarkerIndex = displayText.indexOf(toolMarker);
-        let endToolMarkerIndex = displayText.indexOf(endToolMarker);
-        while (toolMarkerIndex !== -1 && endToolMarkerIndex !== -1) {
-          const toolJson = displayText.substring(
-            toolMarkerIndex + toolMarker.length,
-            endToolMarkerIndex,
-          );
-
-          try {
-            if (!parsedToolCallJsonSet.has(toolJson)) {
-              const toolCall = JSON.parse(toolJson);
-              const currentToolCalls =
-                this.messages[this.messages.length - 1].toolCalls ?? [];
-
-              this.messages[this.messages.length - 1].toolCalls = [
-                ...currentToolCalls,
-                toolCall,
-              ];
-              parsedToolCallJsonSet.add(toolJson);
-            }
-            displayText =
-              displayText.substring(0, toolMarkerIndex) +
-              displayText.substring(endToolMarkerIndex + endToolMarker.length);
-            displayText = displayText.trimStart();
-            toolMarkerIndex = displayText.indexOf(toolMarker);
-            endToolMarkerIndex = displayText.indexOf(endToolMarker);
-          } catch (e) {
-            // JSON 解析失败，先保留原始文本
-          }
-        }
-        // 检查是否包含来源标记
-        const sourcesMarkerIndex = displayText.indexOf(sourcesMarker);
-        if (sourcesMarkerIndex !== -1) {
-          // 分离正文和来源数据
-          const content = displayText.substring(0, sourcesMarkerIndex);
-          const sourcesJson = displayText.substring(
-            sourcesMarkerIndex + sourcesMarker.length,
-          );
-
-          try {
-            const sources = JSON.parse(sourcesJson);
-            this.messages[this.messages.length - 1].content = content;
-            this.messages[this.messages.length - 1].sources = sources;
-          } catch (e) {
-            // JSON 解析失败，继续累积文本
-            this.messages[this.messages.length - 1].content = displayText;
-          }
-        } else {
-          // 还没有收到来源标记，继续累积文本
-          this.messages[this.messages.length - 1].content = displayText;
-        }
-
-        onUpdate();
-      }
 
       assistantMessageSaved = await this.saveCurrentAssistantMessage();
     } catch (err) {

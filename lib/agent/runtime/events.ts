@@ -1,0 +1,54 @@
+import type { ToolSourceType } from "@/lib/agent/runtime";
+export interface ToolCallEventData {
+    name: string;
+    input?: unknown;
+    id: string;
+    ok: boolean;
+    content: string;
+    truncated?: boolean;
+    originalChars?: number;
+    error?: string;
+    metadata?: Record<string, unknown>;
+}
+
+
+export interface TextEvent {
+    type: "text";
+    content: string;
+}
+
+export interface ToolCallEvent {
+    type: "tool_call";
+    toolCall: ToolCallEventData;
+}
+
+export interface SourcesEvent {
+    type: "sources";
+    sources: ToolSourceType[];
+}
+
+export interface ErrorEvent {
+    type: "error";
+    message: string;
+    error: string;
+}
+
+export interface DoneEvent {
+    type: "done";
+}
+
+export type AgentEvent = TextEvent | ToolCallEvent | SourcesEvent | ErrorEvent | DoneEvent;
+
+// 序列化为 SSE 格式：event:<类型> 行 + data:<JSON> 行 + 空行（\n\n）作为事件边界。
+// event.type 直接复用为 SSE 的 event 名；data 里仍保留完整 JSON（含 type），前端解析更省事。
+export function serializeEvent(event: AgentEvent): string {
+  return `event:${event.type}\ndata:${JSON.stringify(event)}\n\n`;
+}
+
+// 入队：将事件序列化后推入文本队列
+export function enqueueEvent(
+  event: AgentEvent,
+  enqueueText: (text: string) => boolean,
+): boolean {
+  return enqueueText(serializeEvent(event));
+}

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@notionhq/client": "^5.20.0",
     "@supabase/supabase-js": "^2.105.4",
     "@types/node": "^20.12.12",

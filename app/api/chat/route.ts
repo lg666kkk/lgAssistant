@@ -6,13 +6,16 @@ import {
   streamModelResponse,
   forwardTextStream,
 } from "@/lib/agent/runtime";
+import { enqueueEvent } from "@/lib/agent/runtime/events";
 import { formatTraceTree } from "@/lib/agent/runtime/trace";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
+import { SessionManager } from "@/lib/session-manager";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
+const sessionManager = new SessionManager();
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
@@ -126,6 +129,15 @@ export async function POST(req: Request) {
           }
         }
 
+        // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
+        if (sessionId && memorySystem) {
+          void sessionManager
+            .updateSystemPrompt(sessionId, memorySystem)
+            .catch((e: any) =>
+              console.error("[memory] system_prompt 写入失败:", e.message),
+            );
+        }
+
         const agentLoopResult = await runAgentLoop(
           loopMessages,
           tools,
@@ -148,46 +160,47 @@ export async function POST(req: Request) {
 
         // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
         void consolidate(messages, { sessionId }).catch((e: any) =>
-          console.error("[memory] 沉淀失败:", e.message),
+          console.error("[consolidate] 失败:", e.message),
         );
 
-        // ④ 会话记忆写入：把本轮 user + assistant 消息追加进 Redis
+        // ④ 会话记忆写入：await 确保写完再 return，否则 completed=true 时直接退出导致写入丢失
         if (sessionId) {
-          void (async () => {
-            try {
-              // 只存本轮最后一条 user 消息（前端传的是完整历史，避免重复追加）
-              const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
-              if (lastUser2) {
-                await sessionStore.append(sessionId, { role: "user", content: lastUser2.content });
-                console.log("[session] 已写入 user 消息");
-              }
-              // 助手回复：content 是 ContentBlock[]，用 extractText 取文本
-              const lastAssistant = [...agentLoopResult.loopMessages]
-                .reverse()
-                .find((m: any) => m.role === "assistant");
-              if (lastAssistant) {
-                const text = Array.isArray(lastAssistant.content)
-                  ? lastAssistant.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
-                  : lastAssistant.content;
-                if (text) {
-                  await sessionStore.append(sessionId, { role: "assistant", content: text });
-                  console.log("[session] 已写入 assistant 消息");
-                }
-              }
-            } catch (e: any) {
-              console.error("[session] 写入历史失败:", e.message);
+          try {
+            const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
+            if (lastUser2) {
+              await sessionStore.append(sessionId, { role: "user", content: lastUser2.content });
             }
-          })();
+            // 取最后一条有 text 内容的 assistant 消息（thinking 模式工具调用轮没有 text）
+            const assistantText = [...agentLoopResult.loopMessages]
+              .reverse()
+              .reduce((found: string, m: any) => {
+                if (found || m.role !== "assistant") return found;
+                const text = Array.isArray(m.content)
+                  ? m.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
+                  : typeof m.content === "string" ? m.content : "";
+                return text || found;
+              }, "");
+            if (assistantText) {
+              await sessionStore.append(sessionId, { role: "assistant", content: assistantText });
+            }
+          } catch (e: any) {
+            console.error("[session] 写入历史失败:", e.message);
+          }
         }
 
         if (agentLoopResult.completed) {
+          enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
         }
+        // 适配器：把第二阶段的纯文本统一包成 text 事件再写流，
+        // 这样 forwardTextStream 本身一行不用改（签名仍是 (string)=>boolean）
+        const enqueueTextEvent = (t: string) =>
+          enqueueEvent({ type: "text", content: t }, enqueueText);
         if (agentLoopResult.stopReason === "max_iterations") {
-          enqueueText("\n\n工具调用轮数已达到上限，我会基于当前结果总结。\n\n");
+          enqueueTextEvent("\n\n工具调用轮数已达到上限，我会基于当前结果总结。\n\n");
         } else if (agentLoopResult.stopReason === "repeated_tool_call") {
-          enqueueText("\n\n检测到重复工具调用，我会基于当前结果总结。\n\n");
+          enqueueTextEvent("\n\n检测到重复工具调用，我会基于当前结果总结。\n\n");
         }
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
@@ -197,7 +210,7 @@ export async function POST(req: Request) {
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
         await forwardTextStream(
           stream,
-          enqueueText,
+          enqueueTextEvent,
           () => req.signal.aborted || closed,
         );
 
@@ -208,21 +221,23 @@ export async function POST(req: Request) {
         if (allToolSources.length > 0) {
           enqueueSources(allToolSources, enqueueText);
         }
-        // 所有事件处理完毕，关闭流，告诉浏览器"传输结束"
+        // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
+        enqueueEvent({ type: "done" }, enqueueText);
         closeStream();
       } catch (error: any) {
         if (req.signal.aborted || closed) {
           closeStream();
           return;
         }
-        // 发送错误标记
-        const errorMarker =
-          "\n\n__ERROR__\n" +
-          JSON.stringify({
+        // 发送 error 事件（替代 __ERROR__ marker）
+        enqueueEvent(
+          {
+            type: "error",
             error: "流式响应中断",
             message: error.message || "未知错误",
-          });
-        enqueueText(errorMarker);
+          },
+          enqueueText,
+        );
         closeStream();
       }
     },
@@ -230,6 +245,10 @@ export async function POST(req: Request) {
 
   // 将 ReadableStream 包装成 HTTP 响应返回给前端
   return new Response(readable, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: {
+      "Content-Type": "text/event-stream",  // SSE 标准 MIME
+      "Cache-Control": "no-cache",           // 禁止代理缓冲，保证流式实时推送
+      "Connection": "keep-alive",
+    },
   });
 }

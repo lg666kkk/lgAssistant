@@ -100,6 +100,15 @@ export class SessionManager {
     if (error) throw error;
   }
 
+  async updateSystemPrompt(sessionId: string, systemPrompt: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('sessions')
+      .update({ system_prompt: systemPrompt })
+      .eq('id', sessionId);
+
+    if (error) throw error;
+  }
+
   /**
    * 删除会话（会级联删除所有消息）
    */

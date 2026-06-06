@@ -1,4 +1,5 @@
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
+import { ToolRegistry } from "@/lib/agent/tools/registry";
 import { deepseekConfig } from "@/lib/config";
 import {
   TokenBudget,
@@ -7,11 +8,15 @@ import {
 } from "@/lib/agent/runtime/budget";
 import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
+import { enqueueEvent } from "@/lib/agent/runtime/events";
+import type { ToolCallEventData } from "@/lib/agent/runtime/events";
 import Anthropic from "@anthropic-ai/sdk";
+import type { Stream } from "@anthropic-ai/sdk/streaming";
 
-type ModelMessage = any;
-type ModelContentBlock = any;
-type ToolUseBlock = any;
+// Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
+type ModelMessage = Anthropic.MessageParam;
+type ModelContentBlock = Anthropic.Messages.ContentBlock;
+type ToolUseBlock = Anthropic.Messages.ToolUseBlock;
 
 export type AgentLoopMetrics = {
   estimatedTokensSpent: number;
@@ -76,39 +81,28 @@ export function getToolCallKey(toolUse: ToolUseBlock): string {
 
 export function extractText(content: ModelContentBlock[]): string {
   return content
-    .filter((block: ModelContentBlock) => block.type === "text")
-    .map((block: ModelContentBlock) => block.text)
+    .filter((block): block is Anthropic.Messages.TextBlock => block.type === "text")
+    .map((block) => block.text)   // TS 收窄到 TextBlock，.text 合法
     .join("");
 }
 
 export function extractToolUses(content: ModelContentBlock[]): ToolUseBlock[] {
   return content.filter(
-    (block: ModelContentBlock) => block.type === "tool_use",
+    (block): block is Anthropic.Messages.ToolUseBlock => block.type === "tool_use",
   );
 }
 
 export function appendToolResults(
   loopMessages: ModelMessage[],
-  assistantResponse: any,
+  assistantResponse: Anthropic.Message,
   toolResultBlocks: ToolResultBlock[],
-) {
+): ModelMessage[] {
   return [
     ...loopMessages,
-    {
-      role: "assistant",
-      content: assistantResponse.content,
-    },
-    {
-      role: "user",
-      content: toolResultBlocks,
-    },
+    // role 必须是字面量类型 "assistant" | "user"，不能是宽泛的 string
+    { role: "assistant" as const, content: assistantResponse.content },
+    { role: "user" as const, content: toolResultBlocks },
   ];
-}
-
-export function enqueueToolMarkers(toolMarkers: string[], enqueueText: any) {
-  for (const marker of toolMarkers) {
-    enqueueText(marker);
-  }
 }
 
 // 创建 Anthropic 客户端，从配置读取
@@ -119,9 +113,9 @@ const client = new Anthropic({
 
 export async function callModel(
   messages: ModelMessage[],
-  tools: any[],
+  tools: Anthropic.Tool[],
   system?: string, // 召回的记忆作为 system 注入（Anthropic 的 system 是顶层参数，不在 messages 里）
-): Promise<any> {
+): Promise<Anthropic.Message> {
   return await client.messages.create({
     model: deepseekConfig.model,
     max_tokens: deepseekConfig.maxTokens,
@@ -134,11 +128,11 @@ export async function callModel(
 
 export async function executeTools(
   toolUses: ToolUseBlock[],
-  toolRegistry: any,
+  toolRegistry: ToolRegistry,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
-  let toolMarkers: string[] = [];
+  const toolCalls: ToolCallEventData[] = [];
   const toolSteps: ToolTraceStep[] = [];
   const toolMetrics: Array<{
     name: string;
@@ -203,21 +197,18 @@ export async function executeTools(
       content: truncated.content,
       is_error: !toolResult.ok,
     });
-    const toolMarker =
-      "\n\n__TOOL_CALL__\n" +
-      JSON.stringify({
-        name: toolUse.name,
-        input: toolUse.input,
-        id: toolUse.id,
-        ok: toolResult.ok,
-        content: truncated.content,
-        truncated: truncated.truncated,
-        originalChars: truncated.originalChars,
-        error: toolResult.error,
-        metadata: toolResult.metadata,
-      }) +
-      "\n__END_TOOL_CALL__\n";
-    toolMarkers.push(toolMarker);
+    // 不再拼 marker 字符串，直接造结构化事件 payload（前端按 type 分发，不靠分隔符切割）
+    toolCalls.push({
+      name: toolUse.name,
+      input: toolUse.input,
+      id: toolUse.id,
+      ok: toolResult.ok,
+      content: truncated.content,
+      truncated: truncated.truncated,
+      originalChars: truncated.originalChars,
+      error: toolResult.error,
+      metadata: toolResult.metadata,
+    });
     toolSteps.push({
       type: "tool",
       index: 0,
@@ -237,27 +228,25 @@ export async function executeTools(
   return {
     toolResultBlocks,
     toolSources,
-    toolMarkers,
+    toolCalls,
     toolMetrics,
     toolSteps,
   };
 }
 
-export const enqueueSources = (sources: ToolSourceType[], enqueueText: any) => {
+export const enqueueSources = (sources: ToolSourceType[], enqueueText: (text: string) => boolean) => {
   if (sources.length === 0) return;
-
-  const sourcesMarker = "\n\n__SOURCES__\n" + JSON.stringify(sources);
-
-  enqueueText(sourcesMarker);
+  // 整批来源一次性发一个 sources 事件（替代 __SOURCES__ marker）
+  enqueueEvent({ type: "sources", sources }, enqueueText);
 };
 
 export async function runAgentLoop(
   loopMessages: ModelMessage[],
-  tools: any[],
-  toolRegistry: any,
+  tools: Anthropic.Tool[],
+  toolRegistry: ToolRegistry,
   maxToolIterations: number,
   allToolSources: ToolSourceType[],
-  enqueueText: any,
+  enqueueText: (text: string) => boolean,
   requestId: string = "",
   sessionId?: string,
   deps: { callModel: typeof callModel } = { callModel },
@@ -303,8 +292,13 @@ export async function runAgentLoop(
     // Agent 每轮调模型前先问一句，当前上下文还塞得下吗
     const estimatedContextTokens = estimateTokens(JSON.stringify(loopMessages));
     if (!tokenBudget.canAfford(estimatedContextTokens)) {
-      enqueueText(
-        "\n\n上下文预算已用尽，我会停止继续调用工具，并基于当前已有信息回答。\n\n",
+      enqueueEvent(
+        {
+          type: "text",
+          content:
+            "\n\n上下文预算已用尽，我会停止继续调用工具，并基于当前已有信息回答。\n\n",
+        },
+        enqueueText,
       );
       return {
         loopMessages,
@@ -347,7 +341,7 @@ export async function runAgentLoop(
     if (toolUses.length === 0) {
       // 直接返回文本
       if (directText) {
-        enqueueText(directText);
+        enqueueEvent({ type: "text", content: directText }, enqueueText);
       }
       if (allToolSources.length > 0) {
         enqueueSources(allToolSources, enqueueText);
@@ -366,8 +360,13 @@ export async function runAgentLoop(
     );
     // 用户问题重复 ≠ 工具调用重复。重复保护防的是模型 loop 卡住，不是防用户输入重复
     if (hasRepeatedToolCall) {
-      enqueueText(
-        "\n\n检测到重复工具调用，已停止继续执行工具。我会基于已有结果回答。\n\n",
+      enqueueEvent(
+        {
+          type: "text",
+          content:
+            "\n\n检测到重复工具调用，已停止继续执行工具。我会基于已有结果回答。\n\n",
+        },
+        enqueueText,
       );
       return {
         loopMessages,
@@ -384,7 +383,7 @@ export async function runAgentLoop(
     const {
       toolResultBlocks,
       toolSources,
-      toolMarkers,
+      toolCalls,
       toolMetrics,
       toolSteps,
     } = await executeTools(toolUses, toolRegistry);
@@ -403,7 +402,10 @@ export async function runAgentLoop(
       step.index = stepIndex++;
       trace.steps.push(step);
     }
-    enqueueToolMarkers(toolMarkers, enqueueText);
+    // 每个工具调用发一个 tool_call 事件（替代旧的 __TOOL_CALL__ marker 字符串）
+    for (const tc of toolCalls) {
+      enqueueEvent({ type: "tool_call", toolCall: tc }, enqueueText);
+    }
     allToolSources.push(...toolSources);
     loopMessages = appendToolResults(
       loopMessages,
@@ -431,7 +433,7 @@ export async function streamModelResponse(messages: ModelMessage[], system?: str
 }
 
 export async function forwardTextStream(
-  stream: any,
+  stream: Stream<Anthropic.RawMessageStreamEvent>,
   enqueueText: (text: string) => boolean,
   shouldStop: () => boolean,
 ) {

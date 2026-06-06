@@ -5,7 +5,12 @@ import { LongTermStore } from "./longterm-store";
 import { SemanticStore } from "./semantic-store";
 
 // 端到端：真实 Supabase + 真实模型调用（抽取 + embedding）
-const canRun = hasSupabaseConfig() && Boolean(process.env.DASHSCOPE_API_KEY);
+// consolidate 用的模型鉴权在 vitest 环境下和 Next.js 运行时不同（shell token vs .env.local）
+// 需要显式设置 CONSOLIDATE_TEST=1 才跑，避免 CI / 普通 vitest run 因 401 失败
+const canRun =
+  hasSupabaseConfig() &&
+  Boolean(process.env.DASHSCOPE_API_KEY) &&
+  process.env.CONSOLIDATE_TEST === "1";
 const sessionId = `test-flow-${process.pid}-${Date.now()}`;
 
 describe("记忆流动闭环（沉淀 → 召回）", () => {

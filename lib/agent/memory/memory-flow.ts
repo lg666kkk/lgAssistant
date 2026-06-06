@@ -92,11 +92,12 @@ export async function consolidate(
     return [];
   }
 
-  // 写回长期记忆（结构化事实）。key 带上 sessionId 命名空间，避免不同用户互相覆盖
+  // 写回长期记忆。key 只用模型生成的业务键，不带 sessionId。
+  // 用户偏好是跨会话共享的事实，带 sessionId 会导致同一事实每次新会话都重复插入。
   const saved: MemoryRecord[] = [];
   for (const f of facts) {
     if (!f.fact || !f.key) continue;
-    const ns = opts.sessionId ? `${opts.sessionId}:${f.key}` : f.key;
+    const ns = f.key;
     // 同时写长期（按 key 取）和语义（按意思召回）—— 一条事实两种检索方式都能找到
     await longTerm.set(ns, f.fact, { sessionId: opts.sessionId, source: "consolidate" });
     await semantic.set(ns, f.fact, { sessionId: opts.sessionId, source: "consolidate" });

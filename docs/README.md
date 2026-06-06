@@ -44,5 +44,6 @@
 | 03 | 上下文与 Token 预算管理（能力 1） | [context-token-budget.md](./agent/context-token-budget.md) | 已完成 |
 | 04 | 可观测性 Trace 与 Eval（能力 3） | [observability-trace-eval.md](./agent/observability-trace-eval.md) | 已完成 |
 | 05 | 分层记忆系统（能力 2） | [layered-memory.md](./agent/layered-memory.md) | 已完成（五层全部就位） |
+| 06 | 结构化事件协议（能力 4） | [structured-event-protocol.md](./agent/structured-event-protocol.md) | 已完成（NDJSON → SSE） |
 
 > 后续每实现一个功能，在此表格追加一行。
