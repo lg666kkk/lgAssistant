@@ -149,6 +149,7 @@ export async function POST(req: Request) {
           sessionId,
           undefined, // deps 用默认
           memorySystem, // ② 注入召回的记忆
+          () => req.signal.aborted || closed,
         );
         console.log(
           "=== Agent Loop Trace ===",

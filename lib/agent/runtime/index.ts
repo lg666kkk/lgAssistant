@@ -260,6 +260,7 @@ export async function runAgentLoop(
   sessionId?: string,
   deps: { callModel: typeof callModel } = { callModel },
   system?: string, // 召回的记忆，透传给每轮 callModel 作为 system 注入
+  shouldStop: () => boolean = () => false,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -287,6 +288,15 @@ export async function runAgentLoop(
   };
 
   for (let i = 0; i < maxToolIterations; i++) {
+    if (shouldStop()) {
+      return {
+        loopMessages,
+        completed: false,
+        stopReason: "completed",
+        metrics,
+        trace: finalizeTrace("completed", false),
+      };
+    }
     const compacted = compactLoopMessages(loopMessages, {
       maxTokens: 16_000,
       keepRecentMessages: 4,
@@ -325,6 +335,15 @@ export async function runAgentLoop(
     const onTextDelta = (text: string) =>
       enqueueEvent({ type: "text", content: text }, enqueueText);
     let initialResponse = await deps.callModel(loopMessages, tools, system, onTextDelta);
+    if (shouldStop()) {
+      return {
+        loopMessages,
+        completed: false,
+        stopReason: "completed",
+        metrics,
+        trace: finalizeTrace("completed", false),
+      };
+    }
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
@@ -396,6 +415,15 @@ export async function runAgentLoop(
       toolMetrics,
       toolSteps,
     } = await executeTools(toolUses, toolRegistry, sessionId ?? requestId);
+    if (shouldStop()) {
+      return {
+        loopMessages,
+        completed: false,
+        stopReason: "completed",
+        metrics,
+        trace: finalizeTrace("completed", false),
+      };
+    }
     metrics.toolCallCount += toolMetrics.length;
     metrics.totalToolCost += toolMetrics.reduce(
       (sum, item) => sum + item.costPerUse,

@@ -30,6 +30,7 @@ export class ChatSession {
   streaming = false;
   error: string | null = null;
   private abortController: AbortController | null = null;
+  private manuallyAborted = false;
   private sessionManager = new SessionManager();
   private isNewSession = true;
 
@@ -61,6 +62,7 @@ export class ChatSession {
     if (!input.trim() || this.loading) return;
 
     this.loading = true;
+    this.manuallyAborted = false;
     this.error = null;
     let assistantMessageSaved = false;
     const userMessage: Message = { role: "user", content: input };
@@ -124,6 +126,7 @@ export class ChatSession {
 
       await fetchEventSource("/api/chat", {
         method: "POST",
+        openWhenHidden: true,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: this.messages.slice(0, -1),
@@ -156,6 +159,9 @@ export class ChatSession {
           // 服务端正常关闭流，不需要任何处理
         },
         onerror: (err) => {
+          if (this.manuallyAborted || this.abortController?.signal.aborted) {
+            throw new DOMException("用户已停止生成", "AbortError");
+          }
           // throw 让库停止重连，交给外层 catch 处理
           throw err;
         },
@@ -183,6 +189,9 @@ export class ChatSession {
   }
 
   abort() {
+    this.manuallyAborted = true;
+    this.loading = false;
+    this.streaming = false;
     this.abortController?.abort();
   }
 
