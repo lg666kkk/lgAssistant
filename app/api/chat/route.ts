@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 
   // 校验 messages 字段
   const requestId = crypto.randomUUID();
-  const { messages, sessionId } = body;
+  const { messages, sessionId, enableWebSearch } = body;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(
@@ -61,7 +61,9 @@ export async function POST(req: Request) {
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry();
   // 给模型看的工具说明
-  const tools = toolRegistry.listForModel();
+  const tools = toolRegistry
+    .listForModel()
+    .filter((tool) => enableWebSearch || tool.name !== "web_search");
   // 最大工具调用次数
   const maxToolIterations = 8;
 
@@ -128,11 +130,19 @@ export async function POST(req: Request) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
           }
         }
+        const systemPrompt = [
+          memorySystem,
+          enableWebSearch
+            ? "用户已开启联网搜索。本轮回答必须先调用 web_search 工具获取公开网页信息，再基于搜索结果作答；不要仅凭模型内部知识回答。"
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
-        if (sessionId && memorySystem) {
+        if (sessionId && systemPrompt) {
           void sessionManager
-            .updateSystemPrompt(sessionId, memorySystem)
+            .updateSystemPrompt(sessionId, systemPrompt)
             .catch((e: any) =>
               console.error("[memory] system_prompt 写入失败:", e.message),
             );
@@ -148,7 +158,7 @@ export async function POST(req: Request) {
           requestId,
           sessionId,
           undefined, // deps 用默认
-          memorySystem, // ② 注入召回的记忆
+          systemPrompt, // ② 注入召回的记忆和联网搜索策略
           () => req.signal.aborted || closed,
         );
         console.log(
@@ -205,7 +215,7 @@ export async function POST(req: Request) {
         }
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
-        stream = await streamModelResponse(loopMessages, memorySystem);
+        stream = await streamModelResponse(loopMessages, systemPrompt);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容

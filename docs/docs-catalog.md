@@ -27,6 +27,9 @@
 | [tool-calling-ui-calculator-multi-tool.md](./agent/tool-calling-ui-calculator-multi-tool.md) | 实战总结 | 记录工具调用 UI、`calculator` 工具、多工具调用和工具调用信息落库等能力。 |
 | [context-token-budget.md](./agent/context-token-budget.md) | 实战笔记 | 能力 1：上下文与 Token 预算管理，含预算计数器、工具结果截断、滚动压缩三层防爆策略。 |
 | [observability-trace-eval.md](./agent/observability-trace-eval.md) | 实战笔记 | 能力 3：可观测性 Trace（结构化调用树 + 落库）与 Eval（双轨 mock/live），含判别联合、依赖注入、vitest 踩坑。 |
+| [agent-roadmap-final.md](./agent/agent-roadmap-final.md) | **成熟化路线图（最终整合版，主文档）** | 双主线：上半「看差距」（对标 mem0/Zep/GA/Claude Code/Anthropic/LangSmith + 真实行号 + 成本/面试杀伤力评分 + 面试话术），下半「看怎么建」（ContextPlan/MemoryWriteDecision/Trace 类型设计 + 模块树 + 里程碑 + Ops 指标 + 风险清单）。 |
+| [maturity-benchmark-roadmap.md](./agent/maturity-benchmark-roadmap.md) | 对标差距分析（已整合至 final，存档） | 对标差距分析与分优先级改进项评分。内容已并入 `agent-roadmap-final.md` 上半部。 |
+| [agent-engineering-roadmap.md](./agent/agent-engineering-roadmap.md) | 架构蓝图（已整合至 final，存档） | 四大控制面目标架构、核心类型设计、模块树、里程碑、Ops 与风险清单。内容已并入 `agent-roadmap-final.md` 下半部。 |
 
 ## 4. RAG 知识库系统
 

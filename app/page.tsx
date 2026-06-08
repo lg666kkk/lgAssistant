@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useChatManager } from "@/hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
+import { ChatInput } from "./components/chat-input";
 
 export default function Home() {
   const {
@@ -21,8 +22,9 @@ export default function Home() {
 
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
 
   const { messages, loading, streaming, error } = activeSession || {};
   const lastMessageContent = messages?.length
@@ -39,7 +41,7 @@ export default function Home() {
     setInput("");
     moveSessionToTop(activeSession.id);
     requestAnimationFrame(() => inputRef.current?.focus());
-    await activeSession.send(text, rerender);
+    await activeSession.send(text, rerender, { webSearchEnabled });
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
@@ -152,28 +154,29 @@ export default function Home() {
           <h1 className="text-lg font-semibold text-white">LG的个人知识助手</h1>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {messages && messages.length === 0 && (
-            <p className="text-center text-slate-500 mt-20">
-              发送一条消息开始对话
-            </p>
-          )}
-          {messages &&
-            messages.map((msg, i) => {
-              const isStreaming =
-                streaming &&
-                msg.role === "assistant" &&
-                i === messages.length - 1;
-              return (
-                <div
-                  key={i}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+        <div className="flex-1 overflow-y-auto px-4 py-6">
+          <div className="mx-auto max-w-4xl space-y-4">
+            {messages && messages.length === 0 && (
+              <p className="mt-20 text-center text-slate-500">
+                发送一条消息开始对话
+              </p>
+            )}
+            {messages &&
+              messages.map((msg, i) => {
+                const isStreaming =
+                  streaming &&
+                  msg.role === "assistant" &&
+                  i === messages.length - 1;
+                return (
                   <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    key={i}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                  <div
+                    className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                       msg.role === "user"
-                        ? "bg-cyan-600 text-white"
-                        : "bg-slate-800 text-slate-200"
+                        ? "max-w-[78%] bg-cyan-600 text-white"
+                        : "w-full bg-slate-800 text-slate-200"
                     } ${isStreaming ? "streaming-msg" : ""}`}
                   >
                     <ReactMarkdown
@@ -404,53 +407,31 @@ export default function Home() {
                         </div>
                       )}
                   </div>
+                  </div>
+                );
+              })}
+            <div ref={messagesEndRef} />
+            {error && (
+              <div className="flex justify-start">
+                <div className="w-full rounded-2xl bg-red-900/30 px-4 py-3 text-sm text-red-400">
+                  {error}
                 </div>
-              );
-            })}
-          <div ref={messagesEndRef} />
-          {error && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl bg-red-900/30 px-4 py-3 text-sm text-red-400">
-                {error}
               </div>
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-slate-800 bg-slate-900 p-4">
-          <div className="mx-auto flex max-w-3xl gap-3">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="输入消息..."
-              rows={1}
-              className="max-h-40 min-h-[46px] flex-1 resize-none rounded-xl bg-slate-800 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-cyan-500"
-            />
-            {loading || streaming ? (
-              <button
-                onClick={handleStop}
-                className="rounded-xl bg-red-600 px-6 py-3 text-sm font-medium text-white hover:bg-red-500 transition-colors"
-              >
-                停止
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className="rounded-xl bg-cyan-600 px-6 py-3 text-sm font-medium text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
-              >
-                发送
-              </button>
             )}
           </div>
         </div>
+
+        <ChatInput
+          ref={inputRef}
+          value={input}
+          onChange={setInput}
+          webSearchEnabled={webSearchEnabled}
+          onWebSearchEnabledChange={setWebSearchEnabled}
+          onSend={handleSend}
+          onStop={handleStop}
+          isRunning={Boolean(loading || streaming)}
+          disabled={!input.trim()}
+        />
       </main>
     </div>
   );

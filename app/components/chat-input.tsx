@@ -1,0 +1,163 @@
+"use client";
+
+import { forwardRef, useEffect, useRef, type ForwardedRef } from "react";
+
+type ChatInputProps = {
+  value: string;
+  disabled?: boolean;
+  isRunning?: boolean;
+  webSearchEnabled: boolean;
+  onChange: (value: string) => void;
+  onWebSearchEnabledChange: (enabled: boolean) => void;
+  onSend: () => void;
+  onStop: () => void;
+};
+
+function setForwardedRef<T>(ref: ForwardedRef<T>, value: T) {
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+
+  if (ref) {
+    ref.current = value;
+  }
+}
+
+export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
+  function ChatInput(
+    {
+      value,
+      disabled = false,
+      isRunning = false,
+      webSearchEnabled,
+      onChange,
+      onWebSearchEnabledChange,
+      onSend,
+      onStop,
+    },
+    ref,
+  ) {
+    const inputRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+      const el = inputRef.current;
+      if (!el || el.innerText === value) return;
+      el.textContent = value;
+    }, [value]);
+
+    return (
+      <div className="border-t border-slate-800 bg-slate-950 px-4 py-5">
+        <div className="mx-auto max-w-4xl">
+          <div className="rounded-[28px] border border-slate-700/80 bg-slate-900 px-5 py-4 shadow-2xl shadow-black/30 transition-colors focus-within:border-cyan-500/70">
+            <div
+              ref={(node) => {
+                inputRef.current = node;
+                setForwardedRef(ref, node);
+              }}
+              role="textbox"
+              aria-multiline="true"
+              contentEditable
+              suppressContentEditableWarning
+              data-placeholder="给 LG 的个人知识助手发送消息"
+              onInput={(e) => onChange(e.currentTarget.innerText)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSend();
+                }
+              }}
+              className="max-h-40 min-h-[88px] overflow-y-auto whitespace-pre-wrap px-1 text-base leading-7 text-slate-100 outline-none empty:before:text-slate-500 empty:before:content-[attr(data-placeholder)]"
+            />
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onWebSearchEnabledChange(!webSearchEnabled)}
+                  aria-pressed={webSearchEnabled}
+                  className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition-colors ${
+                    webSearchEnabled
+                      ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200"
+                      : "border-slate-700 bg-slate-800/70 text-slate-400 hover:border-cyan-500/40 hover:text-cyan-300"
+                  }`}
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M2 12h20" />
+                    <path d="M12 2a15.3 15.3 0 0 1 0 20" />
+                    <path d="M12 2a15.3 15.3 0 0 0 0 20" />
+                  </svg>
+                  联网搜索
+                </button>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                  title="添加附件"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m21.4 11.6-8.8 8.8a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.5 9.5a2 2 0 0 1-2.8-2.8l8.8-8.8" />
+                  </svg>
+                </button>
+                {isRunning ? (
+                  <button
+                    type="button"
+                    onClick={onStop}
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                    title="停止"
+                  >
+                    <span className="h-3.5 w-3.5 rounded-sm bg-white" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onSend}
+                    disabled={disabled}
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-cyan-500 text-white transition-colors hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500"
+                    title="发送"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="23"
+                      height="23"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 19V5" />
+                      <path d="m5 12 7-7 7 7" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  },
+);

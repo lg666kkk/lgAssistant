@@ -45,5 +45,8 @@
 | 04 | 可观测性 Trace 与 Eval（能力 3） | [observability-trace-eval.md](./agent/observability-trace-eval.md) | 已完成 |
 | 05 | 分层记忆系统（能力 2） | [layered-memory.md](./agent/layered-memory.md) | 已完成（五层全部就位） |
 | 06 | 结构化事件协议（能力 4） | [structured-event-protocol.md](./agent/structured-event-protocol.md) | 已完成（NDJSON → SSE） |
+| 07 | **Agent 成熟化路线图（最终整合版）** | [agent-roadmap-final.md](./agent/agent-roadmap-final.md) | **规划（主文档）** |
+| 07a | ├─ 对标差距分析（已整合至 07） | [maturity-benchmark-roadmap.md](./agent/maturity-benchmark-roadmap.md) | 存档 |
+| 07b | └─ 架构蓝图（已整合至 07） | [agent-engineering-roadmap.md](./agent/agent-engineering-roadmap.md) | 存档 |
 
 > 后续每实现一个功能，在此表格追加一行。

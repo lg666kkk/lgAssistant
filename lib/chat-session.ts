@@ -58,7 +58,11 @@ export class ChatSession {
     }
   }
 
-  async send(input: string, onUpdate: () => void) {
+  async send(
+    input: string,
+    onUpdate: () => void,
+    options: { webSearchEnabled?: boolean } = {},
+  ) {
     if (!input.trim() || this.loading) return;
 
     this.loading = true;
@@ -131,6 +135,7 @@ export class ChatSession {
         body: JSON.stringify({
           messages: this.messages.slice(0, -1),
           sessionId: this.id,
+          enableWebSearch: Boolean(options.webSearchEnabled),
         }),
         signal: this.abortController.signal,
         onopen: async (response) => {
