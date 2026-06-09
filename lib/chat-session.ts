@@ -1,4 +1,5 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
+import type { ChatModelId } from "./agent/models";
 import type { AgentEvent } from "./agent/runtime/events";
 import { SessionManager } from "./session-manager";
 export interface Message {
@@ -61,7 +62,7 @@ export class ChatSession {
   async send(
     input: string,
     onUpdate: () => void,
-    options: { webSearchEnabled?: boolean } = {},
+    options: { webSearchEnabled?: boolean; model?: ChatModelId } = {},
   ) {
     if (!input.trim() || this.loading) return;
 
@@ -136,6 +137,7 @@ export class ChatSession {
           messages: this.messages.slice(0, -1),
           sessionId: this.id,
           enableWebSearch: Boolean(options.webSearchEnabled),
+          model: options.model,
         }),
         signal: this.abortController.signal,
         onopen: async (response) => {

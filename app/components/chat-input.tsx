@@ -1,14 +1,18 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, type ForwardedRef } from "react";
+import { type ChatModelId } from "@/lib/agent/models";
+import { ModelPicker } from "./model-picker";
 
 type ChatInputProps = {
   value: string;
   disabled?: boolean;
   isRunning?: boolean;
   webSearchEnabled: boolean;
+  selectedModel: ChatModelId;
   onChange: (value: string) => void;
   onWebSearchEnabledChange: (enabled: boolean) => void;
+  onSelectedModelChange: (model: ChatModelId) => void;
   onSend: () => void;
   onStop: () => void;
 };
@@ -31,8 +35,10 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       disabled = false,
       isRunning = false,
       webSearchEnabled,
+      selectedModel,
       onChange,
       onWebSearchEnabledChange,
+      onSelectedModelChange,
       onSend,
       onStop,
     },
@@ -99,6 +105,10 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                   </svg>
                   联网搜索
                 </button>
+                <ModelPicker
+                  selectedModel={selectedModel}
+                  onSelectedModelChange={onSelectedModelChange}
+                />
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 <button

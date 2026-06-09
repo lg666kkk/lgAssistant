@@ -11,6 +11,7 @@ import { formatTraceTree } from "@/lib/agent/runtime/trace";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
+import { resolveChatModel } from "@/lib/agent/models";
 import { SessionManager } from "@/lib/session-manager";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
   // 校验 messages 字段
   const requestId = crypto.randomUUID();
   const { messages, sessionId, enableWebSearch } = body;
+  const selectedModel = resolveChatModel(body.model);
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(
@@ -160,6 +162,7 @@ export async function POST(req: Request) {
           undefined, // deps 用默认
           systemPrompt, // ② 注入召回的记忆和联网搜索策略
           () => req.signal.aborted || closed,
+          selectedModel,
         );
         console.log(
           "=== Agent Loop Trace ===",
@@ -215,7 +218,7 @@ export async function POST(req: Request) {
         }
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
-        stream = await streamModelResponse(loopMessages, systemPrompt);
+        stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容

@@ -6,6 +6,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useChatManager } from "@/hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
 import { ChatInput } from "./components/chat-input";
+import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 
 export default function Home() {
   const {
@@ -23,6 +24,8 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [selectedModel, setSelectedModel] =
+    useState<ChatModelId>(defaultChatModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLDivElement>(null);
 
@@ -41,7 +44,10 @@ export default function Home() {
     setInput("");
     moveSessionToTop(activeSession.id);
     requestAnimationFrame(() => inputRef.current?.focus());
-    await activeSession.send(text, rerender, { webSearchEnabled });
+    await activeSession.send(text, rerender, {
+      webSearchEnabled,
+      model: selectedModel,
+    });
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
@@ -427,6 +433,8 @@ export default function Home() {
           onChange={setInput}
           webSearchEnabled={webSearchEnabled}
           onWebSearchEnabledChange={setWebSearchEnabled}
+          selectedModel={selectedModel}
+          onSelectedModelChange={setSelectedModel}
           onSend={handleSend}
           onStop={handleStop}
           isRunning={Boolean(loading || streaming)}

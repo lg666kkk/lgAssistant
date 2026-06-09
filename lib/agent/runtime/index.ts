@@ -10,6 +10,7 @@ import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
+import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Stream } from "@anthropic-ai/sdk/streaming";
 
@@ -116,9 +117,10 @@ export async function callModel(
   tools: Anthropic.Tool[],
   system?: string,
   onTextDelta?: (text: string) => void,
+  model: ChatModelId = defaultChatModel,
 ): Promise<Anthropic.Message> {
   const stream = client.messages.stream({
-    model: deepseekConfig.model,
+    model,
     max_tokens: deepseekConfig.maxTokens,
     messages,
     tools,
@@ -261,6 +263,7 @@ export async function runAgentLoop(
   deps: { callModel: typeof callModel } = { callModel },
   system?: string, // 召回的记忆，透传给每轮 callModel 作为 system 注入
   shouldStop: () => boolean = () => false,
+  model: ChatModelId = defaultChatModel,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -334,7 +337,13 @@ export async function runAgentLoop(
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
     const onTextDelta = (text: string) =>
       enqueueEvent({ type: "text", content: text }, enqueueText);
-    let initialResponse = await deps.callModel(loopMessages, tools, system, onTextDelta);
+    let initialResponse = await deps.callModel(
+      loopMessages,
+      tools,
+      system,
+      onTextDelta,
+      model,
+    );
     if (shouldStop()) {
       return {
         loopMessages,
@@ -459,9 +468,13 @@ export async function runAgentLoop(
   };
 }
 
-export async function streamModelResponse(messages: ModelMessage[], system?: string) {
+export async function streamModelResponse(
+  messages: ModelMessage[],
+  system?: string,
+  model: ChatModelId = defaultChatModel,
+) {
   return client.messages.create({
-    model: deepseekConfig.model,
+    model,
     max_tokens: deepseekConfig.maxTokens,
     messages,
     stream: true,
