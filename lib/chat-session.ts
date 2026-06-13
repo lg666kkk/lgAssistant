@@ -136,7 +136,7 @@ export class ChatSession {
         body: JSON.stringify({
           messages: this.messages.slice(0, -1),
           sessionId: this.id,
-          enableWebSearch: Boolean(options.webSearchEnabled),
+          enableWebSearch: options.webSearchEnabled !== false,
           model: options.model,
         }),
         signal: this.abortController.signal,
@@ -154,13 +154,16 @@ export class ChatSession {
         },
         onmessage: (ev) => {
           if (!ev.data) return;
+          let evt: AgentEvent;
           try {
-            const evt: AgentEvent = JSON.parse(ev.data);
-            handleEvent(evt);
-            onUpdate();
+            evt = JSON.parse(ev.data);
           } catch {
             // 忽略 parse 失败的单条事件
+            return;
           }
+
+          handleEvent(evt);
+          onUpdate();
         },
         onclose: () => {
           // 服务端正常关闭流，不需要任何处理

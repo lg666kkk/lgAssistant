@@ -38,7 +38,7 @@ export const deepseekConfig = {
   apiKey: process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY!,
   baseURL: process.env.DEEPSEEK_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.deepseek.com/anthropic',
   model: 'deepseek-v4-pro',
-  maxTokens: 1024,
+  maxTokens: 4096,
   temperature: 0.7,
 } as const;
 

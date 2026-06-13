@@ -16,6 +16,7 @@ type ModelStep = {
   systemPrompt?: string;
   systemPromptTruncated?: boolean;
   systemPromptOriginalChars?: number;
+  systemSegments?: Array<{ kind: string; title: string; content: string }>;
 };
 
 type ToolStep = {
@@ -85,6 +86,70 @@ function Collapsible({
 
 function toText(v: unknown) {
   return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+}
+
+// 段类型 → 标签配色，一眼区分注入来源
+const SEGMENT_KIND_CLASS: Record<string, string> = {
+  identity: "bg-violet-950/50 text-violet-300",
+  memory: "bg-emerald-950/50 text-emerald-300",
+  "web-search-policy": "bg-sky-950/50 text-sky-300",
+};
+
+// 注入的 system 上下文：优先按段分块展示；旧 trace 没有 segments 时回退到整段文本
+function SystemContext({ step }: { step: ModelStep }) {
+  const [open, setOpen] = useState(false);
+  const segments = step.systemSegments ?? [];
+
+  // 既无段也无整段文本 → 不渲染（如某些 step 没注入 system）
+  if (segments.length === 0 && !step.systemPrompt) return null;
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+      >
+        <span>{open ? "▼" : "▶"}</span>
+        <span>
+          注入的 system 上下文
+          {segments.length > 0 && `（${segments.length} 段）`}
+        </span>
+      </button>
+      {open &&
+        (segments.length > 0 ? (
+          <div className="mt-1 space-y-1.5">
+            {segments.map((seg, i) => (
+              <div
+                key={`${seg.kind}-${i}`}
+                className="rounded-lg bg-slate-950 px-3 py-2"
+              >
+                <span
+                  className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] ${
+                    SEGMENT_KIND_CLASS[seg.kind] ?? "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  {seg.title}
+                </span>
+                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-xs text-slate-300">
+                  {seg.content}
+                </pre>
+              </div>
+            ))}
+          </div>
+        ) : (
+          // 回退：旧 trace 只有整段字符串
+          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-300">
+            {step.systemPrompt}
+            {step.systemPromptTruncated && (
+              <span className="text-slate-600">
+                {" "}
+                …（{step.systemPromptOriginalChars} 字符已截断）
+              </span>
+            )}
+          </pre>
+        ))}
+    </div>
+  );
 }
 
 export default function TraceDetailPage({
@@ -218,16 +283,8 @@ export default function TraceDetailPage({
                           </span>
                         )}
                       </div>
-                      {/* 上下文工程可观测性核心：本轮注入的 system prompt */}
-                      <Collapsible
-                        label="查看注入的 system prompt"
-                        body={step.systemPrompt ?? ""}
-                        meta={
-                          step.systemPromptTruncated
-                            ? `（${step.systemPromptOriginalChars} 字符已截断）`
-                            : undefined
-                        }
-                      />
+                      {/* 上下文工程可观测性核心：按段展示注入的 system 上下文 */}
+                      <SystemContext step={step} />
                       {step.requestedToolCalls.length > 0 && (
                         <Collapsible
                           label="查看工具入参"

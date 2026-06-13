@@ -24,7 +24,7 @@ export default function Home() {
 
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);

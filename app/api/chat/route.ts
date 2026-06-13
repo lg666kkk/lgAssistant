@@ -12,6 +12,7 @@ import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { resolveChatModel } from "@/lib/agent/models";
+import { buildSegments, renderSegments } from "@/lib/agent/prompt/segments";
 import { SessionManager } from "@/lib/session-manager";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
@@ -33,7 +34,8 @@ export async function POST(req: Request) {
 
   // 校验 messages 字段
   const requestId = crypto.randomUUID();
-  const { messages, sessionId, enableWebSearch } = body;
+  const { messages, sessionId } = body;
+  const enableWebSearch = body.enableWebSearch !== false;
   const selectedModel = resolveChatModel(body.model);
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -132,14 +134,13 @@ export async function POST(req: Request) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
           }
         }
-        const systemPrompt = [
-          memorySystem,
-          enableWebSearch
-            ? "用户已开启联网搜索。本轮回答必须先调用 web_search 工具获取公开网页信息，再基于搜索结果作答；不要仅凭模型内部知识回答。"
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+        // 段化组装：身份 / 记忆 / 策略分段构造，再渲染成 system 字符串。
+        // segments 同时透传给 loop 写进 trace，供详情页按段展示。
+        const systemSegments = buildSegments({
+          memory: memorySystem,
+          webSearchEnabled: enableWebSearch,
+        });
+        const systemPrompt = renderSegments(systemSegments);
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
         if (sessionId && systemPrompt) {
@@ -163,12 +164,15 @@ export async function POST(req: Request) {
           systemPrompt, // ② 注入召回的记忆和联网搜索策略
           () => req.signal.aborted || closed,
           selectedModel,
+          systemSegments, // 段化结构，写进 trace 供详情页按段展示
         );
         console.log(
           "=== Agent Loop Trace ===",
           formatTraceTree(agentLoopResult.trace),
         );
-        await saveTrace(agentLoopResult.trace)
+        void saveTrace(agentLoopResult.trace).catch((e: any) =>
+          console.error("[trace] 保存失败，跳过:", e.message),
+        );
         console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
 
@@ -177,9 +181,9 @@ export async function POST(req: Request) {
           console.error("[consolidate] 失败:", e.message),
         );
 
-        // ④ 会话记忆写入：await 确保写完再 return，否则 completed=true 时直接退出导致写入丢失
+        // ④ 会话记忆写入：非关键路径，失败不应中断已生成的流式回答。
         if (sessionId) {
-          try {
+          void (async () => {
             const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
             if (lastUser2) {
               await sessionStore.append(sessionId, { role: "user", content: lastUser2.content });
@@ -197,9 +201,9 @@ export async function POST(req: Request) {
             if (assistantText) {
               await sessionStore.append(sessionId, { role: "assistant", content: assistantText });
             }
-          } catch (e: any) {
-            console.error("[session] 写入历史失败:", e.message);
-          }
+          })().catch((e: any) =>
+            console.error("[session] 写入历史失败:", e.message),
+          );
         }
 
         if (agentLoopResult.completed) {
@@ -222,7 +226,7 @@ export async function POST(req: Request) {
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
-        await forwardTextStream(
+        const finalStopReason = await forwardTextStream(
           stream,
           enqueueTextEvent,
           () => req.signal.aborted || closed,
@@ -234,6 +238,11 @@ export async function POST(req: Request) {
         }
         if (allToolSources.length > 0) {
           enqueueSources(allToolSources, enqueueText);
+        }
+        if (finalStopReason === "max_tokens") {
+          enqueueTextEvent(
+            "\n\n（输出达到模型单次回复上限，内容可能未完整生成。）",
+          );
         }
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);

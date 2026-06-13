@@ -38,6 +38,7 @@ import type {
 
 export type AgentLoopStopReason =
   | "completed"
+  | "max_tokens"
   | "token_budget_exceeded"
   | "repeated_tool_call"
   | "max_iterations";
@@ -264,6 +265,8 @@ export async function runAgentLoop(
   system?: string, // 召回的记忆，透传给每轮 callModel 作为 system 注入
   shouldStop: () => boolean = () => false,
   model: ChatModelId = defaultChatModel,
+  // system 对应的段化结构，仅用于写进 trace 供详情页按段展示；不影响实际注入（注入仍用 system 字符串）
+  systemSegments?: Array<{ kind: string; title: string; content: string }>,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -369,6 +372,7 @@ export async function runAgentLoop(
       systemPrompt: systemSummary?.content,
       systemPromptTruncated: systemSummary?.truncated,
       systemPromptOriginalChars: systemSummary?.originalChars,
+      systemSegments,
       requestedToolCalls: toolUses.map((t: ToolUseBlock) => ({
         name: t.name,
         id: t.id,
@@ -383,6 +387,23 @@ export async function runAgentLoop(
         : undefined,
     };
     trace.steps.push(modelStep);
+    if (initialResponse.stop_reason === "max_tokens") {
+      enqueueEvent(
+        {
+          type: "text",
+          content:
+            "\n\n（输出达到模型单次回复上限，内容可能未完整生成。）",
+        },
+        enqueueText,
+      );
+      return {
+        loopMessages,
+        completed: false,
+        stopReason: "max_tokens",
+        metrics,
+        trace: finalizeTrace("max_tokens", false),
+      };
+    }
     if (toolUses.length === 0) {
       // 文本已在 callModel 流式过程中逐 token 推出，这里只处理来源
       if (allToolSources.length > 0) {
@@ -491,7 +512,9 @@ export async function forwardTextStream(
   stream: Stream<Anthropic.RawMessageStreamEvent>,
   enqueueText: (text: string) => boolean,
   shouldStop: () => boolean,
-) {
+): Promise<Anthropic.Messages.StopReason | undefined> {
+  let stopReason: Anthropic.Messages.StopReason | undefined;
+
   for await (const chunk of stream) {
     if (shouldStop()) {
       break;
@@ -506,5 +529,11 @@ export async function forwardTextStream(
         break;
       }
     }
+
+    if (chunk.type === "message_delta") {
+      stopReason = chunk.delta.stop_reason ?? stopReason;
+    }
   }
+
+  return stopReason;
 }
