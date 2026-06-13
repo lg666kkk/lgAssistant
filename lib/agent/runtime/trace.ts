@@ -1,5 +1,6 @@
 import { truncateToolContent } from "./budget";
 import type { AgentLoopMetrics, AgentLoopStopReason } from "./index";
+import type { ChatModelId, ModelUsageBreakdown } from "@/lib/agent/models";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -9,12 +10,13 @@ export type TraceStepBase = {
 
 export type ModelTraceStep = TraceStepBase & {
   type: "model";
+  model?: ChatModelId;
   textSummary: string; // 模型这轮吐的文本（截断后的摘要）
   textTruncated: boolean;
   textOriginalChars: number;
   requestedToolCalls: Array<{ name: string; id: string; input: unknown }>; // 这轮想调哪些工具
   estimatedContextTokens: number; // 复用 loop 本轮已算的值
-  usage?: { inputTokens?: number; outputTokens?: number }; // 模型返回的真实 token，有就填
+  usage?: ModelUsageBreakdown; // 模型返回的真实 token 和费用估算，有就填
   // 上下文工程可观测性核心：这轮注入给模型的 system prompt（截断后）。
   // 让 trace 详情页能回答「这次到底喂了什么上下文」。整个 loop 的 system 不变，
   // 但仍逐 step 记录，方便单看任意一步就知道当时的上下文。
@@ -64,6 +66,12 @@ export function createTrace(requestId: string, sessionId?: string): AgentTrace {
     metrics: {
       estimatedTokensSpent: 0,
       modelCallCount: 0,
+      actualInputTokens: 0,
+      actualOutputTokens: 0,
+      actualTotalTokens: 0,
+      cacheHitTokens: 0,
+      cacheMissTokens: 0,
+      estimatedModelCostCny: 0,
       toolCallCount: 0,
       totalToolCost: 0,
       toolDurations: [],

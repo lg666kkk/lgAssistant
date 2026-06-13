@@ -7,7 +7,77 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useChatManager } from "@/hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
 import { ChatInput } from "./components/chat-input";
+import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
+
+function formatCompactNumber(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function summarizeUsages(usages?: ModelUsageEventData[]) {
+  if (!usages?.length) return null;
+  const total = usages.reduce(
+    (sum, usage) => ({
+      inputTokens: sum.inputTokens + usage.inputTokens,
+      outputTokens: sum.outputTokens + usage.outputTokens,
+      totalTokens: sum.totalTokens + usage.totalTokens,
+      cacheHitTokens: sum.cacheHitTokens + usage.cacheHitTokens,
+      cacheMissTokens: sum.cacheMissTokens + usage.cacheMissTokens,
+      cacheCreationTokens:
+        sum.cacheCreationTokens + usage.cacheCreationTokens,
+      estimatedCostCny: sum.estimatedCostCny + usage.estimatedCostCny,
+    }),
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheHitTokens: 0,
+      cacheMissTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostCny: 0,
+    },
+  );
+  const measuredInput = total.cacheHitTokens + total.cacheMissTokens;
+  return {
+    ...total,
+    cacheHitRate:
+      measuredInput > 0 ? total.cacheHitTokens / measuredInput : 0,
+  };
+}
+
+function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) {
+  const usage = summarizeUsages(usages);
+  if (!usage) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-700/70 pt-2 text-[11px] text-slate-500">
+      <span title="真实总 tokens">
+        token {formatCompactNumber(usage.totalTokens)}
+      </span>
+      <span title="输入 tokens">
+        输入 {formatCompactNumber(usage.inputTokens)}
+      </span>
+      <span title="输出 tokens">
+        输出 {formatCompactNumber(usage.outputTokens)}
+      </span>
+      {(usage.cacheHitTokens > 0 || usage.cacheMissTokens > 0) && (
+        <span title="DeepSeek prompt cache 命中率">
+          缓存命中 {(usage.cacheHitRate * 100).toFixed(1)}%
+        </span>
+      )}
+      {usage.cacheCreationTokens > 0 && (
+        <span title="缓存创建 tokens">
+          缓存创建 {formatCompactNumber(usage.cacheCreationTokens)}
+        </span>
+      )}
+      <span title="按模型价格估算的本次费用">
+        约 ¥{usage.estimatedCostCny.toFixed(4)}
+      </span>
+    </div>
+  );
+}
 
 export default function Home() {
   const {
@@ -91,6 +161,12 @@ export default function Home() {
             className="mt-2 block w-full rounded-xl border border-slate-800 px-4 py-2 text-center text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors whitespace-nowrap"
           >
             📊 Trace 观测
+          </Link>
+          <Link
+            href="/usage"
+            className="mt-2 block w-full rounded-xl border border-slate-800 px-4 py-2 text-center text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors whitespace-nowrap"
+          >
+            ¥ 用量统计
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-1">
@@ -419,6 +495,9 @@ export default function Home() {
                           </div>
                         </div>
                       )}
+                    {msg.role === "assistant" && (
+                      <MessageUsageBar usages={msg.modelUsages} />
+                    )}
                   </div>
                   </div>
                 );

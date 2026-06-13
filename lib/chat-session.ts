@@ -1,5 +1,6 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
 import type { ChatModelId } from "./agent/models";
+import type { ModelUsageEventData } from "./agent/runtime/events";
 import type { AgentEvent } from "./agent/runtime/events";
 import { SessionManager } from "./session-manager";
 export interface Message {
@@ -21,6 +22,7 @@ export interface Message {
     error?: string;
     metadata?: Record<string, unknown>;
   }>;
+  modelUsages?: ModelUsageEventData[];
 }
 
 export class ChatSession {
@@ -32,6 +34,7 @@ export class ChatSession {
   error: string | null = null;
   private abortController: AbortController | null = null;
   private manuallyAborted = false;
+  private currentModel: ChatModelId | null = null;
   private sessionManager = new SessionManager();
   private isNewSession = true;
 
@@ -51,6 +54,7 @@ export class ChatSession {
         content: msg.content,
         sources: msg.sources,
         toolCalls: msg.metadata?.toolCalls,
+        modelUsages: msg.metadata?.modelUsages,
       }));
       this.isNewSession = false;
     } catch (error) {
@@ -67,6 +71,7 @@ export class ChatSession {
     if (!input.trim() || this.loading) return;
 
     this.loading = true;
+    this.currentModel = options.model ?? null;
     this.manuallyAborted = false;
     this.error = null;
     let assistantMessageSaved = false;
@@ -122,6 +127,9 @@ export class ChatSession {
           case "sources":
             last().sources = evt.sources;
             break;
+          case "model_usage":
+            (last().modelUsages ??= []).push(evt.usage);
+            break;
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");
           case "done":
@@ -134,7 +142,10 @@ export class ChatSession {
         openWhenHidden: true,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: this.messages.slice(0, -1),
+          messages: this.messages.slice(0, -1).map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          })),
           sessionId: this.id,
           enableWebSearch: options.webSearchEnabled !== false,
           model: options.model,
@@ -227,10 +238,11 @@ export class ChatSession {
         lastMessage.content,
         {
           sources: lastMessage.sources,
-          model: "deepseek-v4-pro",
+          model: this.currentModel ?? "deepseek-v4-pro",
           metadata: {
             ...metadata,
             toolCalls: lastMessage.toolCalls,
+            modelUsages: lastMessage.modelUsages,
           },
         },
       );

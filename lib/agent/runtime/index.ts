@@ -10,7 +10,12 @@ import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
-import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
+import {
+  calculateModelUsageCost,
+  defaultChatModel,
+  type ChatModelId,
+  type ModelUsageBreakdown,
+} from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Stream } from "@anthropic-ai/sdk/streaming";
 
@@ -22,6 +27,12 @@ type ToolUseBlock = Anthropic.Messages.ToolUseBlock;
 export type AgentLoopMetrics = {
   estimatedTokensSpent: number;
   modelCallCount: number;
+  actualInputTokens: number;
+  actualOutputTokens: number;
+  actualTotalTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  estimatedModelCostCny: number;
   toolCallCount: number;
   totalToolCost: number;
   toolDurations: Array<{
@@ -276,6 +287,12 @@ export async function runAgentLoop(
   const metrics: AgentLoopMetrics = {
     estimatedTokensSpent: 0,
     modelCallCount: 0,
+    actualInputTokens: 0,
+    actualOutputTokens: 0,
+    actualTotalTokens: 0,
+    cacheHitTokens: 0,
+    cacheMissTokens: 0,
+    estimatedModelCostCny: 0,
     toolCallCount: 0,
     totalToolCost: 0,
     toolDurations: [],
@@ -359,10 +376,53 @@ export async function runAgentLoop(
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
+    const rawUsage = initialResponse.usage as
+      | (Anthropic.Message["usage"] & {
+          prompt_cache_hit_tokens?: number;
+          prompt_cache_miss_tokens?: number;
+          cache_read_input_tokens?: number | null;
+          cache_creation_input_tokens?: number | null;
+        })
+      | undefined;
+    const modelUsage: ModelUsageBreakdown | undefined = rawUsage
+      ? calculateModelUsageCost(model, {
+          inputTokens: rawUsage.input_tokens,
+          outputTokens: rawUsage.output_tokens,
+          cacheHitTokens:
+            rawUsage.prompt_cache_hit_tokens ??
+            rawUsage.cache_read_input_tokens ??
+            undefined,
+          cacheMissTokens: rawUsage.prompt_cache_miss_tokens,
+          cacheCreationTokens: rawUsage.cache_creation_input_tokens ?? undefined,
+        })
+      : undefined;
+    if (rawUsage) {
+      console.log("[ModelUsageRaw]", rawUsage);
+    }
+    if (modelUsage) {
+      metrics.actualInputTokens += modelUsage.inputTokens;
+      metrics.actualOutputTokens += modelUsage.outputTokens;
+      metrics.actualTotalTokens += modelUsage.totalTokens;
+      metrics.cacheHitTokens += modelUsage.cacheHitTokens;
+      metrics.cacheMissTokens += modelUsage.cacheMissTokens;
+      metrics.estimatedModelCostCny += modelUsage.estimatedCostCny;
+      enqueueEvent(
+        {
+          type: "model_usage",
+          usage: {
+            model,
+            modelCallIndex: metrics.modelCallCount,
+            ...modelUsage,
+          },
+        },
+        enqueueText,
+      );
+    }
     // 记录本轮注入的 system prompt（截断后），供 trace 详情页展示「喂了什么上下文」
     const systemSummary = system ? summarizeText(system) : undefined;
     const modelStep: ModelTraceStep = {
       type: "model",
+      model,
       index: stepIndex++,
       startedAt: modelStartedAt,
       durationMs: Date.now() - modelStartedAt,
@@ -379,12 +439,7 @@ export async function runAgentLoop(
         input: t.input,
       })),
       estimatedContextTokens,
-      usage: initialResponse.usage
-        ? {
-            inputTokens: initialResponse.usage.input_tokens,
-            outputTokens: initialResponse.usage.output_tokens,
-          }
-        : undefined,
+      usage: modelUsage,
     };
     trace.steps.push(modelStep);
     if (initialResponse.stop_reason === "max_tokens") {

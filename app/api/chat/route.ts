@@ -62,6 +62,10 @@ export async function POST(req: Request) {
       );
     }
   }
+  const modelMessages = messages.map((msg: any) => ({
+    role: msg.role as "user" | "assistant",
+    content: msg.content,
+  }));
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry();
   // 给模型看的工具说明
@@ -107,13 +111,13 @@ export async function POST(req: Request) {
       try {
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖
-        let loopMessages = [...messages];
+        let loopMessages = [...modelMessages];
         if (sessionId && messages.length === 1) {
           try {
             const history = await sessionStore.getHistory(sessionId);
             if (history.length > 0) {
               // 把 Redis 里的历史拼在本轮消息前面
-              loopMessages = [...history, ...messages];
+              loopMessages = [...history, ...modelMessages];
             }
           } catch (e: any) {
             console.error("[session] 读取历史失败，跳过:", e.message);
@@ -177,7 +181,7 @@ export async function POST(req: Request) {
         loopMessages = agentLoopResult.loopMessages;
 
         // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
-        void consolidate(messages, { sessionId }).catch((e: any) =>
+        void consolidate(modelMessages, { sessionId }).catch((e: any) =>
           console.error("[consolidate] 失败:", e.message),
         );
 

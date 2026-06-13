@@ -16,6 +16,8 @@ type TraceListItem = {
     modelCallCount?: number;
     toolCallCount?: number;
     estimatedTokensSpent?: number;
+    actualTotalTokens?: number;
+    estimatedModelCostCny?: number;
     totalToolCost?: number;
   };
   created_at: string;
@@ -105,6 +107,12 @@ function SessionBlock({ group }: { group: SessionGroup }) {
                 <div className="flex shrink-0 gap-3 text-xs text-slate-400">
                   <span title="模型调用次数">🧠 {t.metrics?.modelCallCount ?? 0}</span>
                   <span title="工具调用次数">🔧 {t.metrics?.toolCallCount ?? 0}</span>
+                  <span title="真实 token">
+                    tok {t.metrics?.actualTotalTokens ?? 0}
+                  </span>
+                  <span title="估算模型费用">
+                    ¥{(t.metrics?.estimatedModelCostCny ?? 0).toFixed(4)}
+                  </span>
                   <span title="估算 token">~{t.metrics?.estimatedTokensSpent ?? 0}</span>
                   <span title="总耗时">{t.total_duration_ms ?? "?"}ms</span>
                 </div>

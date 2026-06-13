@@ -5,6 +5,7 @@ import Link from "next/link";
 
 type ModelStep = {
   type: "model";
+  model?: string;
   index: number;
   durationMs?: number;
   textSummary: string;
@@ -12,7 +13,16 @@ type ModelStep = {
   textOriginalChars: number;
   requestedToolCalls: Array<{ name: string; id: string; input: unknown }>;
   estimatedContextTokens: number;
-  usage?: { inputTokens?: number; outputTokens?: number };
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+    cacheCreationTokens?: number;
+    cacheHitRate?: number;
+    estimatedCostCny?: number;
+  };
   systemPrompt?: string;
   systemPromptTruncated?: boolean;
   systemPromptOriginalChars?: number;
@@ -48,6 +58,12 @@ type Trace = {
     modelCallCount?: number;
     toolCallCount?: number;
     estimatedTokensSpent?: number;
+    actualInputTokens?: number;
+    actualOutputTokens?: number;
+    actualTotalTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+    estimatedModelCostCny?: number;
     totalToolCost?: number;
   };
   created_at: string;
@@ -214,6 +230,12 @@ export default function TraceDetailPage({
                 <span className="text-slate-400">
                   ~{trace.metrics?.estimatedTokensSpent ?? 0} tok
                 </span>
+                <span className="text-slate-400">
+                  真实 {trace.metrics?.actualTotalTokens ?? 0} tok
+                </span>
+                <span className="text-slate-400">
+                  费用 ¥{(trace.metrics?.estimatedModelCostCny ?? 0).toFixed(4)}
+                </span>
               </div>
               <div className="mt-2 text-xs text-slate-600">
                 {trace.request_id} · {new Date(trace.created_at).toLocaleString("zh-CN")}
@@ -232,7 +254,9 @@ export default function TraceDetailPage({
                       #{step.index}
                     </span>
                     {step.type === "model" ? (
-                      <span className="font-medium text-sky-400">🧠 model</span>
+                      <span className="font-medium text-sky-400">
+                        🧠 {step.model ?? "model"}
+                      </span>
                     ) : (
                       <span
                         className={`font-medium ${
@@ -279,7 +303,21 @@ export default function TraceDetailPage({
                         {step.usage && (
                           <span className="text-slate-600">
                             真实 in/out {step.usage.inputTokens ?? "?"}/
-                            {step.usage.outputTokens ?? "?"}
+                            {step.usage.outputTokens ?? "?"} · 总{" "}
+                            {step.usage.totalTokens ?? "?"} · ¥
+                            {(step.usage.estimatedCostCny ?? 0).toFixed(4)}
+                          </span>
+                        )}
+                        {step.usage &&
+                          ((step.usage.cacheHitTokens ?? 0) > 0 ||
+                            (step.usage.cacheMissTokens ?? 0) > 0 ||
+                            (step.usage.cacheCreationTokens ?? 0) > 0) && (
+                          <span className="text-slate-600">
+                            缓存命中{" "}
+                            {((step.usage.cacheHitRate ?? 0) * 100).toFixed(1)}%
+                            {step.usage.cacheCreationTokens
+                              ? ` · 创建 ${step.usage.cacheCreationTokens}`
+                              : ""}
                           </span>
                         )}
                       </div>

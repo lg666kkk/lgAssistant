@@ -1,4 +1,5 @@
 import type { ToolSourceType } from "@/lib/agent/runtime";
+import type { ChatModelId, ModelUsageBreakdown } from "@/lib/agent/models";
 export interface ToolCallEventData {
     name: string;
     input?: unknown;
@@ -27,6 +28,16 @@ export interface SourcesEvent {
     sources: ToolSourceType[];
 }
 
+export interface ModelUsageEventData extends ModelUsageBreakdown {
+    model: ChatModelId;
+    modelCallIndex: number;
+}
+
+export interface ModelUsageEvent {
+    type: "model_usage";
+    usage: ModelUsageEventData;
+}
+
 export interface ErrorEvent {
     type: "error";
     message: string;
@@ -37,7 +48,13 @@ export interface DoneEvent {
     type: "done";
 }
 
-export type AgentEvent = TextEvent | ToolCallEvent | SourcesEvent | ErrorEvent | DoneEvent;
+export type AgentEvent =
+  | TextEvent
+  | ToolCallEvent
+  | SourcesEvent
+  | ModelUsageEvent
+  | ErrorEvent
+  | DoneEvent;
 
 // 序列化为 SSE 格式：event:<类型> 行 + data:<JSON> 行 + 空行（\n\n）作为事件边界。
 // event.type 直接复用为 SSE 的 event 名；data 里仍保留完整 JSON（含 type），前端解析更省事。
