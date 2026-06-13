@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -85,6 +86,12 @@ export default function Home() {
           >
             + 新对话
           </button>
+          <Link
+            href="/traces"
+            className="mt-2 block w-full rounded-xl border border-slate-800 px-4 py-2 text-center text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors whitespace-nowrap"
+          >
+            📊 Trace 观测
+          </Link>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-1">
           {sessions.map((session) => (

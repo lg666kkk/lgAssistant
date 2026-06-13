@@ -5,23 +5,55 @@
 
 ---
 
-## 当前项目状态
+> ⚠️ **文档状态校准（2026-06-13）**：本文件早期“当前状态”严重滞后于真实代码。
+> 经核对实际实现后重写。下面的「已实现」反映 `lib/agent/` 与 `lib/server/` 的真实代码。
 
-- ✅ 基础流式对话（Anthropic SDK + DeepSeek 模型）
-- ✅ 多会话管理（内存存储，未持久化）
-- ✅ Supabase 向量存储基础设施
-- ✅ Markdown 渲染 + 代码高亮
+## 当前项目状态（已实现）
+
+**核心对话**
+- ✅ 基础流式对话（Anthropic SDK + DeepSeek 模型，`lib/agent/models.ts` 支持模型选择）
 - ✅ 输入框升级：textarea、Enter 发送、Shift+Enter 换行、发送后聚焦
 - ✅ 停止生成：前端 abort、后端安全中断、部分回复落库
+- ✅ Markdown 渲染 + 代码高亮
+- ✅ 多会话管理 + **Redis 会话持久化**（`RedisSessionStore`，进程外可恢复历史）
+
+**Agent 能力（路线图原标“未做”，实际已实现）**
+- ✅ **Agent Runtime + Agentic Loop** — `lib/agent/runtime/index.ts`：`runAgentLoop`、`maxToolIterations` 轮数保护、`max_iterations` 停止原因、`getToolCallKey` 死循环识别
+- ✅ **上下文压缩** — `runtime/compaction.ts`（`compactLoopMessages`）
+- ✅ **Token 预算** — `runtime/budget.ts`
+- ✅ **结构化事件协议 + 流式管道** — `runtime/events.ts`、`streamModelResponse`、`forwardTextStream`
+- ✅ **Tool Use 引擎** — `tools/tool-router.ts`：解析 tool_use、执行、回传 tool_result，支持多轮
+- ✅ **Tool Registry** — `tools/registry.ts`：注册 / 查找 / 输出 schema
+- ✅ **工具权限分级** — `riskLevel`: `safe` / `confirm`（走审批）/ `dangerous`（拦截），`runtime policy` + rateLimit
+- ✅ **7 个内置工具** — `get_current_time` / `calculator` / `search_notes` / `create_todo` / `daily_leetcode` / `leetcode_wrong_book` / `web_search`(Tavily)
+- ✅ **审批路由** — `app/api/tools/confirm/route.ts`
+
+**RAG（路线图原标“未做”，实际已打通）**
+- ✅ **RAG 全链路** — `lib/server/`：`NotionClient` 读取 → `chunkText` 分块 → `EmbeddingClient` 向量化 → `syncNotionPages` 入库 → `RAGRetriever` 检索
+- ✅ **RAG 已接入对话** — `search_notes` 工具内部调用 `RAGRetriever`，模型可自主检索知识库
+
+**记忆系统（路线图原标“未做”，实际已实现）**
+- ✅ **三层记忆 store** — `memory/session-store.ts`(Redis) / `memory/semantic-store.ts`(`agent_semantic_memories` + `match_memories` RPC) / `memory/longterm-store.ts`(`agent_memories`)
+- ✅ **记忆 flow** — `memory/memory-flow.ts`：`recallForPrompt`（召回注入）+ `consolidate`（异步固化）
+
+**观测与质量**
+- ✅ **Trace 链路** — `runtime/trace.ts` + `trace-store.ts`，`formatTraceTree`，写 `traces` 表
+- ✅ **Eval harness** — `lib/agent/eval/`：cases / assertions / runner / mock-models，`npm run test:eval`
 - ✅ 基础质量检查：TypeScript / lint / build 已跑通
 
 ---
 
-## 暂缓 TODO
+## 真正的剩余缺口（按价值排序）
 
-- [ ] **M0.5 数据库 migration / 建表说明**
-  - 补齐 `sessions` / `messages` / `documents` 的 SQL migration 或建表文档
-  - 确认 `messages.session_id` 外键开启 `ON DELETE CASCADE`
+- [ ] **P0 — DB migration 收口**
+  - `docs/schemas/` 散着 9 个 .sql（含 `sessions` / `memories` / `semantic-memories` / `traces` / leetcode 系列）
+  - `scripts/init-db.sh` 仅提示手动跑 3 个文件，未覆盖 memories/semantic/traces
+  - 整理成统一建表入口或 migration 文档，确认所有表都被覆盖、外键 `ON DELETE CASCADE`
+
+- [ ] **P1 — 会话持久化到 Supabase（可选）**
+  - 当前会话历史在 Redis（`RedisSessionStore`），适合缓存但非长期归档
+  - 若要长期持久化 + 跨设备，需补 `sessions` / `messages` 表写入链路
+  - 前端 `hooks/use-chat-manager.ts` 目前不直接落库，依赖后端 Redis
 
 - [ ] **M0.7 会话标题手动重命名**
   - 会话列表支持进入编辑态
@@ -36,28 +68,28 @@
 
 ## Phase 1 - 核心体验完善
 
-- [ ] **1.1 RAG 知识库问答**
-  - 接入 Notion API，自动同步笔记内容并分块
-  - 调用 Embedding 模型生成向量，写入 Supabase `documents` 表
-  - 用户提问时先做向量检索，将相关文档片段注入 system prompt
-  - 混合检索策略：向量相似度 + BM25 融合排序
-  - 回答中标注引用来源（页面标题 + 链接）
+- [x] **1.1 RAG 知识库问答**（基础链路已完成）
+  - [x] 接入 Notion API，同步笔记内容并分块（`lib/server/notion.ts` + `sync.ts` + `chunking.ts`）
+  - [x] 调用 Embedding 模型生成向量，写入 Supabase（`lib/server/embedding.ts`）
+  - [x] 用户提问时向量检索，结果通过 `search_notes` 工具注入对话（`lib/server/retriever.ts`）
+  - [ ] 混合检索策略：向量相似度 + BM25 融合排序（**未做**）
+  - [ ] 回答中标注引用来源（页面标题 + 链接）的前端展示（**待确认**）
 
-- [ ] **1.2 对话持久化 + Prompt Pipe**
-  - 会话列表和消息记录持久化到 Supabase（当前仅存于内存）
-  - 刷新页面后恢复历史对话
-  - 支持对话标题编辑和重命名
-  - 模块化 Prompt 组装管道
+- [~] **1.2 对话持久化 + Prompt Pipe**
+  - [x] 会话历史持久化（**Redis** `RedisSessionStore`，非 Supabase）
+  - [x] 后端能恢复历史对话（前端只传一条时从 Redis 补回）
+  - [ ] 长期持久化到 Supabase `sessions`/`messages` 表（**未做**）
+  - [ ] 支持对话标题编辑和重命名（**未做**，见 M0.7）
 
-- [ ] **1.3 输入体验升级**
-  - 单行 `<input>` 替换为多行 `<textarea>`，支持 Shift+Enter 换行
-  - 支持停止生成（前端调用 abort，后端中断流）
-  - 消息发送后自动聚焦输入框
+- [x] **1.3 输入体验升级**（已完成）
+  - [x] 多行 `<textarea>`，Shift+Enter 换行
+  - [x] 支持停止生成（前端 abort + 后端中断）
+  - [x] 消息发送后自动聚焦输入框
 
 - [ ] **1.4 Markdown 渲染增强**
-  - 代码块添加一键复制按钮
-  - 支持表格、LaTeX 公式渲染
-  - 支持图片 / 链接的正确展示
+  - [ ] 代码块添加一键复制按钮
+  - [ ] 支持表格、LaTeX 公式渲染
+  - [ ] 支持图片 / 链接的正确展示
 
 ---
 
@@ -65,7 +97,10 @@
 
 ### 2A. 单 Agent 基础能力（P0/P1 优先级）
 
-- [ ] **2A.0 Agent Runtime - 运行时基础设施**
+> ✅ **2A.0 / 2A.1 / 2A.4 / 2A.6 已基本实现**（见顶部「当前项目状态」）。
+> 真正未做：**2A.2 文件工具**、**2A.3 终端工具**、**2A.5 规划反思**、**2A.7 MCP**、**2A.8/2A.9 工具组装与 Profile**。
+
+- [x] **2A.0 Agent Runtime - 运行时基础设施**（已实现，`lib/agent/runtime/`）
   - 生命周期管理：初始化 → Prompt 组装 → LLM 调用 → 工具执行 → 输出响应
   - Tool Registry：所有工具（内置 / MCP / Plugin）统一注册
   - 权限层：工具执行前的权限检查（白名单 / 审批 / 拦截）
@@ -74,7 +109,7 @@
   - 上下文注入：system prompt + 记忆 + RAG 结果 + 工具描述按优先级拼装
   - 流式输出管道：统一协议推送 LLM 文本 + 工具调用过程
 
-- [ ] **2A.1 Tool Use 工具调用引擎**
+- [x] **2A.1 Tool Use 工具调用引擎**（已实现，`tools/tool-router.ts` + `registry.ts`）
   - 后端实现 Anthropic Tool Use 协议（function calling）
   - 设计统一的 Tool 接口规范（name, description, input_schema, execute）
   - 构建 Tool Router：解析 `tool_use` block，路由到对应工具执行
@@ -96,7 +131,7 @@
   - 安全机制：命令白名单模式、危险命令拦截、执行超时控制、资源限制
   - 前端展示：终端风格输出渲染、运行中状态指示 + 手动终止按钮
 
-- [ ] **2A.4 Agentic Loop - 自主多步执行**
+- [x] **2A.4 Agentic Loop - 自主多步执行**（已实现：`runAgentLoop`、`maxToolIterations`、`getToolCallKey` 死循环识别）
   - 实现 Agent Loop：while (stop_reason !== 'end_turn') { 思考 → 调工具 → 回传结果 }
   - 支持模型在一次用户请求中自主执行多步操作
   - 循环保护：最大迭代次数（如 20 轮），超出后暂停并询问用户
@@ -108,7 +143,7 @@
   - Execution 阶段：按计划逐步执行，遇到意外自动调整
   - Verification 阶段：执行完毕后自动验证结果，失败自动进入修复循环
 
-- [ ] **2A.6 记忆系统**
+- [x] **2A.6 记忆系统**（已实现：三层 store + `recallForPrompt`/`consolidate`，前端管理面板未做）
   - 记忆存储层：基于 Supabase 的 `memories` 表，记忆向量化支持语义检索
   - 记忆类型：用户画像（user）、反馈偏好（feedback）、项目知识（project）、事实参考（reference）
   - 记忆生命周期：自动提取、显式记忆、主动召回、衰减与更新、遗忘机制
@@ -192,9 +227,9 @@
   - 支持上传 PDF / Word / TXT / Markdown / 图片文件
   - 服务端解析后注入对话上下文
 
-- [ ] **3.6 联网搜索**
-  - 集成搜索引擎 API（Tavily / SearXNG / Bing）
-  - 作为 Tool 注册，模型自主决定何时需要搜索
+- [x] **3.6 联网搜索**（已实现）
+  - [x] 集成 Tavily（`@tavily/core`，`lib/agent/tools/web-search.ts`）
+  - [x] 作为 `web_search` 工具注册，模型自主决定何时搜索
 
 ---
 
@@ -261,49 +296,38 @@
 
 ---
 
-## 优先级建议
+## 优先级建议（已按真实进度重排，2026-06-13）
 
-**P0（最高优先级）**：
-- Phase 2A.0 Agent Runtime
-- Phase 2A.1 Tool Use 引擎
-- Phase 2A.4 Agentic Loop
-- Phase 1.1 RAG 知识库问答
-- Phase 1.2 对话持久化
+> Runtime / Tool Use / Agentic Loop / RAG / 记忆 / 联网搜索 / 输入体验 均已完成，不再列入待办。
 
-**P1（高优先级）**：
-- Phase 2A.2 文件系统操作工具
-- Phase 2A.3 终端命令执行工具
-- Phase 2A.5 规划与反思能力
-- Phase 2A.6 记忆系统
+**P0（先做，低风险高收益）**：
+- DB migration 收口（统一建表入口，覆盖 memories/semantic/traces）
+- Markdown 渲染增强（代码复制按钮、表格、LaTeX）—— 纯前端，体验提升明显
+- RAG 引用来源前端展示（命中页面标题 + Notion 链接可点）
+
+**P1（核心能力扩展）**：
+- Phase 2A.2 文件系统操作工具（read/write/edit/list/search，接已有 `riskLevel` 权限框架）
+- Phase 2A.3 终端命令执行工具（run_command + 危险命令拦截，走 `/api/tools/confirm` 审批）
+- Phase 2A.5 规划与反思能力（Plan → Execute → Verify）
+- 会话标题手动重命名（M0.7）
+- 会话长期持久化到 Supabase（可选，当前 Redis 已可用）
+
+**P2（生态扩展）**：
 - Phase 2A.7 MCP 协议支持
-- Phase 1.3 输入体验升级
-- Phase 1.4 Markdown 渲染增强
+- Phase 2A.8/2A.9 工具组装场景 + Profile 过滤
+- Phase 3.1 Skill 技能系统 / 3.2 Plugin 架构 / 3.4 定时任务 / 3.5 文件上传
+- Phase 5.1-5.2 Context Engineering（部分已有 compaction/budget 铺垫）
 
-**P2（中优先级）**：
-- Phase 2A.8 工具组装应用场景
-- Phase 2A.9 工具 Profile 过滤
-- Phase 2B.1-2B.3 Harness 多 Agent 协作（核心部分）
-- Phase 3.1 Skill 技能系统
-- Phase 3.2 Plugin 架构
-- Phase 3.4 定时任务与自动化
-- Phase 5.1-5.2 Context Engineering
-- Phase 3.5 文件上传与解析
-- Phase 3.6 联网搜索
-
-**P3（低优先级）**：
-- Phase 2B.4-2B.5 Harness 可观测性与前端可视化
-- Phase 3.3 Channel 抽象
-- Phase 6.1 权限系统
-- Phase 6.4 多模型路由
-- Phase 4 知识管理体系
-- Phase 5.3-5.5 高级交互
-- Phase 6.5 部署与运维
+**P3（长期）**：
+- Phase 2B 多 Agent 协作（Planner-Generator-Evaluator）
+- Phase 3.3 Channel 抽象 / 6.1 权限系统 / 6.4 多模型路由 / 6.5 部署运维
+- Phase 4 知识管理体系 / 5.3-5.5 高级交互
 
 ---
 
 **建议执行路径**：
-1. Phase 1（核心体验）+ Phase 2A.0-2A.1（Runtime + Tool Use）
-2. Phase 2A.2-2A.4（工具集 + Agentic Loop）
-3. Phase 1.1（RAG）+ Phase 2A.5-2A.7（规划、记忆、MCP）
-4. Phase 2A.8-2A.9 + Phase 2B（工具组装 + 多 Agent）
-5. Phase 3-6（工具生态 + 工程化）
+1. **收口**：DB migration + RAG 引用展示 + Markdown 增强（巩固已有能力）
+2. **补工具**：文件工具 → 终端工具（接现有权限/审批框架）
+3. **提质量**：规划反思 + 会话标题/持久化
+4. **扩生态**：MCP → 工具组装 → Skill/Plugin
+5. **进阶**：多 Agent + 工程化部署

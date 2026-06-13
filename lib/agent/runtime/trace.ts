@@ -15,6 +15,12 @@ export type ModelTraceStep = TraceStepBase & {
   requestedToolCalls: Array<{ name: string; id: string; input: unknown }>; // 这轮想调哪些工具
   estimatedContextTokens: number; // 复用 loop 本轮已算的值
   usage?: { inputTokens?: number; outputTokens?: number }; // 模型返回的真实 token，有就填
+  // 上下文工程可观测性核心：这轮注入给模型的 system prompt（截断后）。
+  // 让 trace 详情页能回答「这次到底喂了什么上下文」。整个 loop 的 system 不变，
+  // 但仍逐 step 记录，方便单看任意一步就知道当时的上下文。
+  systemPrompt?: string;
+  systemPromptTruncated?: boolean;
+  systemPromptOriginalChars?: number;
 };
 
 export type ToolTraceStep = TraceStepBase & {

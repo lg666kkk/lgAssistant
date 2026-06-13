@@ -1,0 +1,270 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+
+type ModelStep = {
+  type: "model";
+  index: number;
+  durationMs?: number;
+  textSummary: string;
+  textTruncated: boolean;
+  textOriginalChars: number;
+  requestedToolCalls: Array<{ name: string; id: string; input: unknown }>;
+  estimatedContextTokens: number;
+  usage?: { inputTokens?: number; outputTokens?: number };
+  systemPrompt?: string;
+  systemPromptTruncated?: boolean;
+  systemPromptOriginalChars?: number;
+};
+
+type ToolStep = {
+  type: "tool";
+  index: number;
+  durationMs?: number;
+  name: string;
+  toolCallId?: string;
+  input: unknown;
+  ok: boolean;
+  contentSummary: string;
+  contentTruncated: boolean;
+  contentOriginalChars: number;
+  error?: string;
+  costPerUse: number;
+};
+
+type Step = ModelStep | ToolStep;
+
+type Trace = {
+  id: string;
+  request_id: string;
+  session_id: string | null;
+  stop_reason: string;
+  completed: boolean;
+  total_duration_ms: number | null;
+  steps: Step[];
+  metrics: {
+    modelCallCount?: number;
+    toolCallCount?: number;
+    estimatedTokensSpent?: number;
+    totalToolCost?: number;
+  };
+  created_at: string;
+};
+
+// 折叠展示长文本（system prompt / 工具结果 / 入参）
+function Collapsible({
+  label,
+  body,
+  meta,
+}: {
+  label: string;
+  body: string;
+  meta?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!body) return null;
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+      >
+        <span>{open ? "▼" : "▶"}</span>
+        <span>{label}</span>
+        {meta && <span className="text-slate-600">{meta}</span>}
+      </button>
+      {open && (
+        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-300">
+          {body}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function toText(v: unknown) {
+  return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+}
+
+export default function TraceDetailPage({
+  params,
+}: {
+  params: { id: string };
+}) {
+  const [trace, setTrace] = useState<Trace | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/traces/${params.id}`)
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || "加载失败");
+        return data;
+      })
+      .then((data) => setTrace(data.trace))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [params.id]);
+
+  return (
+    <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
+      <div className="mx-auto max-w-4xl px-6 py-8">
+        <Link
+          href="/traces"
+          className="text-sm text-slate-400 hover:text-slate-200"
+        >
+          ← 返回 Trace 列表
+        </Link>
+
+        {loading && <div className="mt-6 text-slate-500">加载中...</div>}
+        {error && (
+          <div className="mt-6 rounded-xl border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+            {error}
+          </div>
+        )}
+
+        {trace && (
+          <>
+            {/* 概览 */}
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/50 px-5 py-4">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <span className="text-slate-100">
+                  stopReason:{" "}
+                  <span className="font-medium">{trace.stop_reason}</span>
+                </span>
+                <span className="text-slate-400">
+                  completed: {String(trace.completed)}
+                </span>
+                <span className="text-slate-400">
+                  耗时 {trace.total_duration_ms ?? "?"}ms
+                </span>
+                <span className="text-slate-400">
+                  🧠 {trace.metrics?.modelCallCount ?? 0} 次模型
+                </span>
+                <span className="text-slate-400">
+                  🔧 {trace.metrics?.toolCallCount ?? 0} 次工具
+                </span>
+                <span className="text-slate-400">
+                  ~{trace.metrics?.estimatedTokensSpent ?? 0} tok
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-slate-600">
+                {trace.request_id} · {new Date(trace.created_at).toLocaleString("zh-CN")}
+              </div>
+            </div>
+
+            {/* 时间线 */}
+            <div className="mt-6 space-y-3">
+              {trace.steps.map((step) => (
+                <div
+                  key={step.index}
+                  className="rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3"
+                >
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="rounded-md bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
+                      #{step.index}
+                    </span>
+                    {step.type === "model" ? (
+                      <span className="font-medium text-sky-400">🧠 model</span>
+                    ) : (
+                      <span
+                        className={`font-medium ${
+                          step.ok ? "text-emerald-400" : "text-rose-400"
+                        }`}
+                      >
+                        🔧 {step.name} {step.ok ? "" : "(失败)"}
+                      </span>
+                    )}
+                    <span className="ml-auto text-xs text-slate-600">
+                      {step.durationMs ?? "?"}ms
+                    </span>
+                  </div>
+
+                  {step.type === "model" ? (
+                    <div className="mt-2">
+                      {step.textSummary && (
+                        <div className="whitespace-pre-wrap text-sm text-slate-300">
+                          {step.textSummary}
+                          {step.textTruncated && (
+                            <span className="text-slate-600">
+                              {" "}
+                              …（{step.textOriginalChars} 字符已截断）
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                        {step.requestedToolCalls.length > 0 ? (
+                          step.requestedToolCalls.map((tc) => (
+                            <span
+                              key={tc.id}
+                              className="rounded-md bg-sky-950/50 px-2 py-0.5 text-sky-300"
+                            >
+                              → 调用 {tc.name}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-slate-600">→ 输出最终回答</span>
+                        )}
+                        <span className="text-slate-600">
+                          上下文 ~{step.estimatedContextTokens} tok
+                        </span>
+                        {step.usage && (
+                          <span className="text-slate-600">
+                            真实 in/out {step.usage.inputTokens ?? "?"}/
+                            {step.usage.outputTokens ?? "?"}
+                          </span>
+                        )}
+                      </div>
+                      {/* 上下文工程可观测性核心：本轮注入的 system prompt */}
+                      <Collapsible
+                        label="查看注入的 system prompt"
+                        body={step.systemPrompt ?? ""}
+                        meta={
+                          step.systemPromptTruncated
+                            ? `（${step.systemPromptOriginalChars} 字符已截断）`
+                            : undefined
+                        }
+                      />
+                      {step.requestedToolCalls.length > 0 && (
+                        <Collapsible
+                          label="查看工具入参"
+                          body={toText(
+                            step.requestedToolCalls.map((t) => ({
+                              name: t.name,
+                              input: t.input,
+                            })),
+                          )}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <Collapsible label="入参" body={toText(step.input)} />
+                      <Collapsible
+                        label="结果"
+                        body={step.contentSummary}
+                        meta={
+                          step.contentTruncated
+                            ? `（${step.contentOriginalChars} 字符已截断）`
+                            : undefined
+                        }
+                      />
+                      {step.error && (
+                        <div className="mt-2 rounded-lg bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
+                          {step.error}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -48,5 +48,6 @@
 | 07 | **Agent 成熟化路线图（最终整合版）** | [agent-roadmap-final.md](./agent/agent-roadmap-final.md) | **规划（主文档）** |
 | 07a | ├─ 对标差距分析（已整合至 07） | [maturity-benchmark-roadmap.md](./agent/maturity-benchmark-roadmap.md) | 存档 |
 | 07b | └─ 架构蓝图（已整合至 07） | [agent-engineering-roadmap.md](./agent/agent-engineering-roadmap.md) | 存档 |
+| 08 | 可观测性可视化：Trace UI（承接能力 3） | [trace-visualization.md](./agent/trace-visualization.md) | 已完成 |
 
 > 后续每实现一个功能，在此表格追加一行。

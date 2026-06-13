@@ -5,22 +5,29 @@
 
 ---
 
-## 当前状态
+## 当前状态（2026-06-13 校准，对齐真实代码）
+
+> ⚠️ 早期版本严重低估了进度。M0–M3、M5 大部分已经实现，详见 `TODO.md`「当前项目状态」。
 
 已具备：
 - Next.js 14 + TypeScript + Tailwind 基础应用
-- 基础流式聊天
-- 多会话内存管理
-- Markdown 渲染和代码高亮
-- Supabase 向量存储 helper
+- 流式聊天 + 停止生成 + textarea 输入体验
+- 多会话 + **Redis 持久化**（刷新/重启可恢复历史）
+- 配置模块 + 模型选择（`lib/config.ts`、`lib/agent/models.ts`）
+- **RAG 全链路已打通并接入对话**（Notion → chunk → embedding → 检索，经 `search_notes` 工具）
+- **Tool Use 引擎 + Tool Registry + Agentic Loop**（`lib/agent/runtime/`、`tools/`）
+- **工具权限分级**（safe / confirm / dangerous）+ 审批路由
+- **记忆系统**（session/semantic/longterm 三层 + recall/consolidate）
+- **联网搜索**（Tavily `web_search` 工具）
+- **可观测性**：Trace 链路 + Eval harness（`npm run test:eval`）
 
-主要缺口：
-- 会话刷新后丢失
-- API 错误处理和模型配置较弱
-- RAG 尚未真正接入聊天流程
-- 没有 Prompt Pipe
-- 没有 Tool Use / Agent Loop
-- 文件、终端、MCP 等高风险能力尚未具备权限边界
+主要缺口（真正未做）：
+- DB migration 未收口（schemas 散落，建表入口不全）
+- 文件 / 终端工具尚未实现（权限框架已就绪，只缺工具本体）
+- MCP 协议未接入
+- 规划反思（Plan→Execute→Verify）、多 Agent 未做
+- Markdown 增强（复制按钮 / 表格 / LaTeX）、会话标题重命名、RAG 引用前端展示
+- 混合检索（向量 + BM25）未做
 
 ---
 

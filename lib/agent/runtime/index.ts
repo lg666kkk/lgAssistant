@@ -356,6 +356,8 @@ export async function runAgentLoop(
     const toolUses = extractToolUses(initialResponse.content);
     const directText = extractText(initialResponse.content);
     const textSummary = summarizeText(directText);
+    // 记录本轮注入的 system prompt（截断后），供 trace 详情页展示「喂了什么上下文」
+    const systemSummary = system ? summarizeText(system) : undefined;
     const modelStep: ModelTraceStep = {
       type: "model",
       index: stepIndex++,
@@ -364,6 +366,9 @@ export async function runAgentLoop(
       textSummary: textSummary.content,
       textTruncated: textSummary.truncated,
       textOriginalChars: textSummary.originalChars,
+      systemPrompt: systemSummary?.content,
+      systemPromptTruncated: systemSummary?.truncated,
+      systemPromptOriginalChars: systemSummary?.originalChars,
       requestedToolCalls: toolUses.map((t: ToolUseBlock) => ({
         name: t.name,
         id: t.id,
