@@ -42,11 +42,11 @@ export const webSearchTool: ToolDefinition = {
       },
       limit: {
         type: "number",
-        description: "返回结果数量，默认 5，最多 10",
+        description: "返回结果数量，默认 3，最多 5。除非用户要求深度研究，不要超过 5",
       },
       searchDepth: {
         type: "string",
-        description: "搜索深度，默认 basic，可选 advanced",
+        description: "搜索深度，默认 basic。只有深度研究或搜索结果不足时才用 advanced",
         enum: ["basic", "advanced"],
       },
     },
@@ -77,7 +77,7 @@ export const webSearchTool: ToolDefinition = {
     try {
       const tvly = tavily({ apiKey: process.env.TAVILY_API_KEY });
       const response = await tvly.search(query, {
-        maxResults: Math.min(limit ?? 5, 10),
+        maxResults: Math.min(limit ?? 3, 5),
         searchDepth: searchDepth || "basic",
       });
       const results = response.results || [];

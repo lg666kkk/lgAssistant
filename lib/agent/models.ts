@@ -37,9 +37,9 @@ export const chatModelOptions: ChatModelOption[] = [
     description: "默认模型，适合通用对话和工具调用",
     badge: "默认",
     pricing: {
-      inputCacheHit: 0.024,
-      inputCacheMiss: 2.4,
-      output: 5.0,
+      inputCacheHit: 0.025,
+      inputCacheMiss: 3,
+      output: 6,
     },
   },
   {
@@ -47,9 +47,9 @@ export const chatModelOptions: ChatModelOption[] = [
     name: "DeepSeek V4 Flash",
     description: "轻量通用模型，适合日常问答",
     pricing: {
-      inputCacheHit: 0.024,
-      inputCacheMiss: 2.4,
-      output: 5.0,
+      inputCacheHit: 0.02,
+      inputCacheMiss: 1,
+      output: 2,
     },
   }
 ];
