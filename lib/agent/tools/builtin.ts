@@ -7,6 +7,7 @@ import { createTodoTool } from "./create-todo";
 import { dailyLeetCodeTool } from "./daily-leetcode";
 import { leetCodeWrongBookTool } from "./leetcode-wrong-book";
 import { webSearchTool } from "./web-search";
+import { webFetchTool } from "./web-fetch";
 
 // 创建一个注册表，并把所有内置工具注册进去。
 export function createBuiltinToolRegistry(): ToolRegistry {
@@ -19,6 +20,7 @@ export function createBuiltinToolRegistry(): ToolRegistry {
   registry.register(dailyLeetCodeTool);
   registry.register(leetCodeWrongBookTool);
   registry.register(webSearchTool);
+  registry.register(webFetchTool);
 
   return registry;
 }

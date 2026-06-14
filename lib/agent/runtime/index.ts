@@ -78,6 +78,14 @@ interface DocContent {
   content?: unknown;
 }
 
+interface WebFetchContent {
+  title?: unknown;
+  url?: unknown;
+  finalUrl?: unknown;
+  snippet?: unknown;
+  text?: unknown;
+}
+
 interface ToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
@@ -211,6 +219,39 @@ export async function executeTools(
             });
           }
         }
+      }
+    }
+    if (
+      toolUse.name === "web_fetch" &&
+      toolResult.ok &&
+      toolResult.data &&
+      typeof toolResult.data === "object"
+    ) {
+      const page = toolResult.data as WebFetchContent;
+      const pageUrl =
+        typeof page.finalUrl === "string"
+          ? page.finalUrl
+          : typeof page.url === "string"
+            ? page.url
+            : "";
+      if (pageUrl) {
+        const title =
+          typeof page.title === "string" && page.title.trim()
+            ? page.title
+            : pageUrl;
+        const excerpt =
+          typeof page.snippet === "string" && page.snippet.trim()
+            ? page.snippet
+            : typeof page.text === "string"
+              ? page.text.substring(0, 180)
+              : "";
+        toolSources.push({
+          title,
+          notionPageId: pageUrl,
+          pageUrl,
+          similarity: 1,
+          excerpt,
+        });
       }
     }
     const truncated = truncateToolContent(toolResult.content, 2000);
