@@ -12,7 +12,7 @@ import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { resolveChatModel } from "@/lib/agent/models";
-import { buildSegments, renderSegments } from "@/lib/agent/prompt/segments";
+import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { SessionManager } from "@/lib/session-manager";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
@@ -138,13 +138,17 @@ export async function POST(req: Request) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
           }
         }
-        // 段化组装：身份 / 记忆 / 策略分段构造，再渲染成 system 字符串。
+        // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
-        const systemSegments = buildSegments({
+        const prompt = buildPromptPipe({
+          userMessage: lastUser?.content ?? "",
           memory: memorySystem,
           webSearchEnabled: enableWebSearch,
+          currentDate: new Date().toISOString(),
+          maxTokens: 3000,
         });
-        const systemPrompt = renderSegments(systemSegments);
+        const systemPrompt = prompt.systemPrompt;
+        const systemSegments = prompt.segments;
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
         if (sessionId && systemPrompt) {
