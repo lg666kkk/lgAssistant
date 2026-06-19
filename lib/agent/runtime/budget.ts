@@ -1,11 +1,16 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import {
+  countTokensForValue,
+  countTokensFromText,
+  truncateTextByTokens,
+} from "@/lib/agent/runtime/tokenizer";
 
 /**
  * Agent Loop 的上下文预算工具。
  *
  * 模型本身是无状态的，每一轮能看到什么，完全取决于我们传入的 messages。
  * 如果 loopMessages 不断追加工具调用和工具结果，最终会把 context window 塞满。
- * 这个文件先用“字符数 / 4”的粗略估算来建立预算意识，后续可以替换成真实 tokenizer。
+ * 这里使用本地 tokenizer 做请求前估算；真实计费仍以模型返回的 usage 为准。
  */
 export type ModelMessage = Anthropic.MessageParam;
 
@@ -48,13 +53,10 @@ export class TokenBudget {
 }
 
 /**
- * 粗略 token 估算。
- *
- * 英文场景里常用经验值是 1 token ~= 4 chars。
- * 中文不完全准确，但足够用于学习阶段的“防爆 context”硬保护。
+ * 本地 token 估算。
  */
 export function estimateTokensFromText(text: string) {
-  return Math.ceil(text.length / 4);
+  return countTokensFromText(text);
 }
 
 /**
@@ -63,11 +65,7 @@ export function estimateTokensFromText(text: string) {
  * messages / content block 通常是对象或数组，所以先序列化成 JSON 再估算。
  */
 export function estimateTokens(value: unknown): number {
-  if (typeof value === "string") {
-    return estimateTokensFromText(value);
-  }
-
-  return estimateTokensFromText(JSON.stringify(value));
+  return countTokensForValue(value);
 }
 
 /**
@@ -85,9 +83,9 @@ export function truncateToolContent(
   truncated: boolean;
   originalChars: number;
 } {
-  const estimated = estimateTokensFromText(content);
+  const truncated = truncateTextByTokens(content, maxTokens);
 
-  if (estimated <= maxTokens) {
+  if (!truncated.truncated) {
     return {
       content,
       truncated: false,
@@ -95,11 +93,10 @@ export function truncateToolContent(
     };
   }
 
-  const maxChars = maxTokens * 4;
   return {
     content:
-      content.slice(0, maxChars) +
-      `\n\n...（已截断，原始长度 ${content.length} 字符，约 ${estimated} tokens）`,
+      truncated.content +
+      `\n\n...（已截断，原始长度 ${content.length} 字符，约 ${truncated.tokenCount} tokens）`,
     truncated: true,
     originalChars: content.length,
   };

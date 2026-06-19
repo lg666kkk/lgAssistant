@@ -56,6 +56,16 @@ export const chatModelOptions: ChatModelOption[] = [
 
 export const defaultChatModel: ChatModelId = "deepseek-v4-pro";
 
+export function getModelContextWindowTokens(model: ChatModelId): number {
+  switch (model) {
+    case "deepseek-v4-pro":
+    case "deepseek-v4-flash":
+      return 64_000;
+    default:
+      return 32_000;
+  }
+}
+
 export function resolveChatModel(model: unknown): ChatModelId {
   return chatModelOptions.some((option) => option.id === model)
     ? (model as ChatModelId)

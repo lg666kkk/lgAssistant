@@ -16,6 +16,14 @@ export type ModelTraceStep = TraceStepBase & {
   textOriginalChars: number;
   requestedToolCalls: Array<{ name: string; id: string; input: unknown }>; // 这轮想调哪些工具
   estimatedContextTokens: number; // 复用 loop 本轮已算的值
+  tokenBudget?: {
+    max: number;
+    spentBefore: number;
+    spentAfter: number;
+    remainingBefore: number;
+    remainingAfter: number;
+    requested: number;
+  };
   usage?: ModelUsageBreakdown; // 模型返回的真实 token 和费用估算，有就填
   // 上下文工程可观测性核心：这轮注入给模型的 system prompt（截断后）。
   // 让 trace 详情页能回答「这次到底喂了什么上下文」。整个 loop 的 system 不变，
@@ -34,14 +42,38 @@ export type ToolTraceStep = TraceStepBase & {
   toolCallId?: string;
   input: unknown;
   ok: boolean;
-  contentSummary: string; // 工具结果（截断后的摘要）
+  contentSummary: string; // 压缩后给模型看的工具结果
   contentTruncated: boolean;
   contentOriginalChars: number;
+  rawContentSummary?: string; // 压缩前原始工具结果的截断预览，仅用于 trace 展示
+  rawContentTruncated?: boolean;
+  rawContentOriginalChars?: number;
   error?: string;
   costPerUse: number;
 };
 
-export type TraceStep = ModelTraceStep | ToolTraceStep; // 判别联合
+export type ContextCompactionTraceStep = TraceStepBase & {
+  type: "context_compaction";
+  beforeTokens: number;
+  afterTokens: number;
+  modelWindowTokens: number;
+  triggerTokens: number;
+  targetTokens: number;
+  primerMessages: number;
+  recentMessages: number;
+  middleMessageCount: number;
+  reason: string;
+  summary: string;
+  summaryChars: number;
+  method?: "deterministic" | "semantic";
+  compressionModel?: string;
+  fallbackReason?: string;
+};
+
+export type TraceStep =
+  | ModelTraceStep
+  | ToolTraceStep
+  | ContextCompactionTraceStep; // 判别联合
 
 export type AgentTrace = {
   requestId: string;
@@ -102,13 +134,19 @@ export function formatTraceTree(trace: AgentTrace): string {
           ? `wants[${step.requestedToolCalls.map((t) => t.name).join(", ")}]`
           : "done";
       const text = step.textSummary.replace(/\n/g, " ").slice(0, 100);
-      return `${branch} #${step.index} model (${dur}) text="${text}" -> ${wants}`;
-    } else {
+      const budget = step.tokenBudget
+        ? ` budget=${step.tokenBudget.spentAfter}/${step.tokenBudget.max}`
+        : "";
+      return `${branch} #${step.index} model (${dur}) text="${text}" -> ${wants}${budget}`;
+    } else if (step.type === "tool") {
       // 这里收窄成 ToolTraceStep
       const chars = step.contentTruncated
         ? `${step.contentOriginalChars}→截断`
         : `${step.contentOriginalChars}chars`;
       return `${branch} #${step.index} tool  ${step.name} ok=${step.ok} ${dur} content(${chars})`;
+    } else {
+      const method = step.method ? ` method=${step.method}` : "";
+      return `${branch} #${step.index} compact (${dur}) ${step.beforeTokens}→${step.afterTokens} tok middle=${step.middleMessageCount}${method}`;
     }
   });
 

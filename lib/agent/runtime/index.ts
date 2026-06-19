@@ -1,23 +1,29 @@
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
-import { deepseekConfig } from "@/lib/config";
 import {
   TokenBudget,
   estimateTokens,
   truncateToolContent,
 } from "@/lib/agent/runtime/budget";
-import { compactLoopMessages } from "@/lib/agent/runtime/compaction";
+import {
+  compactLoopMessagesSemantic,
+} from "@/lib/agent/runtime/compaction";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
 import {
+  callModelWithProvider,
+  generateTextWithProvider,
+  streamTextWithProvider,
+} from "@/lib/agent/runtime/model-provider";
+import {
   calculateModelUsageCost,
   defaultChatModel,
+  getModelContextWindowTokens,
   type ChatModelId,
   type ModelUsageBreakdown,
 } from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
-import type { Stream } from "@anthropic-ai/sdk/streaming";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -43,6 +49,7 @@ export type AgentLoopMetrics = {
 
 import type {
   AgentTrace,
+  ContextCompactionTraceStep,
   ModelTraceStep,
   ToolTraceStep,
 } from "@/lib/agent/runtime/trace";
@@ -82,8 +89,24 @@ interface WebFetchContent {
   title?: unknown;
   url?: unknown;
   finalUrl?: unknown;
+  status?: unknown;
+  contentType?: unknown;
+  method?: unknown;
   snippet?: unknown;
   text?: unknown;
+  charCount?: unknown;
+  returnedChars?: unknown;
+  truncated?: unknown;
+}
+
+interface WebSearchContent {
+  response?: {
+    results?: Array<{
+      title?: unknown;
+      url?: unknown;
+      content?: unknown;
+    }>;
+  };
 }
 
 interface ToolResultBlock {
@@ -126,11 +149,130 @@ export function appendToolResults(
   ];
 }
 
-// 创建 Anthropic 客户端，从配置读取
-const client = new Anthropic({
-  apiKey: deepseekConfig.apiKey,
-  baseURL: deepseekConfig.baseURL,
-});
+function compactTextHeadTail(text: string, maxChars: number) {
+  const normalized = text.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalized.length <= maxChars) return normalized;
+  const head = Math.floor(maxChars * 0.75);
+  const tail = Math.max(0, maxChars - head);
+  return `${normalized.slice(0, head)}\n\n...（中间内容已省略，原文 ${normalized.length} 字符）...\n\n${normalized.slice(-tail)}`;
+}
+
+function compactTextPrefix(text: string, maxChars: number) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}...`;
+}
+
+function shapeWebFetchContent(toolResult: Awaited<ReturnType<typeof executeToolCall>>) {
+  if (!toolResult.ok || !toolResult.data || typeof toolResult.data !== "object") {
+    return undefined;
+  }
+
+  const page = toolResult.data as WebFetchContent;
+  const text = typeof page.text === "string" ? page.text : "";
+  const snippet = typeof page.snippet === "string" ? page.snippet : "";
+  const title = typeof page.title === "string" && page.title.trim() ? page.title : "(无标题)";
+  const finalUrl =
+    typeof page.finalUrl === "string"
+      ? page.finalUrl
+      : typeof page.url === "string"
+        ? page.url
+        : "";
+  const body = text || snippet || toolResult.content;
+  const shapedBody = compactTextHeadTail(body, 3_500);
+
+  return [
+    "web_fetch 结果（已压缩给模型使用）",
+    `标题：${title}`,
+    finalUrl ? `链接：${finalUrl}` : undefined,
+    typeof page.status === "number" ? `HTTP 状态：${page.status}` : undefined,
+    typeof page.contentType === "string" ? `Content-Type：${page.contentType}` : undefined,
+    typeof page.method === "string" ? `读取方式：${page.method}` : undefined,
+    typeof page.charCount === "number" ? `原文字符数：${page.charCount}` : undefined,
+    page.truncated === true ? "说明：原工具结果已截断。" : undefined,
+    snippet ? `摘要：${snippet}` : undefined,
+    "",
+    "正文片段：",
+    shapedBody,
+  ]
+    .filter((item) => item !== undefined)
+    .join("\n");
+}
+
+function shapeWebSearchContent(toolResult: Awaited<ReturnType<typeof executeToolCall>>) {
+  if (!toolResult.ok || !toolResult.data || typeof toolResult.data !== "object") {
+    return undefined;
+  }
+
+  const data = toolResult.data as WebSearchContent;
+  const results = data.response?.results ?? [];
+  if (!Array.isArray(results) || results.length === 0) return undefined;
+
+  return [
+    "web_search 结果（已压缩给模型使用）",
+    ...results.slice(0, 5).map((result, index) => {
+      const title = typeof result.title === "string" ? result.title : "(无标题)";
+      const url = typeof result.url === "string" ? result.url : "";
+      const content = typeof result.content === "string" ? result.content : "";
+      return `${index + 1}. ${title}\n链接：${url}\n摘要：${compactTextPrefix(content, 500)}`;
+    }),
+  ].join("\n\n");
+}
+
+function shapeSearchNotesContent(toolResult: Awaited<ReturnType<typeof executeToolCall>>) {
+  if (
+    !toolResult.ok ||
+    !toolResult.data ||
+    typeof toolResult.data !== "object" ||
+    !("results" in toolResult.data)
+  ) {
+    return undefined;
+  }
+
+  const results = toolResult.data.results;
+  if (!Array.isArray(results) || results.length === 0) return undefined;
+
+  return [
+    "search_notes 结果（已压缩给模型使用）",
+    ...results.slice(0, 8).map((result, index) => {
+      const doc = result as DocContent;
+      const title = typeof doc.pageTitle === "string" ? doc.pageTitle : "(无标题)";
+      const url = typeof doc.pageUrl === "string" ? doc.pageUrl : "";
+      const similarity =
+        typeof doc.similarity === "number" ? `相似度：${doc.similarity.toFixed(3)}` : undefined;
+      const content = typeof doc.content === "string" ? compactTextPrefix(doc.content, 700) : "";
+      return [
+        `${index + 1}. ${title}`,
+        url ? `链接：${url}` : undefined,
+        similarity,
+        content ? `摘录：${content}` : undefined,
+      ]
+        .filter((item) => item !== undefined)
+        .join("\n");
+    }),
+  ].join("\n\n");
+}
+
+function shapeToolResultContent(
+  toolName: string,
+  toolResult: Awaited<ReturnType<typeof executeToolCall>>,
+) {
+  const shaped =
+    toolName === "web_fetch"
+      ? shapeWebFetchContent(toolResult)
+      : toolName === "web_search"
+        ? shapeWebSearchContent(toolResult)
+        : toolName === "search_notes"
+          ? shapeSearchNotesContent(toolResult)
+          : undefined;
+
+  return truncateToolContent(shaped ?? toolResult.content, 1_200);
+}
+
+const AGENT_LOOP_TOKEN_BUDGET = 24_000;
+const CONTEXT_COMPACTION_WINDOW_CAP = 32_000;
+const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.5;
+const CONTEXT_COMPACTION_TARGET_RATIO = 0.25;
 
 export async function callModel(
   messages: ModelMessage[],
@@ -139,21 +281,58 @@ export async function callModel(
   onTextDelta?: (text: string) => void,
   model: ChatModelId = defaultChatModel,
 ): Promise<Anthropic.Message> {
-  const stream = client.messages.stream({
-    model,
-    max_tokens: deepseekConfig.maxTokens,
+  const result = await callModelWithProvider({
     messages,
     tools,
-    ...(system ? { system } : {}),
+    system,
+    onTextDelta,
+    model,
   });
 
-  // text delta 逐 token 推给前端；tool_use block 由 SDK 在 finalMessage() 里累积
-  // 模型要么输出文本、要么调工具，两者不会混在同一轮 → 工具调用轮 text delta 为空，推空串无害
-  if (onTextDelta) {
-    stream.on("text", (text) => onTextDelta(text));
-  }
+  return result as Anthropic.Message;
+}
 
-  return stream.finalMessage();
+const COMPACTION_SYSTEM_PROMPT = `你负责压缩较早的对话上下文，供同一个 agent 继续完成当前任务。
+请保留可执行状态、用户约束、关键决定、涉及文件、工具结果和未解决问题。
+不要编造事实；不确定的信息请标注为“不确定”。
+使用简洁 bullet，移除寒暄、重复表达和无关细节。`;
+
+function buildCompactionPrompt(input: {
+  digest: string;
+  targetTokens: number;
+  middleMessageCount: number;
+}) {
+  return `请压缩下面这段中间历史摘要。
+
+必须返回 Markdown，并严格使用这些小节：
+- 用户目标
+- 重要约束
+- 已完成工作
+- 当前状态
+- 重要文件和符号
+- 工具结果和来源
+- 未解决问题
+- 下一步建议
+
+目标长度：约 ${input.targetTokens} tokens。
+中间历史消息数：${input.middleMessageCount}
+
+中间历史：
+${input.digest}`;
+}
+
+export async function callCompressionModel(input: {
+  digest: string;
+  targetTokens: number;
+  middleMessageCount: number;
+  model?: ChatModelId;
+}): Promise<string> {
+  return generateTextWithProvider({
+    model: input.model ?? "deepseek-v4-flash",
+    maxOutputTokens: Math.min(Math.max(512, input.targetTokens), 2_000),
+    system: COMPACTION_SYSTEM_PROMPT,
+    prompt: buildCompactionPrompt(input),
+  });
 }
 
 export async function executeTools(
@@ -254,7 +433,8 @@ export async function executeTools(
         });
       }
     }
-    const truncated = truncateToolContent(toolResult.content, 2000);
+    const truncated = shapeToolResultContent(toolUse.name, toolResult);
+    const rawPreview = truncateToolContent(toolResult.content, 1_200);
     toolResultBlocks.push({
       type: "tool_result",
       tool_use_id: toolUse.id,
@@ -271,7 +451,13 @@ export async function executeTools(
       truncated: truncated.truncated,
       originalChars: truncated.originalChars,
       error: toolResult.error,
-      metadata: toolResult.metadata,
+      metadata: {
+        ...toolResult.metadata,
+        modelContentCompressed: truncated.content !== rawPreview.content,
+        rawContentPreview: rawPreview.content,
+        rawContentTruncated: rawPreview.truncated,
+        rawContentOriginalChars: rawPreview.originalChars,
+      },
     });
     toolSteps.push({
       type: "tool",
@@ -285,6 +471,9 @@ export async function executeTools(
       contentSummary: truncated.content,
       contentTruncated: truncated.truncated,
       contentOriginalChars: truncated.originalChars,
+      rawContentSummary: rawPreview.content,
+      rawContentTruncated: rawPreview.truncated,
+      rawContentOriginalChars: rawPreview.originalChars,
       error: toolResult.error,
       costPerUse,
     });
@@ -322,9 +511,10 @@ export async function runAgentLoop(
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
-  const tokenBudget = new TokenBudget(24_000);
+  const tokenBudget = new TokenBudget(AGENT_LOOP_TOKEN_BUDGET);
   const trace = createTrace(requestId, sessionId);
   let stepIndex = 0; // model/tool step 共享的全局递增序号
+  let lastCompactedMessageCount: number | undefined;
   const metrics: AgentLoopMetrics = {
     estimatedTokensSpent: 0,
     modelCallCount: 0,
@@ -361,19 +551,74 @@ export async function runAgentLoop(
         trace: finalizeTrace("completed", false),
       };
     }
-    const compacted = compactLoopMessages(loopMessages, {
-      maxTokens: 16_000,
-      keepRecentMessages: 4,
+    const compactionStartedAt = Date.now();
+    const runtimeContextWindowTokens = Math.min(
+      getModelContextWindowTokens(model),
+      CONTEXT_COMPACTION_WINDOW_CAP,
+    );
+    const compressionModel: ChatModelId = "deepseek-v4-flash";
+    const compacted = await compactLoopMessagesSemantic(loopMessages, {
+      modelWindowTokens: runtimeContextWindowTokens,
+      triggerRatio: CONTEXT_COMPACTION_TRIGGER_RATIO,
+      targetRatio: CONTEXT_COMPACTION_TARGET_RATIO,
+      primerMessages: 3,
+      recentMessages: 6,
+      minNewMessagesSinceLastCompression: 8,
+      lastCompactedMessageCount,
+      compressionModel,
+      compressor: (input) =>
+        callCompressionModel({
+          ...input,
+          model: compressionModel,
+        }),
     });
     loopMessages = compacted.messages;
+    if (!compacted.compacted) {
+      console.log("[AgentLoopCompactionSkipped]", {
+        reason: compacted.skippedReason,
+        beforeTokens: compacted.beforeTokens,
+        triggerTokens: compacted.triggerTokens,
+        messageCount: loopMessages.length,
+        lastCompactedMessageCount,
+      });
+    }
     if (compacted.compacted) {
+      lastCompactedMessageCount = loopMessages.length;
       console.log("[AgentLoopCompaction]", {
         beforeTokens: compacted.beforeTokens,
         afterTokens: compacted.afterTokens,
+        middleMessageCount: compacted.middleMessageCount,
       });
+      const compactionStep: ContextCompactionTraceStep = {
+        type: "context_compaction",
+        index: stepIndex++,
+        startedAt: compactionStartedAt,
+        durationMs: Date.now() - compactionStartedAt,
+        beforeTokens: compacted.beforeTokens,
+        afterTokens: compacted.afterTokens,
+        modelWindowTokens: compacted.modelWindowTokens,
+        triggerTokens: compacted.triggerTokens,
+        targetTokens: compacted.targetTokens,
+        primerMessages: compacted.primerMessages,
+        recentMessages: compacted.recentMessages,
+        middleMessageCount: compacted.middleMessageCount,
+        reason: compacted.reason ?? "compacted",
+        summary: compacted.summary ?? "",
+        summaryChars: compacted.summary?.length ?? 0,
+        method: compacted.method,
+        compressionModel: compacted.compressionModel,
+        fallbackReason: compacted.fallbackReason,
+      };
+      trace.steps.push(compactionStep);
     }
     // Agent 每轮调模型前先问一句，当前上下文还塞得下吗
     const estimatedContextTokens = estimateTokens(JSON.stringify(loopMessages));
+    const tokenBudgetSnapshot = {
+      max: tokenBudget.max,
+      spentBefore: tokenBudget.spent,
+      remainingBefore: tokenBudget.remaining(),
+      requested: estimatedContextTokens,
+    };
     if (!tokenBudget.canAfford(estimatedContextTokens)) {
       enqueueEvent(
         {
@@ -392,6 +637,10 @@ export async function runAgentLoop(
       };
     }
     tokenBudget.spend(estimatedContextTokens);
+    const tokenBudgetAfterSpend = {
+      spentAfter: tokenBudget.spent,
+      remainingAfter: tokenBudget.remaining(),
+    };
     metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
     const modelStartedAt = Date.now();
@@ -480,6 +729,10 @@ export async function runAgentLoop(
         input: t.input,
       })),
       estimatedContextTokens,
+      tokenBudget: {
+        ...tokenBudgetSnapshot,
+        ...tokenBudgetAfterSpend,
+      },
       usage: modelUsage,
     };
     trace.steps.push(modelStep);
@@ -595,41 +848,28 @@ export async function streamModelResponse(
   system?: string,
   model: ChatModelId = defaultChatModel,
 ) {
-  return client.messages.create({
+  return streamTextWithProvider({
     model,
-    max_tokens: deepseekConfig.maxTokens,
     messages,
-    stream: true,
-    ...(system ? { system } : {}),
+    system,
   });
 }
 
 export async function forwardTextStream(
-  stream: Stream<Anthropic.RawMessageStreamEvent>,
+  stream: Awaited<ReturnType<typeof streamTextWithProvider>>,
   enqueueText: (text: string) => boolean,
   shouldStop: () => boolean,
 ): Promise<Anthropic.Messages.StopReason | undefined> {
-  let stopReason: Anthropic.Messages.StopReason | undefined;
-
-  for await (const chunk of stream) {
+  for await (const text of stream.textStream) {
     if (shouldStop()) {
       break;
     }
 
-    if (
-      chunk.type === "content_block_delta" &&
-      chunk.delta.type === "text_delta"
-    ) {
-      const text = chunk.delta.text;
-      if (text && !enqueueText(text)) {
-        break;
-      }
-    }
-
-    if (chunk.type === "message_delta") {
-      stopReason = chunk.delta.stop_reason ?? stopReason;
+    if (text && !enqueueText(text)) {
+      break;
     }
   }
 
-  return stopReason;
+  const finishReason = await stream.finishReason;
+  return finishReason === "length" ? "max_tokens" : "end_turn";
 }

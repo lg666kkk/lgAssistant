@@ -13,6 +13,14 @@ type ModelStep = {
   textOriginalChars: number;
   requestedToolCalls: Array<{ name: string; id: string; input: unknown }>;
   estimatedContextTokens: number;
+  tokenBudget?: {
+    max?: number;
+    spentBefore?: number;
+    spentAfter?: number;
+    remainingBefore?: number;
+    remainingAfter?: number;
+    requested?: number;
+  };
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -40,11 +48,34 @@ type ToolStep = {
   contentSummary: string;
   contentTruncated: boolean;
   contentOriginalChars: number;
+  rawContentSummary?: string;
+  rawContentTruncated?: boolean;
+  rawContentOriginalChars?: number;
   error?: string;
   costPerUse: number;
 };
 
-type Step = ModelStep | ToolStep;
+type ContextCompactionStep = {
+  type: "context_compaction";
+  index: number;
+  durationMs?: number;
+  beforeTokens: number;
+  afterTokens: number;
+  modelWindowTokens: number;
+  triggerTokens: number;
+  targetTokens: number;
+  primerMessages: number;
+  recentMessages: number;
+  middleMessageCount: number;
+  reason: string;
+  summary: string;
+  summaryChars: number;
+  method?: "deterministic" | "semantic";
+  compressionModel?: string;
+  fallbackReason?: string;
+};
+
+type Step = ModelStep | ToolStep | ContextCompactionStep;
 
 type Trace = {
   id: string;
@@ -257,13 +288,17 @@ export default function TraceDetailPage({
                       <span className="font-medium text-sky-400">
                         🧠 {step.model ?? "model"}
                       </span>
-                    ) : (
+                    ) : step.type === "tool" ? (
                       <span
                         className={`font-medium ${
                           step.ok ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
                         🔧 {step.name} {step.ok ? "" : "(失败)"}
+                      </span>
+                    ) : (
+                      <span className="font-medium text-amber-300">
+                        上下文压缩
                       </span>
                     )}
                     <span className="ml-auto text-xs text-slate-600">
@@ -300,6 +335,14 @@ export default function TraceDetailPage({
                         <span className="text-slate-600">
                           上下文 ~{step.estimatedContextTokens} tok
                         </span>
+                        {step.tokenBudget && (
+                          <span className="text-slate-600">
+                            预算 {step.tokenBudget.spentBefore ?? 0}→
+                            {step.tokenBudget.spentAfter ?? 0}/
+                            {step.tokenBudget.max ?? "?"} · 剩余{" "}
+                            {step.tokenBudget.remainingAfter ?? "?"}
+                          </span>
+                        )}
                         {step.usage && (
                           <span className="text-slate-600">
                             真实 in/out {step.usage.inputTokens ?? "?"}/
@@ -335,11 +378,11 @@ export default function TraceDetailPage({
                         />
                       )}
                     </div>
-                  ) : (
+                  ) : step.type === "tool" ? (
                     <div className="mt-2">
                       <Collapsible label="入参" body={toText(step.input)} />
                       <Collapsible
-                        label="结果"
+                        label="压缩后结果（给模型）"
                         body={step.contentSummary}
                         meta={
                           step.contentTruncated
@@ -347,11 +390,54 @@ export default function TraceDetailPage({
                             : undefined
                         }
                       />
+                      {step.rawContentSummary && (
+                        <Collapsible
+                          label="原始结果预览（压缩前）"
+                          body={step.rawContentSummary}
+                          meta={
+                            step.rawContentTruncated
+                              ? `（${step.rawContentOriginalChars} 字符已截断）`
+                              : undefined
+                          }
+                        />
+                      )}
                       {step.error && (
                         <div className="mt-2 rounded-lg bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
                           {step.error}
                         </div>
                       )}
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span>before ~{step.beforeTokens} tok</span>
+                        <span>after ~{step.afterTokens} tok</span>
+                        <span>window {step.modelWindowTokens}</span>
+                        <span>trigger {step.triggerTokens}</span>
+                        <span>target {step.targetTokens}</span>
+                        {step.method && <span>method {step.method}</span>}
+                        {step.compressionModel && (
+                          <span>model {step.compressionModel}</span>
+                        )}
+                        <span>
+                          primers {step.primerMessages} · recents{" "}
+                          {step.recentMessages}
+                        </span>
+                        <span>middle {step.middleMessageCount} 条</span>
+                      </div>
+                      <div className="mt-2 rounded-lg bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                        {step.reason}
+                        {step.fallbackReason && (
+                          <div className="mt-1 text-amber-300/80">
+                            fallback: {step.fallbackReason}
+                          </div>
+                        )}
+                      </div>
+                      <Collapsible
+                        label="压缩摘要"
+                        body={step.summary}
+                        meta={`${step.summaryChars} 字符`}
+                      />
                     </div>
                   )}
                 </div>

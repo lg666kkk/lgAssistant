@@ -13,7 +13,7 @@ Agent Loop 每轮把 `tool_use` / `tool_result` 不断追加进 `loopMessages`�
   1. **硬上限 + Token 预算** — 设一个 max token，超了就停并兜底总结；
   2. **工具结果截断** — 单个大结果截断，避免它独吞 context；
   3. **滚动压缩** — 早期轮次摘要化，只保留最近 K 轮原文。
-- **粗略估算**：学习阶段不必上真 tokenizer，用「字符数 / 4」的经验值（1 token ≈ 4 chars）足够做"防爆"硬保护。
+- **本地 token 预估**：请求前用 `gpt-tokenizer` 做上下文预算和截断；请求后的计费与展示仍以模型返回的真实 `usage` 为准。
 
 ## 工程实现
 
@@ -62,7 +62,7 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 
 ### 技术选型与决策
 
-- **粗估 vs 真 tokenizer**：选粗估（字符/4）。当前目标是"防爆 + 建立预算意识"，不是精确计费；真 tokenizer 引入依赖且对中文也不完美，性价比低。后续接 trace 时可用模型返回的真实 `usage` 替换。
+- **本地 tokenizer vs 真实 usage**：本地 tokenizer 只用于请求前决策，比如是否压缩、是否截断工具结果；真实费用和 usage 页面仍使用 provider 返回的 `usage`。这样能同时保证上下文控制更准、账单统计不失真。
 - **截断 vs 压缩为什么都要**：截断针对"单个大结果"，压缩针对"轮数累积"，两个膨胀来源不同，缺一层都可能爆。
 - **硬编码 24_000 / 16_000**：当前直接写在 loop 里。能跑通就够，将来值得挪进 [config.ts](../../lib/config.ts) 统一管理（已知技术债）。
 
