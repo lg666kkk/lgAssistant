@@ -31,6 +31,10 @@ export interface ToolRuntimePolicy {
   sandboxed: boolean;
   dangerous: boolean;
   costPerUse: number;
+  sideEffect: "none" | "read" | "write" | "external";
+  concurrencyGroup?: string;
+  maxConcurrency?: number;
+  requiresConfirmation: boolean;
 }
 
 export interface ToolDefinition {
@@ -67,4 +71,8 @@ export const defaultToolRuntimePolicy: ToolRuntimePolicy = {
   sandboxed: true,
   dangerous: false,
   costPerUse: 0,
+  sideEffect: "read",
+  concurrencyGroup: "default",
+  maxConcurrency: 4,
+  requiresConfirmation: false,
 };

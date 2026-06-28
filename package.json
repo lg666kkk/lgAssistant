@@ -2,9 +2,13 @@
   "name": "personal-assistant",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "desktop:dev": "node scripts/start-electron.cjs --dev",
+    "desktop:build": "npm run build && node scripts/prepare-electron-build.cjs && electron-builder --mac",
+    "desktop:pack": "npm run build && node scripts/prepare-electron-build.cjs && electron-builder --dir",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
@@ -44,6 +48,30 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.local.personal-assistant",
+    "productName": "Personal Assistant",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      ".next/standalone/.next/static/**/*",
+      ".next/standalone/public/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
   }
 }

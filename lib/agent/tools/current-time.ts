@@ -22,7 +22,10 @@ export const getCurrentTimeTool: ToolDefinition = {
   description:
     "获取服务器当前时间，可按指定 timezone 和 locale 格式化。适合回答当前日期、当前时间、今天是星期几等问题。",
   runtime: {
-    ...defaultToolRuntimePolicy
+    ...defaultToolRuntimePolicy,
+    sideEffect: "none",
+    concurrencyGroup: "local",
+    maxConcurrency: 8,
   },
   input_schema: {
     type: "object",

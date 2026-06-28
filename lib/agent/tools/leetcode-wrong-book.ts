@@ -60,7 +60,10 @@ export const leetCodeWrongBookTool: ToolDefinition = {
   description:
     "管理 LeetCode 错题本。支持记录做错的题、查看全部错题、查看今日到期复习题、标记复习结果。适合用户说“这题我做错了”“帮我看看该复习哪些题”“我复习完了”时使用。",
   runtime: {
-    ...defaultToolRuntimePolicy
+    ...defaultToolRuntimePolicy,
+    sideEffect: "write",
+    concurrencyGroup: "leetcode",
+    maxConcurrency: 1,
   },
   input_schema: {
     type: "object",

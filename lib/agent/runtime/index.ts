@@ -349,12 +349,12 @@ export async function executeTools(
     durationMs?: number;
     costPerUse: number;
   }> = [];
-  for (const toolUse of toolUses) {
-    const toolResult = await executeToolCall(toolRegistry, {
-      name: toolUse.name,
-      input: toolUse.input,
-      id: toolUse.id,
-    }, { scopeId });
+  const executionResults = await executeToolUsesWithScheduler(
+    toolUses,
+    toolRegistry,
+    scopeId,
+  );
+  for (const { toolUse, toolResult } of executionResults) {
     const durationMs =
       typeof toolResult.metadata?.durationMs === "number"
         ? toolResult.metadata.durationMs
@@ -485,6 +485,125 @@ export async function executeTools(
     toolMetrics,
     toolSteps,
   };
+}
+
+async function executeToolUsesWithScheduler(
+  toolUses: ToolUseBlock[],
+  toolRegistry: ToolRegistry,
+  scopeId?: string,
+) {
+  type ScheduledToolUse = {
+    index: number;
+    toolUse: ToolUseBlock;
+    tool: ReturnType<ToolRegistry["get"]>;
+  };
+  const results: Array<{
+    index: number;
+    toolUse: ToolUseBlock;
+    toolResult: Awaited<ReturnType<typeof executeToolCall>>;
+  }> = [];
+
+  const scheduled: ScheduledToolUse[] = toolUses.map((toolUse, index) => ({
+    index,
+    toolUse,
+    tool: toolRegistry.get(toolUse.name),
+  }));
+
+  const parallelByGroup = new Map<
+    string,
+    ScheduledToolUse[]
+  >();
+  const serial: ScheduledToolUse[] = [];
+
+  for (const item of scheduled) {
+    const runtime = item.tool?.runtime;
+    const sideEffect = runtime?.sideEffect ?? "read";
+    const mustRunSerial =
+      !item.tool ||
+      item.tool.riskLevel !== "safe" ||
+      runtime?.dangerous === true ||
+      runtime?.requiresConfirmation === true ||
+      sideEffect === "write";
+
+    if (mustRunSerial) {
+      serial.push(item);
+      continue;
+    }
+
+    const group = runtime?.concurrencyGroup ?? item.toolUse.name;
+    const items = parallelByGroup.get(group) ?? [];
+    items.push(item);
+    parallelByGroup.set(group, items);
+  }
+
+  for (const [group, items] of Array.from(parallelByGroup.entries())) {
+    const maxConcurrency = Math.max(
+      1,
+      Math.min(
+        ...items.map((item) => item.tool?.runtime.maxConcurrency ?? 4),
+      ),
+    );
+    for (let i = 0; i < items.length; i += maxConcurrency) {
+      const batch = items.slice(i, i + maxConcurrency);
+      console.log("[ToolScheduler]", {
+        mode: "parallel",
+        group,
+        maxConcurrency,
+        tools: batch.map((item) => item.toolUse.name),
+      });
+      results.push(
+        ...(await Promise.all(
+          batch.map(async (item) => ({
+            index: item.index,
+            toolUse: item.toolUse,
+            toolResult: await executeSingleToolUse(
+              item.toolUse,
+              toolRegistry,
+              scopeId,
+            ),
+          })),
+        )),
+      );
+    }
+  }
+
+  for (const item of serial) {
+    console.log("[ToolScheduler]", {
+      mode: "serial",
+      tool: item.toolUse.name,
+      reason: item.tool
+        ? {
+            riskLevel: item.tool.riskLevel,
+            sideEffect: item.tool.runtime.sideEffect,
+            requiresConfirmation: item.tool.runtime.requiresConfirmation,
+            dangerous: item.tool.runtime.dangerous,
+          }
+        : "unknown_tool",
+    });
+    results.push({
+      index: item.index,
+      toolUse: item.toolUse,
+      toolResult: await executeSingleToolUse(item.toolUse, toolRegistry, scopeId),
+    });
+  }
+
+  return results.sort((a, b) => a.index - b.index);
+}
+
+function executeSingleToolUse(
+  toolUse: ToolUseBlock,
+  toolRegistry: ToolRegistry,
+  scopeId?: string,
+) {
+  return executeToolCall(
+    toolRegistry,
+    {
+      name: toolUse.name,
+      input: toolUse.input,
+      id: toolUse.id,
+    },
+    { scopeId },
+  );
 }
 
 export const enqueueSources = (sources: ToolSourceType[], enqueueText: (text: string) => boolean) => {

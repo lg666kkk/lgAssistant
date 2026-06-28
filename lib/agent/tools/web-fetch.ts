@@ -583,6 +583,9 @@ export const webFetchTool: ToolDefinition = {
     rateLimit: 10,
     timeoutSeconds: 20,
     memoryLimitMb: 256,
+    sideEffect: "external",
+    concurrencyGroup: "web",
+    maxConcurrency: 3,
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {

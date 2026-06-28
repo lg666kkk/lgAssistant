@@ -40,6 +40,9 @@ export const searchNotesTool: ToolDefinition = {
   runtime: {
     ...defaultToolRuntimePolicy,
     rateLimit: 20,
+    sideEffect: "read",
+    concurrencyGroup: "knowledge",
+    maxConcurrency: 4,
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {

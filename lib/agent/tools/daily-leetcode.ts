@@ -34,7 +34,10 @@ export const dailyLeetCodeTool: ToolDefinition = {
     additionalProperties: false,
   },
   runtime: {
-    ...defaultToolRuntimePolicy
+    ...defaultToolRuntimePolicy,
+    sideEffect: "write",
+    concurrencyGroup: "leetcode",
+    maxConcurrency: 1,
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {

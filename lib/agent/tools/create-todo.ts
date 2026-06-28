@@ -42,7 +42,11 @@ function parseInput(input: unknown): CreateTodoInput {
 
 export const createTodoTool: ToolDefinition = {
   runtime: {
-    ...defaultToolRuntimePolicy
+    ...defaultToolRuntimePolicy,
+    sideEffect: "write",
+    requiresConfirmation: true,
+    concurrencyGroup: "writes",
+    maxConcurrency: 1,
   },
   name: "create_todo",
   description:

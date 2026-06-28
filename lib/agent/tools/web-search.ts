@@ -57,6 +57,9 @@ export const webSearchTool: ToolDefinition = {
     ...defaultToolRuntimePolicy,
     rateLimit: 20,
     timeoutSeconds: 15,
+    sideEffect: "external",
+    concurrencyGroup: "web",
+    maxConcurrency: 3,
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {
