@@ -26,6 +26,30 @@ export interface NotionPageTreeItem extends NotionPageInfo {
   depth: number;
 }
 
+export type NotionPageTreeOptions = {
+  maxDepth?: number;
+  onPageStart?: (input: {
+    pageId: string;
+    depth: number;
+    parentPageId?: string;
+    hintedTitle?: string;
+  }) => void;
+  onPageLoaded?: (page: NotionPageTreeItem) => void;
+  onChildPageFound?: (input: {
+    parentPageId: string;
+    childPageId: string;
+    childTitle: string;
+    depth: number;
+  }) => void;
+  onPageFailed?: (input: {
+    pageId: string;
+    depth: number;
+    parentPageId?: string;
+    hintedTitle?: string;
+    error: unknown;
+  }) => void;
+};
+
 /**
  * Notion 客户端类
  */
@@ -220,23 +244,57 @@ export class NotionClient {
   /**
    * 获取页面及其下级 child_page 页面树。
    */
-  async getPageTree(pageId: string, maxDepth = 8): Promise<NotionPageTreeItem[]> {
+  async getPageTree(
+    pageId: string,
+    options: NotionPageTreeOptions = {},
+  ): Promise<NotionPageTreeItem[]> {
+    const maxDepth = options.maxDepth ?? 8;
     const visited = new Set<string>();
     const pages: NotionPageTreeItem[] = [];
 
-    const visit = async (currentPageId: string, depth: number) => {
+    const visit = async (
+      currentPageId: string,
+      depth: number,
+      parentPageId?: string,
+      hintedTitle?: string,
+    ) => {
       if (depth > maxDepth || visited.has(currentPageId)) {
         return;
       }
 
       visited.add(currentPageId);
-      const info = await this.getPageInfo(currentPageId);
-      pages.push({ ...info, depth });
+      options.onPageStart?.({ pageId: currentPageId, depth, parentPageId, hintedTitle });
 
-      const blocks = await this.getPageBlocks(currentPageId, 0, false);
-      for (const { block } of blocks) {
-        if (block.type === 'child_page' && 'id' in block) {
-          await visit(block.id, depth + 1);
+      try {
+        const info = await this.getPageInfo(currentPageId);
+        const page = { ...info, depth };
+        pages.push(page);
+        options.onPageLoaded?.(page);
+
+        const blocks = await this.getPageBlocks(currentPageId, 0, false);
+        for (const { block } of blocks) {
+          if (block.type === 'child_page' && 'id' in block) {
+            const childTitle = block.child_page?.title ?? 'Untitled';
+            options.onChildPageFound?.({
+              parentPageId: currentPageId,
+              childPageId: block.id,
+              childTitle,
+              depth: depth + 1,
+            });
+            await visit(block.id, depth + 1, currentPageId, childTitle);
+          }
+        }
+      } catch (error) {
+        options.onPageFailed?.({
+          pageId: currentPageId,
+          depth,
+          parentPageId,
+          hintedTitle,
+          error,
+        });
+
+        if (depth === 0) {
+          throw error;
         }
       }
     };

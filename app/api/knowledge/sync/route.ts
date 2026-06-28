@@ -28,7 +28,7 @@ function streamEvent(
 }
 
 export async function POST(req: Request) {
-  let body: { input?: string; tree?: boolean };
+  let body: { input?: string; tree?: boolean; force?: boolean };
 
   try {
     body = await req.json();
@@ -38,6 +38,7 @@ export async function POST(req: Request) {
 
   const pageId = extractNotionPageId(body.input ?? "");
   const syncTree = body.tree !== false;
+  const force = Boolean(body.force);
 
   if (!pageId) {
     return Response.json({ error: "请输入有效的 Notion 页面链接或页面 ID" }, { status: 400 });
@@ -52,13 +53,16 @@ export async function POST(req: Request) {
           message: `已解析页面 ID：${pageId}`,
           pageId,
           tree: syncTree,
+          force,
         });
 
         const results = syncTree
           ? await syncNotionPageTree(pageId, {
+              force,
               onEvent: (event) => streamEvent(controller, encoder, event),
             })
           : await syncNotionPages([pageId], {
+              force,
               onEvent: (event) => streamEvent(controller, encoder, event),
             });
 

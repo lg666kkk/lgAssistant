@@ -180,6 +180,14 @@ export default function Home() {
           >
             知识库
           </Link>
+          <Link
+            href="/settings"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 block w-full rounded-xl border border-slate-800 px-4 py-2 text-center text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors whitespace-nowrap"
+          >
+            设置
+          </Link>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-1">
           {sessions.map((session) => (

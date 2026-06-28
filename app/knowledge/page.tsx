@@ -39,6 +39,54 @@ type WikiPage = {
   metadata?: Record<string, unknown>;
 };
 
+function formatMetaValue(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    if (value.every((item) => typeof item === "string")) return value.join(" / ");
+    return JSON.stringify(value);
+  }
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function pickSyncMetadata(event: SyncEvent): Array<[string, unknown]> {
+  const metadata = event.metadata ?? {};
+  const keysByType: Record<string, string[]> = {
+    page_read: ["contentLength", "url"],
+    tree_page_scanning: ["parentPageId", "depth"],
+    tree_page_found: ["depth", "url", "lastEditedTime"],
+    tree_child_found: ["parentPageId", "childPageId", "depth", "relation"],
+    tree_page_failed: ["parentPageId", "depth", "name", "message", "code", "status", "cause"],
+    page_version_checked: ["existingChunkCount", "contentHash", "embeddingModel", "chunkerVersion", "force", "reason"],
+    chunking_start: ["contentLength", "chunkSize", "overlap", "minChunkSize", "chunkerVersion"],
+    page_chunked: ["chunkSize", "overlap", "minChunkSize"],
+    chunk_sample: ["index", "startChar", "endChar", "headingPath", "preview"],
+    embedding_start: ["embeddingModel", "expectedDimensions"],
+    page_embedded: ["embeddingModel", "vectorCount", "dimensions"],
+    db_page_upserted: ["table", "pageUrl", "lastEditedTime"],
+    db_old_chunks_deleted: ["table"],
+    db_chunks_inserted: ["table", "firstChunkHash"],
+    batch_done: ["successCount", "failCount", "skippedCount", "createdCount", "updatedCount"],
+  };
+  const keys = keysByType[event.type] ?? Object.keys(metadata).slice(0, 4);
+  return keys
+    .filter((key) => metadata[key] !== undefined)
+    .map((key) => [key, metadata[key]]);
+}
+
+function eventTone(event: SyncEvent) {
+  const isError = event.type === "error" || event.type === "page_failed" || event.type === "compile_failed" || event.type === "tree_page_failed";
+  const isDone = event.type === "done" || event.type === "page_done" || event.type === "batch_done" || event.type === "compile_done";
+  if (isError) return "text-rose-300";
+  if (isDone) return "text-emerald-300";
+  if (event.type.includes("chunk")) return "text-cyan-300";
+  if (event.type.startsWith("tree_")) return "text-sky-300";
+  if (event.type.includes("embedding")) return "text-violet-300";
+  if (event.type.startsWith("db_")) return "text-amber-300";
+  return "text-zinc-200";
+}
+
 export default function KnowledgePage() {
   const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
@@ -47,6 +95,7 @@ export default function KnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const [notionInput, setNotionInput] = useState("");
   const [syncTree, setSyncTree] = useState(true);
+  const [syncForce, setSyncForce] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncEvents, setSyncEvents] = useState<SyncEvent[]>([]);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -59,12 +108,12 @@ export default function KnowledgePage() {
     setLoading(true);
     setError(null);
     Promise.all([
-      fetch("/api/knowledge/pages").then(async (response) => {
+      fetch("/api/knowledge/pages", { cache: "no-store" }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "加载失败");
         return data;
       }),
-      fetch("/api/knowledge/wiki").then(async (response) => {
+      fetch("/api/knowledge/wiki", { cache: "no-store" }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "加载编译知识库失败");
         return data;
@@ -96,7 +145,7 @@ export default function KnowledgePage() {
       const response = await fetch("/api/knowledge/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input, tree: syncTree }),
+        body: JSON.stringify({ input, tree: syncTree, force: syncForce }),
       });
 
       if (!response.ok || !response.body) {
@@ -194,9 +243,15 @@ export default function KnowledgePage() {
 
   const summaryEvent = syncEvents.find((event) => event.type === "batch_done");
   const doneEvent = syncEvents.find((event) => event.type === "done");
+  const currentTreeEvent = [...syncEvents]
+    .reverse()
+    .find((event) => event.type === "tree_page_scanning" || event.type === "tree_page_found");
+  const currentPageEvent = [...syncEvents]
+    .reverse()
+    .find((event) => event.type === "page_start" || event.type === "page_read" || event.type === "chunking_start" || event.type === "embedding_start" || event.type.startsWith("db_"));
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-200">
+    <div className="h-screen overflow-y-auto bg-zinc-950 text-zinc-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">
           ← 返回对话
@@ -209,7 +264,25 @@ export default function KnowledgePage() {
               Notion 页面同步、chunk 生成和索引版本。
             </p>
           </div>
-          <div className="text-sm text-slate-500">{pages.length} 个页面</div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={loadPages}
+              disabled={loading}
+              className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
+            >
+              刷新
+            </button>
+            <Link
+              href="/settings"
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
+            >
+              设置
+            </Link>
+            <div className="text-sm text-slate-500">{pages.length} 个页面</div>
+          </div>
         </div>
 
         <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950">
@@ -249,6 +322,16 @@ export default function KnowledgePage() {
                 />
                 递归同步子页面
               </label>
+              <label className="mt-2 flex items-center gap-2 text-sm text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={syncForce}
+                  onChange={(event) => setSyncForce(event.target.checked)}
+                  disabled={syncing}
+                  className="h-4 w-4 accent-cyan-600"
+                />
+                强制刷新 chunks 和向量
+              </label>
             </div>
 
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
@@ -271,6 +354,33 @@ export default function KnowledgePage() {
             </div>
           </div>
 
+          {(syncing || currentTreeEvent || currentPageEvent) && (
+            <div className="border-t border-zinc-800 px-4 py-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+                  <div className="text-xs text-zinc-500">当前扫描</div>
+                  <div className="mt-1 truncate text-sm font-medium text-sky-300">
+                    {currentTreeEvent?.pageTitle ?? currentTreeEvent?.pageId ?? "等待页面树扫描"}
+                  </div>
+                  {currentTreeEvent?.metadata?.depth !== undefined && (
+                    <div className="mt-1 text-xs text-zinc-500">
+                      depth: {String(currentTreeEvent.metadata.depth)}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+                  <div className="text-xs text-zinc-500">当前同步</div>
+                  <div className="mt-1 truncate text-sm font-medium text-cyan-300">
+                    {currentPageEvent?.pageTitle ?? currentPageEvent?.pageId ?? "等待 chunk 同步"}
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    {currentPageEvent?.type ?? "-"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {(syncEvents.length > 0 || syncError) && (
             <div className="border-t border-zinc-800 px-4 py-3">
               {syncError && (
@@ -280,8 +390,7 @@ export default function KnowledgePage() {
               )}
               <div className="max-h-80 space-y-2 overflow-auto pr-1">
                 {syncEvents.map((event, index) => {
-                  const isError = event.type === "error" || event.type === "page_failed";
-                  const isDone = event.type === "done" || event.type === "page_done" || event.type === "batch_done";
+                  const metaEntries = pickSyncMetadata(event);
                   return (
                     <div
                       key={`${event.type}-${index}`}
@@ -291,14 +400,37 @@ export default function KnowledgePage() {
                         {event.at ? new Date(event.at).toLocaleTimeString() : "--:--:--"}
                       </div>
                       <div>
-                        <div className={isError ? "text-rose-300" : isDone ? "text-emerald-300" : "text-zinc-200"}>
-                          {event.message}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`font-medium ${eventTone(event)}`}>
+                            {event.message}
+                          </span>
+                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">
+                            {event.type}
+                          </span>
                         </div>
                         {(event.pageTitle || event.pageId || event.chunksCount !== undefined) && (
                           <div className="mt-1 truncate text-xs text-zinc-500">
                             {event.pageTitle ?? event.pageId}
                             {event.chunksCount !== undefined ? ` · ${event.chunksCount} chunks` : ""}
                             {event.status ? ` · ${event.status}` : ""}
+                          </div>
+                        )}
+                        {metaEntries.length > 0 && (
+                          <div className="mt-2 grid gap-1 text-xs md:grid-cols-2">
+                            {metaEntries.map(([key, value]) => {
+                              const isPreview = key === "preview";
+                              return (
+                                <div
+                                  key={key}
+                                  className={isPreview ? "md:col-span-2" : ""}
+                                >
+                                  <span className="text-zinc-600">{key}: </span>
+                                  <span className={isPreview ? "text-zinc-300" : "font-mono text-zinc-400"}>
+                                    {formatMetaValue(value)}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

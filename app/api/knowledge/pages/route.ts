@@ -28,7 +28,14 @@ export async function GET() {
       throw error;
     }
 
-    return Response.json({ pages: data ?? [] });
+    return Response.json(
+      { pages: data ?? [] },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
+    );
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "加载知识库失败" },

@@ -29,6 +29,10 @@ export interface SyncResult {
 export type SyncProgressEvent = {
   type:
     | 'tree_scan_start'
+    | 'tree_page_scanning'
+    | 'tree_page_found'
+    | 'tree_child_found'
+    | 'tree_page_failed'
     | 'tree_scan_done'
     | 'batch_start'
     | 'page_start'
@@ -57,6 +61,7 @@ export type SyncProgressEvent = {
 };
 
 export type SyncOptions = {
+  force?: boolean;
   onEvent?: (event: SyncProgressEvent) => void;
 };
 
@@ -68,6 +73,24 @@ function compactText(text: string, maxChars = 180): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, maxChars)}...`;
+}
+
+function errorToMetadata(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const value = error as Error & { code?: string; status?: number; cause?: unknown };
+    return {
+      name: value.name,
+      message: value.message,
+      code: value.code,
+      status: value.status,
+      cause: value.cause instanceof Error ? value.cause.message : value.cause,
+      stack: value.stack?.split('\n').slice(0, 3).join('\n'),
+    };
+  }
+
+  return {
+    message: String(error),
+  };
 }
 
 function isSameIndexedVersion(
@@ -159,10 +182,11 @@ export async function syncNotionPage(
         contentHash: pageContentHash.slice(0, 12),
         embeddingModel: EMBEDDING_MODEL,
         chunkerVersion: CHUNKER_VERSION,
+        force: Boolean(options.force),
       },
     });
 
-    if (isSameIndexedVersion(existingPage?.metadata, pageContentHash)) {
+    if (!options.force && isSameIndexedVersion(existingPage?.metadata, pageContentHash)) {
       console.log('  ✓ 内容和索引版本未变化，跳过同步');
       emitSyncEvent(options, {
         type: 'page_skipped',
@@ -179,6 +203,19 @@ export async function syncNotionPage(
         success: true,
         status: 'skipped',
       };
+    }
+
+    if (options.force) {
+      emitSyncEvent(options, {
+        type: 'page_version_checked',
+        pageId,
+        pageTitle: page.title,
+        message: '已开启强制刷新，将重新生成 chunks 和向量',
+        metadata: {
+          force: true,
+          reason: 'manual_refresh',
+        },
+      });
     }
 
     // 2. 切分文本
@@ -506,7 +543,64 @@ export async function syncNotionPageTree(
     message: `开始扫描页面树 ${pageId}`,
   });
   const notionClient = new NotionClient();
-  const pages = await notionClient.getPageTree(pageId);
+  const pages = await notionClient.getPageTree(pageId, {
+    onPageStart: ({ pageId: currentPageId, depth, parentPageId, hintedTitle }) => {
+      emitSyncEvent(options, {
+        type: 'tree_page_scanning',
+        pageId: currentPageId,
+        pageTitle: hintedTitle,
+        message: hintedTitle
+          ? `进入子页面扫描：${hintedTitle}`
+          : `正在扫描页面：${currentPageId}`,
+        metadata: {
+          depth,
+          parentPageId,
+        },
+      });
+    },
+    onPageLoaded: (page) => {
+      emitSyncEvent(options, {
+        type: 'tree_page_found',
+        pageId: page.id,
+        pageTitle: page.title,
+        message: `已读取页面节点：${page.title}`,
+        metadata: {
+          depth: page.depth,
+          url: page.url,
+          lastEditedTime: page.lastEditedTime,
+        },
+      });
+    },
+    onChildPageFound: (child) => {
+      emitSyncEvent(options, {
+        type: 'tree_child_found',
+        pageId: child.childPageId,
+        pageTitle: child.childTitle,
+        message: `发现子页面：${child.childTitle}`,
+        metadata: {
+          parentPageId: child.parentPageId,
+          childPageId: child.childPageId,
+          depth: child.depth,
+          relation: '父页面包含 child_page 入口，下一步会进入该子页面扫描',
+        },
+      });
+    },
+    onPageFailed: (failure) => {
+      emitSyncEvent(options, {
+        type: 'tree_page_failed',
+        pageId: failure.pageId,
+        pageTitle: failure.hintedTitle,
+        message: failure.hintedTitle
+          ? `扫描子页面失败：${failure.hintedTitle}`
+          : `扫描页面失败：${failure.pageId}`,
+        metadata: {
+          parentPageId: failure.parentPageId,
+          depth: failure.depth,
+          ...errorToMetadata(failure.error),
+        },
+      });
+    },
+  });
   const pageIds = pages.map((page) => page.id);
 
   console.log(`\n=== 找到 ${pages.length} 个页面 ===`);

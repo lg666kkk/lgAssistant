@@ -7,17 +7,18 @@ dotenv.config({ quiet: true });
 async function main() {
   const args = process.argv.slice(2);
   const syncTree = args.includes("--tree");
-  const pageIds = args.filter((arg) => arg !== "--tree");
+  const force = args.includes("--force");
+  const pageIds = args.filter((arg) => arg !== "--tree" && arg !== "--force");
 
   if (pageIds.length === 0) {
-    console.error("用法: npm run rag:sync [--tree] <notion_page_id> [...more_page_ids]");
-    console.error("示例: npm run rag:sync -- --tree bfddfbc3bf344913a2aa92bbccc72524");
+    console.error("用法: npm run rag:sync [--tree] [--force] <notion_page_id> [...more_page_ids]");
+    console.error("示例: npm run rag:sync -- --tree --force bfddfbc3bf344913a2aa92bbccc72524");
     process.exit(1);
   }
 
   const results = syncTree
-    ? (await Promise.all(pageIds.map((pageId) => syncNotionPageTree(pageId)))).flat()
-    : await syncNotionPages(pageIds);
+    ? (await Promise.all(pageIds.map((pageId) => syncNotionPageTree(pageId, { force })))).flat()
+    : await syncNotionPages(pageIds, { force });
 
   const failed = results.filter((item) => !item.success);
 

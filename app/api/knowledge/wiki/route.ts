@@ -19,10 +19,17 @@ export async function GET() {
 
     if (edgesError) throw edgesError;
 
-    return Response.json({
-      pages: pages ?? [],
-      edgeCount: edgeCount ?? 0,
-    });
+    return Response.json(
+      {
+        pages: pages ?? [],
+        edgeCount: edgeCount ?? 0,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
+    );
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "加载编译知识库失败" },
