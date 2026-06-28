@@ -5,6 +5,13 @@
 
 import { Client } from '@notionhq/client';
 
+const MAX_BLOCK_DEPTH = 8;
+
+type NotionBlockWithDepth = {
+  block: any;
+  depth: number;
+};
+
 /**
  * Notion 页面信息
  */
@@ -61,8 +68,12 @@ export class NotionClient {
   /**
    * 获取页面的所有 blocks（内容块）
    */
-  async getPageBlocks(pageId: string): Promise<any[]> {
-    const blocks: any[] = [];
+  async getPageBlocks(pageId: string, depth = 0): Promise<NotionBlockWithDepth[]> {
+    if (depth >= MAX_BLOCK_DEPTH) {
+      return [];
+    }
+
+    const blocks: NotionBlockWithDepth[] = [];
     let cursor: string | undefined = undefined;
 
     // 分页获取所有 blocks
@@ -73,7 +84,14 @@ export class NotionClient {
         page_size: 100,
       });
 
-      blocks.push(...response.results);
+      for (const block of response.results) {
+        blocks.push({ block, depth });
+
+        if ('has_children' in block && block.has_children && 'id' in block) {
+          const childBlocks = await this.getPageBlocks(block.id, depth + 1);
+          blocks.push(...childBlocks);
+        }
+      }
 
       if (!response.has_more) {
         break;
@@ -88,26 +106,50 @@ export class NotionClient {
   /**
    * 将 block 转换为纯文本
    */
-  blockToText(block: any): string {
+  blockToText(block: any, depth = 0): string {
     if (!block.type) return '';
 
     const type = block.type;
     const content = block[type];
+    const richText = this.extractRichText(content?.rich_text);
+    const indent = '  '.repeat(Math.max(0, depth));
 
     // 处理不同类型的 block
     switch (type) {
       case 'paragraph':
+        return richText;
+
       case 'heading_1':
+        return richText ? `# ${richText}` : '';
+
       case 'heading_2':
+        return richText ? `## ${richText}` : '';
+
       case 'heading_3':
+        return richText ? `### ${richText}` : '';
+
       case 'bulleted_list_item':
+        return richText ? `${indent}- ${richText}` : '';
+
       case 'numbered_list_item':
+        return richText ? `${indent}1. ${richText}` : '';
+
+      case 'to_do': {
+        const checked = content?.checked ? 'x' : ' ';
+        return richText ? `${indent}- [${checked}] ${richText}` : '';
+      }
+
+      case 'toggle':
+        return richText ? `${indent}- ${richText}` : '';
+
       case 'quote':
+        return richText ? `${indent}> ${richText}` : '';
+
       case 'callout':
-        return this.extractRichText(content.rich_text);
+        return richText;
 
       case 'code':
-        return this.extractRichText(content.rich_text);
+        return richText ? `\`\`\`\n${richText}\n\`\`\`` : '';
 
       case 'divider':
         return '\n---\n';
@@ -133,8 +175,8 @@ export class NotionClient {
     const blocks = await this.getPageBlocks(pageId);
     const textParts: string[] = [];
 
-    for (const block of blocks) {
-      const text = this.blockToText(block);
+    for (const { block, depth } of blocks) {
+      const text = this.blockToText(block, depth);
       if (text.trim()) {
         textParts.push(text);
       }
