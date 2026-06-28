@@ -9,6 +9,25 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function getAuthErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("email rate limit exceeded")) {
+    return "邮件发送太频繁了，请稍后再试。开发阶段可以先关闭邮箱确认，或在 Supabase 配置自定义 SMTP。";
+  }
+
+  if (normalized.includes("email not confirmed")) {
+    return "邮箱还没有确认，请先去邮箱点击确认链接。";
+  }
+
+  if (normalized.includes("invalid login credentials")) {
+    return "邮箱或密码不正确。";
+  }
+
+  return message || "登录失败";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = getBrowserSupabase();
@@ -56,7 +75,7 @@ export default function LoginPage() {
         router.replace("/");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "登录失败");
+      setError(getAuthErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -81,7 +100,7 @@ export default function LoginPage() {
       if (resendError) throw resendError;
       setMessage("确认邮件已重新发送，请检查邮箱。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "重发确认邮件失败");
+      setError(getAuthErrorMessage(e));
     } finally {
       setResending(false);
     }

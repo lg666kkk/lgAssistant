@@ -15,9 +15,38 @@ import { resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/supabase";
+import { ragConfig } from "@/lib/config";
+import { RAGRetriever } from "@/lib/server/retriever";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
+
+function shouldAutoSearchKnowledge(query: string) {
+  const text = query.trim();
+  if (!text) return false;
+
+  const lower = text.toLowerCase();
+  const skipPatterns = [
+    /^(你好|hello|hi|嗨|谢谢|thanks|ok|好的|嗯|哈哈)/i,
+    /(现在几点|今天几号|当前时间|天气|新闻|最新|价格|汇率|股价)/,
+    /(翻译|润色|改写|生成|写一段|帮我写|总结这段|解释这段)/,
+    /(计算|算一下|\d+\s*[\+\-\*\/×÷]\s*\d+)/,
+  ];
+
+  if (skipPatterns.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+
+  const knowledgeSignals = [
+    "知识库",
+    "笔记",
+    "文档",
+    "资料",
+    "notion"
+  ];
+
+  return knowledgeSignals.some((signal) => lower.includes(signal.toLowerCase()));
+}
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
@@ -134,11 +163,50 @@ export async function POST(req: Request) {
           .reverse()
           .find((m: any) => m.role === "user");
         let memorySystem = "";
+        let knowledgeSystem = "";
         if (lastUser) {
           try {
             memorySystem = await recallForPrompt(lastUser.content, { userId: user.id });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
+          }
+
+          if (shouldAutoSearchKnowledge(lastUser.content)) {
+            try {
+              const retriever = new RAGRetriever();
+              let knowledgeResponse = await retriever.searchWithDebug(
+                lastUser.content,
+                {
+                  matchThreshold: ragConfig.similarityThreshold,
+                  matchCount: ragConfig.maxResults,
+                  userId: user.id,
+                  enableMmr: true,
+                  enableQueryRewrite: true,
+                  enableRerank: true,
+                },
+              );
+
+              if (knowledgeResponse.results.length === 0) {
+                knowledgeResponse = await retriever.searchWithDebug(lastUser.content, {
+                  matchThreshold: 0,
+                  matchCount: ragConfig.maxResults,
+                  userId: user.id,
+                  enableMmr: true,
+                  enableQueryRewrite: true,
+                  enableRerank: true,
+                });
+              }
+
+              if (knowledgeResponse.results.length > 0) {
+                knowledgeSystem = [
+                  "以下是从用户个人知识库自动检索到的资料。回答和这些资料相关的问题时，优先基于这里的内容；如果资料不足，请说明不足，不要硬编。",
+                  "",
+                  retriever.formatContext(knowledgeResponse.results),
+                ].join("\n");
+              }
+            } catch (e: any) {
+              console.error("[knowledge] 自动检索失败，跳过注入:", e.message);
+            }
           }
         }
         // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
@@ -146,23 +214,27 @@ export async function POST(req: Request) {
         const prompt = buildPromptPipe({
           userMessage: lastUser?.content ?? "",
           memory: memorySystem,
+          knowledge: knowledgeSystem,
           webSearchEnabled: enableWebSearch,
           currentDate: new Date().toISOString(),
-          maxTokens: 3000,
+          maxTokens: 4200,
         });
         const systemPrompt = prompt.systemPrompt;
         const systemSegments = prompt.segments;
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
         if (sessionId && systemPrompt) {
-          void getSupabase()
-            .from("sessions")
-            .update({ system_prompt: systemPrompt })
-            .eq("id", sessionId)
-            .eq("user_id", user.id)
-            .catch((e: any) =>
-              console.error("[memory] system_prompt 写入失败:", e.message),
-            );
+          void (async () => {
+            const { error: updateError } = await getSupabase()
+              .from("sessions")
+              .update({ system_prompt: systemPrompt })
+              .eq("id", sessionId)
+              .eq("user_id", user.id);
+
+            if (updateError) throw updateError;
+          })().catch((e: any) =>
+            console.error("[memory] system_prompt 写入失败:", e.message),
+          );
         }
 
         const agentLoopResult = await runAgentLoop(
@@ -281,11 +353,10 @@ export async function POST(req: Request) {
     },
   });
 
-  // 将 ReadableStream 包装成 HTTP 响应返回给前端
   return new Response(readable, {
     headers: {
-      "Content-Type": "text/event-stream",  // SSE 标准 MIME
-      "Cache-Control": "no-cache",           // 禁止代理缓冲，保证流式实时推送
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
       "Connection": "keep-alive",
     },
   });

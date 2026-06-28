@@ -19,6 +19,7 @@ export type PromptSegment = {
 export type BuildSegmentsInput = {
   includeIdentity?: boolean; // 是否注入基础身份段，默认 true
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
+  knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   webSearchEnabled?: boolean; // 开启联网搜索 → 构造策略段
 };
 
@@ -51,6 +52,19 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       tokenBudget: 500,
       source: "memory",
       dynamic: false,
+    });
+  }
+
+  const knowledge = input.knowledge?.trim();
+  if (knowledge) {
+    segments.push({
+      kind: "task-context",
+      title: "知识库检索",
+      content: knowledge,
+      priority: 95,
+      tokenBudget: 1200,
+      source: "knowledge",
+      dynamic: true,
     });
   }
 

@@ -59,7 +59,9 @@ function pickSyncMetadata(event: SyncEvent): Array<[string, unknown]> {
     tree_page_scanning: ["parentPageId", "depth"],
     tree_page_found: ["depth", "url", "lastEditedTime"],
     tree_child_found: ["parentPageId", "childPageId", "depth", "relation"],
+    tree_page_retry: ["parentPageId", "depth", "attempt", "maxRetries", "nextDelayMs", "name", "message", "cause"],
     tree_page_failed: ["parentPageId", "depth", "name", "message", "code", "status", "cause"],
+    page_retry: ["attempt", "maxRetries", "nextDelayMs", "error"],
     page_version_checked: ["existingChunkCount", "contentHash", "embeddingModel", "chunkerVersion", "force", "reason"],
     chunking_start: ["contentLength", "chunkSize", "overlap", "minChunkSize", "chunkerVersion"],
     page_chunked: ["chunkSize", "overlap", "minChunkSize"],
@@ -82,6 +84,7 @@ function eventTone(event: SyncEvent) {
   const isDone = event.type === "done" || event.type === "page_done" || event.type === "batch_done" || event.type === "compile_done";
   if (isError) return "text-rose-300";
   if (isDone) return "text-emerald-300";
+  if (event.type.includes("retry")) return "text-amber-300";
   if (event.type.includes("chunk")) return "text-cyan-300";
   if (event.type.startsWith("tree_")) return "text-sky-300";
   if (event.type.includes("embedding")) return "text-violet-300";

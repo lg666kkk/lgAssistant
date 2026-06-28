@@ -14,6 +14,9 @@ function hashText(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
+const SYNC_MAX_RETRIES = 3;
+const SYNC_RETRY_BASE_DELAY_MS = 800;
+
 /**
  * 同步结果
  */
@@ -32,9 +35,11 @@ export type SyncProgressEvent = {
     | 'tree_page_scanning'
     | 'tree_page_found'
     | 'tree_child_found'
+    | 'tree_page_retry'
     | 'tree_page_failed'
     | 'tree_scan_done'
     | 'batch_start'
+    | 'page_retry'
     | 'page_start'
     | 'page_read'
     | 'page_version_checked'
@@ -74,6 +79,10 @@ function compactText(text: string, maxChars = 180): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, maxChars)}...`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function errorToMetadata(error: unknown): Record<string, unknown> {
@@ -137,11 +146,52 @@ export async function syncNotionPage(
   pageId: string,
   options: SyncOptions = {},
 ): Promise<SyncResult> {
+  for (let attempt = 0; attempt <= SYNC_MAX_RETRIES; attempt++) {
+    const result = await syncNotionPageOnce(pageId, options, attempt + 1);
+    if (result.success || attempt >= SYNC_MAX_RETRIES) {
+      return result;
+    }
+
+    const nextDelayMs = SYNC_RETRY_BASE_DELAY_MS * 2 ** attempt;
+    emitSyncEvent(options, {
+      type: 'page_retry',
+      pageId,
+      status: 'failed',
+      message: `同步失败，准备重试 ${attempt + 1}/${SYNC_MAX_RETRIES}：${result.error}`,
+      metadata: {
+        attempt: attempt + 1,
+        maxRetries: SYNC_MAX_RETRIES,
+        nextDelayMs,
+        error: result.error,
+      },
+    });
+    await sleep(nextDelayMs);
+  }
+
+  return {
+    pageId,
+    pageTitle: '',
+    chunksCount: 0,
+    success: false,
+    status: 'failed',
+    error: '同步失败',
+  };
+}
+
+async function syncNotionPageOnce(
+  pageId: string,
+  options: SyncOptions = {},
+  attempt = 1,
+): Promise<SyncResult> {
   console.log(`\n开始同步页面: ${pageId}`);
   emitSyncEvent(options, {
     type: 'page_start',
     pageId,
     message: `开始同步页面 ${pageId}`,
+    metadata: {
+      attempt,
+      maxRetries: SYNC_MAX_RETRIES,
+    },
   });
 
   try {
@@ -606,6 +656,24 @@ export async function syncNotionPageTree(
           childPageId: child.childPageId,
           depth: child.depth,
           relation: '父页面包含 child_page 入口，下一步会进入该子页面扫描',
+        },
+      });
+    },
+    onPageRetry: (retry) => {
+      emitSyncEvent(options, {
+        type: 'tree_page_retry',
+        pageId: retry.pageId,
+        pageTitle: retry.hintedTitle,
+        message: retry.hintedTitle
+          ? `扫描子页面失败，准备重试 ${retry.attempt}/${retry.maxRetries}：${retry.hintedTitle}`
+          : `扫描页面失败，准备重试 ${retry.attempt}/${retry.maxRetries}：${retry.pageId}`,
+        metadata: {
+          parentPageId: retry.parentPageId,
+          depth: retry.depth,
+          attempt: retry.attempt,
+          maxRetries: retry.maxRetries,
+          nextDelayMs: retry.nextDelayMs,
+          ...errorToMetadata(retry.error),
         },
       });
     },

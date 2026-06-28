@@ -292,13 +292,111 @@ async function compileWithLLM(input: {
     prompt,
   });
 
-  return parseCompiledJson(text);
+  try {
+    return parseCompiledJson(text);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return createFallbackWiki({
+      page: input.page,
+      sourceText: input.sourceText,
+      slug: input.slug,
+      reason,
+    });
+  }
 }
 
 function parseCompiledJson(text: string): CompiledWiki {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("LLM 未返回 JSON");
-  return JSON.parse(match[0]) as CompiledWiki;
+  const jsonText = extractJsonObject(text);
+  if (!jsonText) throw new Error("LLM 未返回 JSON");
+
+  try {
+    return JSON.parse(jsonText) as CompiledWiki;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`LLM 返回了非法 JSON：${message}`);
+  }
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const source = fenced?.[1] ?? text;
+  const start = source.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < source.length; index++) {
+    const char = source[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+
+    if (depth === 0) {
+      return source.slice(start, index + 1);
+    }
+  }
+
+  return source.slice(start).trim();
+}
+
+function createFallbackWiki(input: {
+  page: SourcePage;
+  sourceText: string;
+  slug: string;
+  reason: string;
+}): CompiledWiki {
+  const paragraphs = input.sourceText
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const summary = paragraphs[0]?.replace(/\s+/g, " ").slice(0, 180) || "暂无摘要";
+  const concepts = Array.from(
+    new Set(
+      paragraphs
+        .filter((item) => /^#{1,3}\s+/.test(item))
+        .map((item) => item.replace(/^#{1,3}\s+/, "").trim())
+        .filter(Boolean)
+        .slice(0, 20),
+    ),
+  );
+
+  return {
+    title: input.page.page_title,
+    slug: input.slug,
+    summary,
+    content: [
+      `# ${input.page.page_title}`,
+      "",
+      summary,
+      "",
+      "## 原始内容摘录",
+      "",
+      input.sourceText.slice(0, 4000),
+      "",
+      `> 编译说明：LLM 返回的 JSON 无法解析，已使用确定性 fallback 生成。原因：${input.reason}`,
+    ].join("\n"),
+    concepts,
+    links: [],
+  };
 }
 
 function normalizeCompiledWiki(value: CompiledWiki, page: SourcePage, fallbackSlug: string): CompiledWiki {

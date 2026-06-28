@@ -627,10 +627,28 @@ function executeSingleToolUse(
   );
 }
 
+function dedupeSources(sources: ToolSourceType[], limit = 8) {
+  const byKey = new Map<string, ToolSourceType>();
+
+  for (const source of sources) {
+    const key = source.pageUrl || source.notionPageId || source.title;
+    const current = byKey.get(key);
+
+    if (!current || source.similarity > current.similarity) {
+      byKey.set(key, source);
+    }
+  }
+
+  return Array.from(byKey.values())
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, limit);
+}
+
 export const enqueueSources = (sources: ToolSourceType[], enqueueText: (text: string) => boolean) => {
-  if (sources.length === 0) return;
+  const uniqueSources = dedupeSources(sources);
+  if (uniqueSources.length === 0) return;
   // 整批来源一次性发一个 sources 事件（替代 __SOURCES__ marker）
-  enqueueEvent({ type: "sources", sources }, enqueueText);
+  enqueueEvent({ type: "sources", sources: uniqueSources }, enqueueText);
 };
 
 export async function runAgentLoop(

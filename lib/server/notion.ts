@@ -6,6 +6,8 @@
 import { Client } from '@notionhq/client';
 
 const MAX_BLOCK_DEPTH = 8;
+const NOTION_MAX_RETRIES = 3;
+const NOTION_RETRY_BASE_DELAY_MS = 800;
 
 type NotionBlockWithDepth = {
   block: any;
@@ -48,7 +50,21 @@ export type NotionPageTreeOptions = {
     hintedTitle?: string;
     error: unknown;
   }) => void;
+  onPageRetry?: (input: {
+    pageId: string;
+    depth: number;
+    parentPageId?: string;
+    hintedTitle?: string;
+    error: unknown;
+    attempt: number;
+    maxRetries: number;
+    nextDelayMs: number;
+  }) => void;
 };
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Notion 客户端类
@@ -265,36 +281,58 @@ export class NotionClient {
       visited.add(currentPageId);
       options.onPageStart?.({ pageId: currentPageId, depth, parentPageId, hintedTitle });
 
-      try {
-        const info = await this.getPageInfo(currentPageId);
-        const page = { ...info, depth };
-        pages.push(page);
-        options.onPageLoaded?.(page);
+      for (let attempt = 0; attempt <= NOTION_MAX_RETRIES; attempt++) {
+        try {
+          const info = await this.getPageInfo(currentPageId);
+          const page = { ...info, depth };
+          pages.push(page);
+          options.onPageLoaded?.(page);
 
-        const blocks = await this.getPageBlocks(currentPageId, 0, false);
-        for (const { block } of blocks) {
-          if (block.type === 'child_page' && 'id' in block) {
-            const childTitle = block.child_page?.title ?? 'Untitled';
-            options.onChildPageFound?.({
-              parentPageId: currentPageId,
-              childPageId: block.id,
-              childTitle,
-              depth: depth + 1,
-            });
-            await visit(block.id, depth + 1, currentPageId, childTitle);
+          const blocks = await this.getPageBlocks(currentPageId, 0, false);
+          for (const { block } of blocks) {
+            if (block.type === 'child_page' && 'id' in block) {
+              const childTitle = block.child_page?.title ?? 'Untitled';
+              options.onChildPageFound?.({
+                parentPageId: currentPageId,
+                childPageId: block.id,
+                childTitle,
+                depth: depth + 1,
+              });
+              await visit(block.id, depth + 1, currentPageId, childTitle);
+            }
           }
-        }
-      } catch (error) {
-        options.onPageFailed?.({
-          pageId: currentPageId,
-          depth,
-          parentPageId,
-          hintedTitle,
-          error,
-        });
 
-        if (depth === 0) {
-          throw error;
+          return;
+        } catch (error) {
+          if (attempt < NOTION_MAX_RETRIES) {
+            const nextDelayMs = NOTION_RETRY_BASE_DELAY_MS * 2 ** attempt;
+            options.onPageRetry?.({
+              pageId: currentPageId,
+              depth,
+              parentPageId,
+              hintedTitle,
+              error,
+              attempt: attempt + 1,
+              maxRetries: NOTION_MAX_RETRIES,
+              nextDelayMs,
+            });
+            await sleep(nextDelayMs);
+            continue;
+          }
+
+          options.onPageFailed?.({
+            pageId: currentPageId,
+            depth,
+            parentPageId,
+            hintedTitle,
+            error,
+          });
+
+          if (depth === 0) {
+            throw error;
+          }
+
+          return;
         }
       }
     };

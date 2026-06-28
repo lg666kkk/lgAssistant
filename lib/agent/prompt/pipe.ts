@@ -5,6 +5,7 @@ import { type PromptSegment, buildSegments } from "./segments";
 export type PromptPipeInput = {
   userMessage: string;
   memory?: string;
+  knowledge?: string;
   webSearchEnabled?: boolean;
   currentDate?: string;
   maxTokens?: number;

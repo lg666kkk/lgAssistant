@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { authFetch } from "@/lib/auth/client";
 
 type ModelStep = {
   type: "model";
@@ -140,6 +142,7 @@ function toText(v: unknown) {
 const SEGMENT_KIND_CLASS: Record<string, string> = {
   identity: "bg-violet-950/50 text-violet-300",
   memory: "bg-emerald-950/50 text-emerald-300",
+  "task-context": "bg-cyan-950/50 text-cyan-300",
   "web-search-policy": "bg-sky-950/50 text-sky-300",
 };
 
@@ -210,7 +213,7 @@ export default function TraceDetailPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/traces/${params.id}`)
+    authFetch(`/api/traces/${params.id}`)
       .then(async (r) => {
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || "加载失败");
@@ -222,6 +225,7 @@ export default function TraceDetailPage({
   }, [params.id]);
 
   return (
+    <AuthGate>
     <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-4xl px-6 py-8">
         <Link
@@ -454,5 +458,6 @@ export default function TraceDetailPage({
         )}
       </div>
     </div>
+    </AuthGate>
   );
 }
