@@ -9,6 +9,8 @@ import remarkGfm from "remark-gfm";
 import { ChatInput } from "./components/chat-input";
 import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { useAuth } from "@/lib/auth/use-auth";
 
 function formatCompactNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
@@ -80,6 +82,7 @@ function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) {
 }
 
 export default function Home() {
+  const { user, supabase } = useAuth();
   const {
     sessions,
     activeId,
@@ -142,6 +145,7 @@ export default function Home() {
   }
 
   return (
+    <AuthGate>
     <div className="flex h-screen bg-slate-950">
       {/* 侧边栏 */}
       <aside
@@ -188,6 +192,15 @@ export default function Home() {
           >
             设置
           </Link>
+          {user && (
+            <button
+              type="button"
+              onClick={() => supabase.auth.signOut()}
+              className="mt-2 w-full rounded-xl border border-slate-800 px-4 py-2 text-center text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors whitespace-nowrap"
+            >
+              退出登录
+            </button>
+          )}
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-1">
           {sessions.map((session) => (
@@ -548,5 +561,6 @@ export default function Home() {
         />
       </main>
     </div>
+    </AuthGate>
   );
 }

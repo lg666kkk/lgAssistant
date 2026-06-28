@@ -54,6 +54,7 @@ export interface RAGSearchResponse {
 }
 
 export interface RAGSearchOptions {
+  userId?: string;
   matchThreshold?: number;
   matchCount?: number;
   candidateCount?: number;
@@ -122,6 +123,7 @@ export class RAGRetriever {
 
     const queryEmbedding = await this.embeddingClient.embedSingle(rewrittenQueries[0]);
     const candidates = await this.vectorSearch(queryEmbedding, {
+      userId: options.userId,
       matchThreshold,
       matchCount: candidateCount,
     });
@@ -171,12 +173,14 @@ export class RAGRetriever {
     options: {
       matchThreshold: number;
       matchCount: number;
+      userId?: string;
     },
   ): Promise<SearchResult[]> {
     const { data, error } = await this.supabase.rpc('match_documents', {
       query_embedding: queryEmbedding,
       match_threshold: options.matchThreshold,
       match_count: options.matchCount,
+      filter_user_id: options.userId ?? null,
     });
 
     if (error) {

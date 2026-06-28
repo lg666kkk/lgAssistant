@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatSession } from "@/lib/chat-session";
 import { SessionManager } from "@/lib/session-manager";
+import { useAuth } from "@/lib/auth/use-auth";
 
 export function useChatManager() {
+  const { user, loading: authLoading } = useAuth();
   const sessionsRef = useRef<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [, forceUpdate] = useState(0);
@@ -12,6 +14,15 @@ export function useChatManager() {
 
   // 从数据库加载会话列表
   useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      sessionsRef.current = [];
+      setActiveId("");
+      setLoading(false);
+      rerender();
+      return;
+    }
+
     const loadSessions = async () => {
       try {
         const sessionManager = new SessionManager();
@@ -47,7 +58,7 @@ export function useChatManager() {
     };
 
     loadSessions();
-  }, []);
+  }, [authLoading, user?.id, rerender]);
 
   const sessions = sessionsRef.current;
   const activeSession = sessions.find((s) => s.id === activeId) ?? sessions[0];

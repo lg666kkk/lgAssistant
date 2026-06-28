@@ -42,7 +42,7 @@ export interface ToolDefinition {
   description: string; // 工具说明
   input_schema: ToolInputSchema; // 工具参数
   riskLevel: ToolRiskLevel; // 工具风险等级
-  execute(params: unknown): Promise<ToolResult>; // 执行工具的函数
+  execute(params: unknown, context?: ToolExecutionContext): Promise<ToolResult>; // 执行工具的函数
   runtime: ToolRuntimePolicy;
 }
 // 它表示 一次工具调用请求。
@@ -60,6 +60,12 @@ export interface ToolExecutionResult extends ToolResult {
 
 export type ExecuteToolCallOptions = {
   approved?: boolean;
+  scopeId?: string;
+  userId?: string;
+};
+
+export type ToolExecutionContext = {
+  userId?: string;
   scopeId?: string;
 };
 

@@ -4,14 +4,22 @@
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS leetcode_daily_practices (
-  practice_date DATE PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  practice_date DATE NOT NULL,
   round_no INTEGER NOT NULL DEFAULT 1,
   problem_ids INTEGER[] NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, practice_date)
 );
 
+ALTER TABLE leetcode_daily_practices ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+ALTER TABLE leetcode_daily_practices ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS leetcode_daily_practices_user_date_unique_idx
+ON leetcode_daily_practices (user_id, practice_date);
+
 CREATE INDEX IF NOT EXISTS leetcode_daily_practices_round_no_idx
-ON leetcode_daily_practices (round_no);
+ON leetcode_daily_practices (user_id, round_no);
 
 COMMENT ON TABLE leetcode_daily_practices IS 'LeetCode 热题 100 每日练习记录';
 COMMENT ON COLUMN leetcode_daily_practices.practice_date IS '练习日期，同一天重复请求返回同一批题';

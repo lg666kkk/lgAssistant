@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { authFetch } from "@/lib/auth/client";
 
 // 列表页用的 trace 概览（对应 /api/traces 返回的精简字段）
 type TraceListItem = {
@@ -131,7 +133,7 @@ export default function TracesPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/traces?limit=200")
+    authFetch("/api/traces?limit=200")
       .then(async (r) => {
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || "加载失败");
@@ -145,6 +147,7 @@ export default function TracesPage() {
   const groups = useMemo(() => groupBySession(traces), [traces]);
 
   return (
+    <AuthGate>
     <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
@@ -184,5 +187,6 @@ export default function TracesPage() {
         </div>
       </div>
     </div>
+    </AuthGate>
   );
 }

@@ -4,6 +4,7 @@ import {
   type ChatModelId,
 } from "@/lib/agent/models";
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { requireUser } from "@/lib/auth/server";
 
 type UsageSummary = {
   model: string;
@@ -126,6 +127,9 @@ function normalizeStepUsage(model: string, usage: any) {
 // GET /api/usage?limit=500&page=1&pageSize=20
 // 基于 agent_traces 聚合真实 token usage 和估算费用。
 export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   if (!hasSupabaseConfig()) {
     return Response.json(
       { error: "未配置 Supabase，无法读取 usage" },
@@ -147,6 +151,7 @@ export async function GET(req: Request) {
       "id, request_id, session_id, total_duration_ms, metrics, steps, created_at, sessions(title)",
       { count: "exact" },
     )
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(limit);
 

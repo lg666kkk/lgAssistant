@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { authFetch } from "@/lib/auth/client";
 
 type ConfigGroup = {
   title: string;
@@ -22,7 +24,7 @@ export default function SettingsPage() {
   const loadConfig = () => {
     setLoading(true);
     setError(null);
-    fetch("/api/knowledge/config", { cache: "no-store" })
+    authFetch("/api/knowledge/config", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "加载配置失败");
@@ -44,6 +46,7 @@ export default function SettingsPage() {
   const totalCount = configGroups.reduce((sum, group) => sum + group.items.length, 0);
 
   return (
+    <AuthGate>
     <div className="h-screen overflow-y-auto bg-zinc-950 text-zinc-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="flex items-center gap-4 text-sm">
@@ -129,5 +132,6 @@ export default function SettingsPage() {
         )}
       </div>
     </div>
+    </AuthGate>
   );
 }

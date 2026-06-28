@@ -13,14 +13,17 @@ import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
-import { SessionManager } from "@/lib/session-manager";
+import { requireUser } from "@/lib/auth/server";
+import { getSupabase } from "@/lib/supabase";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
-const sessionManager = new SessionManager();
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   // 解析请求体
   let body;
   try {
@@ -114,7 +117,7 @@ export async function POST(req: Request) {
         let loopMessages = [...modelMessages];
         if (sessionId && messages.length === 1) {
           try {
-            const history = await sessionStore.getHistory(sessionId);
+            const history = await sessionStore.getHistory(user.id, sessionId);
             if (history.length > 0) {
               // 把 Redis 里的历史拼在本轮消息前面
               loopMessages = [...history, ...modelMessages];
@@ -133,7 +136,7 @@ export async function POST(req: Request) {
         let memorySystem = "";
         if (lastUser) {
           try {
-            memorySystem = await recallForPrompt(lastUser.content);
+            memorySystem = await recallForPrompt(lastUser.content, { userId: user.id });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
           }
@@ -152,8 +155,11 @@ export async function POST(req: Request) {
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
         if (sessionId && systemPrompt) {
-          void sessionManager
-            .updateSystemPrompt(sessionId, systemPrompt)
+          void getSupabase()
+            .from("sessions")
+            .update({ system_prompt: systemPrompt })
+            .eq("id", sessionId)
+            .eq("user_id", user.id)
             .catch((e: any) =>
               console.error("[memory] system_prompt 写入失败:", e.message),
             );
@@ -173,19 +179,20 @@ export async function POST(req: Request) {
           () => req.signal.aborted || closed,
           selectedModel,
           systemSegments, // 段化结构，写进 trace 供详情页按段展示
+          user.id,
         );
         console.log(
           "=== Agent Loop Trace ===",
           formatTraceTree(agentLoopResult.trace),
         );
-        void saveTrace(agentLoopResult.trace).catch((e: any) =>
+        void saveTrace(agentLoopResult.trace, user.id).catch((e: any) =>
           console.error("[trace] 保存失败，跳过:", e.message),
         );
         console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
 
         // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
-        void consolidate(modelMessages, { sessionId }).catch((e: any) =>
+        void consolidate(modelMessages, { sessionId, userId: user.id }).catch((e: any) =>
           console.error("[consolidate] 失败:", e.message),
         );
 
@@ -194,7 +201,7 @@ export async function POST(req: Request) {
           void (async () => {
             const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
             if (lastUser2) {
-              await sessionStore.append(sessionId, { role: "user", content: lastUser2.content });
+              await sessionStore.append(user.id, sessionId, { role: "user", content: lastUser2.content });
             }
             // 取最后一条有 text 内容的 assistant 消息（thinking 模式工具调用轮没有 text）
             const assistantText = [...agentLoopResult.loopMessages]
@@ -207,7 +214,7 @@ export async function POST(req: Request) {
                 return text || found;
               }, "");
             if (assistantText) {
-              await sessionStore.append(sessionId, { role: "assistant", content: assistantText });
+              await sessionStore.append(user.id, sessionId, { role: "assistant", content: assistantText });
             }
           })().catch((e: any) =>
             console.error("[session] 写入历史失败:", e.message),

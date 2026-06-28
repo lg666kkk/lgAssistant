@@ -1,11 +1,15 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { requireUser } from "@/lib/auth/server";
 
 // GET /api/traces/:id
 // 返回单条 trace 的完整明细，含 steps（model/tool 逐步时间线）和 metrics 汇总。
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { id: string } },
 ) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   if (!hasSupabaseConfig()) {
     return Response.json(
       { error: "未配置 Supabase，无法读取 trace" },
@@ -17,6 +21,7 @@ export async function GET(
     .from("agent_traces")
     .select("*")
     .eq("id", params.id)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) {

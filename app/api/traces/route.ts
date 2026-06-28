@@ -1,9 +1,13 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { requireUser } from "@/lib/auth/server";
 
 // GET /api/traces?limit=50
 // 返回 trace 列表（不含 steps 明细，只要列表展示需要的概览字段）。
 // steps/metrics 是 JSONB 大字段，列表页不需要，留给详情页按 id 拉。
 export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   if (!hasSupabaseConfig()) {
     return Response.json(
       { error: "未配置 Supabase，无法读取 trace" },
@@ -21,6 +25,7 @@ export async function GET(req: Request) {
     .select(
       "id, request_id, session_id, stop_reason, completed, total_duration_ms, metrics, created_at, sessions(title)",
     )
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(limit);
 

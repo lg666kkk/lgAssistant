@@ -1,4 +1,5 @@
 import { compileWiki } from "@/lib/server/wiki-compiler";
+import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,9 @@ function streamEvent(
 }
 
 export async function POST(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   let body: { pageIds?: string[]; force?: boolean };
 
   try {
@@ -27,6 +31,7 @@ export async function POST(req: Request) {
       try {
         const results = await compileWiki({
           pageIds: Array.isArray(body.pageIds) && body.pageIds.length > 0 ? body.pageIds : undefined,
+          userId: user.id,
           force: Boolean(body.force),
           onEvent: (event) => streamEvent(controller, encoder, event),
         });

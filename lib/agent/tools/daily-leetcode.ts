@@ -1,4 +1,4 @@
-import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy, type ToolExecutionContext } from "./types";
 import {
   formatDailyLeetCodePractice,
   getDailyLeetCodePractice,
@@ -40,11 +40,11 @@ export const dailyLeetCodeTool: ToolDefinition = {
     maxConcurrency: 1,
   },
   riskLevel: "safe",
-  execute: async (input: unknown): Promise<ToolResult> => {
+  execute: async (input: unknown, context?: ToolExecutionContext): Promise<ToolResult> => {
     const { timeZone } = parseInput(input);
 
     try {
-      const practice = await getDailyLeetCodePractice({ timeZone });
+      const practice = await getDailyLeetCodePractice({ timeZone, userId: context?.userId });
       return {
         ok: true,
         content: formatDailyLeetCodePractice(practice),

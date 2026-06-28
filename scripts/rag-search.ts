@@ -11,12 +11,13 @@ type CliOptions = {
   query: string;
   limit: number;
   threshold: number;
+  userId?: string;
 };
 
 function printUsage() {
   console.error(
     [
-      '用法: npm run rag:search "query" [--limit 5] [--threshold 0.5]',
+      '用法: npm run rag:search "query" [--limit 5] [--threshold 0.5] [--user-id <uuid>]',
       "",
       "示例:",
       '  npm run rag:search "怎么做 RAG 检索优化"',
@@ -29,6 +30,7 @@ function parseArgs(argv: string[]): CliOptions | null {
   const queryParts: string[] = [];
   let limit = DEFAULT_LIMIT;
   let threshold = DEFAULT_THRESHOLD;
+  let userId = process.env.DEFAULT_USER_ID;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -51,13 +53,18 @@ function parseArgs(argv: string[]): CliOptions | null {
       continue;
     }
 
+    if (arg === "--user-id") {
+      userId = argv[++i];
+      continue;
+    }
+
     queryParts.push(arg);
   }
 
   const query = queryParts.join(" ").trim();
   if (!query) return null;
 
-  return { query, limit, threshold };
+  return { query, limit, threshold, userId };
 }
 
 function compactExcerpt(text: string, maxChars = 220) {
@@ -78,6 +85,7 @@ async function main() {
   const response = await retriever.searchWithDebug(options.query, {
     matchThreshold: options.threshold,
     matchCount: options.limit,
+    userId: options.userId,
     enableQueryRewrite: true,
     enableMmr: true,
     enableRerank: true,

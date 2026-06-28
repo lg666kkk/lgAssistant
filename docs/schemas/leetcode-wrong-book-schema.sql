@@ -4,7 +4,9 @@
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS leetcode_wrong_problems (
-  problem_id INTEGER PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  problem_id INTEGER NOT NULL,
   title TEXT NOT NULL,
   slug TEXT NOT NULL,
   difficulty TEXT NOT NULL,
@@ -18,17 +20,22 @@ CREATE TABLE IF NOT EXISTS leetcode_wrong_problems (
   last_reviewed_at TIMESTAMPTZ,
   next_review_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, problem_id)
 );
 
+ALTER TABLE leetcode_wrong_problems ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+ALTER TABLE leetcode_wrong_problems ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS leetcode_wrong_problems_user_problem_unique_idx
+ON leetcode_wrong_problems (user_id, problem_id);
+
 CREATE INDEX IF NOT EXISTS leetcode_wrong_problems_next_review_at_idx
-ON leetcode_wrong_problems (next_review_at);
+ON leetcode_wrong_problems (user_id, next_review_at);
 
 CREATE INDEX IF NOT EXISTS leetcode_wrong_problems_updated_at_idx
-ON leetcode_wrong_problems (updated_at DESC);
+ON leetcode_wrong_problems (user_id, updated_at DESC);
 
 COMMENT ON TABLE leetcode_wrong_problems IS 'LeetCode 错题本';
 COMMENT ON COLUMN leetcode_wrong_problems.problem_id IS 'LeetCode 题号';
 COMMENT ON COLUMN leetcode_wrong_problems.wrong_reason IS '做错原因';
 COMMENT ON COLUMN leetcode_wrong_problems.next_review_at IS '下次建议复习时间';
-

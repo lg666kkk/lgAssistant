@@ -1,7 +1,11 @@
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
+import { requireUser } from "@/lib/auth/server";
 
 export async function POST(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   let body;
 
   try {
@@ -32,6 +36,7 @@ export async function POST(req: Request) {
     {
       approved: true,
       scopeId: typeof sessionId === "string" ? sessionId : undefined,
+      userId: user.id,
     },
   );
 

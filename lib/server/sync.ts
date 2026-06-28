@@ -61,6 +61,7 @@ export type SyncProgressEvent = {
 };
 
 export type SyncOptions = {
+  userId?: string;
   force?: boolean;
   onEvent?: (event: SyncProgressEvent) => void;
 };
@@ -163,11 +164,17 @@ export async function syncNotionPage(
     });
 
     const supabase = createSupabaseClient();
-    const { data: existingPage, error: existingPageError } = await supabase
+    let existingPageQuery = supabase
       .from('notion_pages')
-      .select('page_id, chunk_count, metadata')
-      .eq('page_id', pageId)
-      .maybeSingle();
+      .select('id, page_id, chunk_count, metadata')
+      .eq('page_id', pageId);
+
+    if (options.userId) {
+      existingPageQuery = existingPageQuery.eq('user_id', options.userId);
+    }
+
+    const { data: existingPage, error: existingPageError } =
+      await existingPageQuery.maybeSingle();
 
     if (existingPageError) {
       throw new Error(`读取页面元数据失败: ${existingPageError.message}`);
@@ -322,24 +329,33 @@ export async function syncNotionPage(
     const syncStatus = existingPage ? 'updated' : 'created';
 
     // 4.1 插入或更新页面元数据
-    const { error: pageError } = await supabase
+    const { data: savedPage, error: pageError } = await supabase
       .from('notion_pages')
-      .upsert({
-        page_id: pageId,
-        page_title: page.title,
-        page_url: page.url,
-        last_edited_time: page.lastEditedTime,
-        last_synced_at: new Date().toISOString(),
-        chunk_count: chunks.length,
-        metadata: {
-          content_hash: pageContentHash,
-          embedding_model: EMBEDDING_MODEL,
-          chunker_version: CHUNKER_VERSION,
+      .upsert(
+        {
+          page_id: pageId,
+          user_id: options.userId,
+          page_title: page.title,
+          page_url: page.url,
+          last_edited_time: page.lastEditedTime,
+          last_synced_at: new Date().toISOString(),
+          chunk_count: chunks.length,
+          metadata: {
+            content_hash: pageContentHash,
+            embedding_model: EMBEDDING_MODEL,
+            chunker_version: CHUNKER_VERSION,
+          },
         },
-      });
+        options.userId ? { onConflict: 'user_id,page_id' } : undefined,
+      )
+      .select('id')
+      .single();
 
     if (pageError) {
       throw new Error(`插入页面元数据失败: ${pageError.message}`);
+    }
+    if (!savedPage?.id) {
+      throw new Error('插入页面元数据失败: 未返回 notion_pages.id');
     }
     emitSyncEvent(options, {
       type: 'db_page_upserted',
@@ -356,10 +372,16 @@ export async function syncNotionPage(
     });
 
     // 4.2 删除旧的 chunks（如果存在）
-    const { error: deleteError } = await supabase
+    let deleteQuery = supabase
       .from('documents')
       .delete()
-      .eq('page_id', pageId);
+      .eq('notion_page_id', savedPage.id);
+
+    if (options.userId) {
+      deleteQuery = deleteQuery.eq('user_id', options.userId);
+    }
+
+    const { error: deleteError } = await deleteQuery;
 
     if (deleteError) {
       throw new Error(`删除旧 chunks 失败: ${deleteError.message}`);
@@ -376,6 +398,8 @@ export async function syncNotionPage(
 
     // 4.3 插入新的 chunks
     const documents = chunks.map((chunk, i) => ({
+      user_id: options.userId,
+      notion_page_id: savedPage.id,
       page_id: pageId,
       chunk_index: chunk.index,
       content: chunk.text,

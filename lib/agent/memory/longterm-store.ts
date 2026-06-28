@@ -25,33 +25,36 @@ export class LongTermStore implements MemoryStore {
     key: string,
     content: string,
     metadata: Record<string, unknown> = {},
+    options: { userId?: string } = {},
   ): Promise<void> {
     if (!hasSupabaseConfig()) return; // 没配 Supabase 直接跳过，和 trace-store 一致
     const { error } = await getSupabase()
       .from(TABLE)
       .upsert(
         {
+          user_id: options.userId,
           key,
           content,
-          metadata,
+          metadata: { ...metadata, userId: options.userId },
           // 显式传 updated_at：DEFAULT NOW() 只在 INSERT 生效，
           // upsert 走 UPDATE 分支时不会自动刷新，必须手动给
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "key" }, // key 冲突时 UPDATE 而非报错 —— 这就是「覆盖」语义
+        options.userId ? { onConflict: "user_id,key" } : { onConflict: "key" },
       );
     if (error) {
       console.error("[LongTermStore.set] 写入失败:", error.message);
     }
   }
 
-  async get(key: string): Promise<MemoryRecord | null> {
+  async get(key: string, options: { userId?: string } = {}): Promise<MemoryRecord | null> {
     if (!hasSupabaseConfig()) return null; // 注意返回 null 不是 undefined，对齐返回类型
-    const { data, error } = await getSupabase()
+    let query = getSupabase()
       .from(TABLE)
       .select("*")
-      .eq("key", key)      // WHERE key = $1
-      .maybeSingle();      // 查不到返回 null（single() 会抛错，我们不要那个）
+      .eq("key", key);      // WHERE key = $1
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { data, error } = await query.maybeSingle();      // 查不到返回 null（single() 会抛错，我们不要那个）
     if (error) {
       console.error("[LongTermStore.get] 读取失败:", error.message);
       return null;
@@ -59,25 +62,28 @@ export class LongTermStore implements MemoryStore {
     return data ? this.toRecord(data) : null;
   }
 
-  async forget(key: string): Promise<void> {
+  async forget(key: string, options: { userId?: string } = {}): Promise<void> {
     if (!hasSupabaseConfig()) return;
-    const { error } = await getSupabase()
+    let query = getSupabase()
       .from(TABLE)
       .delete()
       .eq("key", key);     // WHERE key = $1
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { error } = await query;
     if (error) {
       console.error("[LongTermStore.forget] 删除失败:", error.message);
     }
   }
 
-  async list(limit = 50): Promise<MemoryRecord[]> {
+  async list(limit = 50, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
-    const { data, error } = await getSupabase()
+    let query = getSupabase()
       .from(TABLE)
       .select("*")
       .eq("layer", "longterm")
-      .order("created_at", { ascending: false }) // 最新的在前
-      .limit(limit);
+      .order("created_at", { ascending: false }); // 最新的在前
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { data, error } = await query.limit(limit);
     if (error) {
       console.error("[LongTermStore.list] 列表失败:", error.message);
       return [];

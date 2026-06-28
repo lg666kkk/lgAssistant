@@ -1,49 +1,85 @@
 -- ============================================
--- 配置 Row Level Security (RLS) 策略
+-- Row Level Security (RLS) 策略
+-- 历史文件名叫 disable-rls.sql，但当前内容已经改为用户隔离策略。
 -- ============================================
 
--- 1. 启用 RLS
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_traces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notion_pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE compiled_wiki_pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE compiled_wiki_edges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_semantic_memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leetcode_daily_practices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leetcode_wrong_problems ENABLE ROW LEVEL SECURITY;
 
--- 2. 删除旧策略（如果存在）
 DROP POLICY IF EXISTS "允许所有操作 sessions" ON sessions;
 DROP POLICY IF EXISTS "允许所有操作 messages" ON messages;
+DROP POLICY IF EXISTS "用户只能访问自己的 sessions" ON sessions;
+DROP POLICY IF EXISTS "用户只能访问自己的 messages" ON messages;
+DROP POLICY IF EXISTS "用户只能访问自己的 agent_traces" ON agent_traces;
+DROP POLICY IF EXISTS "用户只能访问自己的 notion_pages" ON notion_pages;
+DROP POLICY IF EXISTS "用户只能访问自己的 documents" ON documents;
+DROP POLICY IF EXISTS "用户只能访问自己的 compiled_wiki_pages" ON compiled_wiki_pages;
+DROP POLICY IF EXISTS "用户只能访问自己的 compiled_wiki_edges" ON compiled_wiki_edges;
+DROP POLICY IF EXISTS "用户只能访问自己的 agent_memories" ON agent_memories;
+DROP POLICY IF EXISTS "用户只能访问自己的 agent_semantic_memories" ON agent_semantic_memories;
+DROP POLICY IF EXISTS "用户只能访问自己的 leetcode_daily_practices" ON leetcode_daily_practices;
+DROP POLICY IF EXISTS "用户只能访问自己的 leetcode_wrong_problems" ON leetcode_wrong_problems;
 
--- 3. 创建新策略：允许所有操作（适用于个人项目）
--- 注意：生产环境应该根据用户身份限制访问
+CREATE POLICY "用户只能访问自己的 sessions"
+  ON sessions FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
--- sessions 表策略
-CREATE POLICY "允许查询所有会话"
-  ON sessions FOR SELECT
-  USING (true);
+CREATE POLICY "用户只能访问自己的 messages"
+  ON messages FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许插入会话"
-  ON sessions FOR INSERT
-  WITH CHECK (true);
+CREATE POLICY "用户只能访问自己的 agent_traces"
+  ON agent_traces FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许更新会话"
-  ON sessions FOR UPDATE
-  USING (true);
+CREATE POLICY "用户只能访问自己的 notion_pages"
+  ON notion_pages FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许删除会话"
-  ON sessions FOR DELETE
-  USING (true);
+CREATE POLICY "用户只能访问自己的 documents"
+  ON documents FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
--- messages 表策略
-CREATE POLICY "允许查询所有消息"
-  ON messages FOR SELECT
-  USING (true);
+CREATE POLICY "用户只能访问自己的 compiled_wiki_pages"
+  ON compiled_wiki_pages FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许插入消息"
-  ON messages FOR INSERT
-  WITH CHECK (true);
+CREATE POLICY "用户只能访问自己的 compiled_wiki_edges"
+  ON compiled_wiki_edges FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许更新消息"
-  ON messages FOR UPDATE
-  USING (true);
+CREATE POLICY "用户只能访问自己的 agent_memories"
+  ON agent_memories FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "允许删除消息"
-  ON messages FOR DELETE
-  USING (true);
+CREATE POLICY "用户只能访问自己的 agent_semantic_memories"
+  ON agent_semantic_memories FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
+CREATE POLICY "用户只能访问自己的 leetcode_daily_practices"
+  ON leetcode_daily_practices FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "用户只能访问自己的 leetcode_wrong_problems"
+  ON leetcode_wrong_problems FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);

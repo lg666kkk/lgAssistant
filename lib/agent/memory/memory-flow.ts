@@ -27,9 +27,9 @@ const EXTRACT_MODEL = deepseekConfig.model;
 // ============================================================
 export async function recallForPrompt(
   query: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; userId?: string } = {},
 ): Promise<string> {
-  const hits = await semantic.recall(query, opts.limit ?? 5);
+  const hits = await semantic.recall(query, opts.limit ?? 5, { userId: opts.userId });
   if (hits.length === 0) return ""; // 没召回到就返回空串，调用方不注入 system
 
   const lines = hits.map((h) => `- ${h.content}`).join("\n");
@@ -62,7 +62,7 @@ const EXTRACT_PROMPT = `你是记忆抽取器。读下面这段对话，只抽�
 
 export async function consolidate(
   conversation: { role: string; content: string }[],
-  opts: { sessionId?: string } = {},
+  opts: { sessionId?: string; userId?: string } = {},
 ): Promise<MemoryRecord[]> {
   if (conversation.length === 0) return [];
 
@@ -99,8 +99,18 @@ export async function consolidate(
     if (!f.fact || !f.key) continue;
     const ns = f.key;
     // 同时写长期（按 key 取）和语义（按意思召回）—— 一条事实两种检索方式都能找到
-    await longTerm.set(ns, f.fact, { sessionId: opts.sessionId, source: "consolidate" });
-    await semantic.set(ns, f.fact, { sessionId: opts.sessionId, source: "consolidate" });
+    await longTerm.set(
+      ns,
+      f.fact,
+      { sessionId: opts.sessionId, source: "consolidate" },
+      { userId: opts.userId },
+    );
+    await semantic.set(
+      ns,
+      f.fact,
+      { sessionId: opts.sessionId, source: "consolidate" },
+      { userId: opts.userId },
+    );
     saved.push({
       id: "",
       key: ns,

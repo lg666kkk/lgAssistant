@@ -1,13 +1,18 @@
 import { getSupabase } from "@/lib/supabase";
+import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   try {
     const supabase = getSupabase();
     const { data: pages, error: pagesError } = await supabase
       .from("compiled_wiki_pages")
       .select("slug,title,summary,concepts,source_page_ids,updated_at,metadata")
+      .eq("user_id", user.id)
       .order("updated_at", { ascending: false })
       .limit(100);
 
@@ -15,7 +20,8 @@ export async function GET() {
 
     const { count: edgeCount, error: edgesError } = await supabase
       .from("compiled_wiki_edges")
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
 
     if (edgesError) throw edgesError;
 

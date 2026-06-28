@@ -39,6 +39,7 @@ export class SemanticStore implements SemanticMemoryStore {
     key: string,
     content: string,
     metadata: Record<string, unknown> = {},
+    options: { userId?: string } = {},
   ): Promise<void> {
     if (!hasSupabaseConfig()) return;
     // 内容变了向量必须跟着变，否则存的是新文本旧向量，recall 会按旧语义召回
@@ -46,21 +47,29 @@ export class SemanticStore implements SemanticMemoryStore {
     const { error } = await getSupabase()
       .from(TABLE)
       .upsert(
-        { key, content, embedding, metadata, updated_at: new Date().toISOString() },
-        { onConflict: "key" },
+        {
+          user_id: options.userId,
+          key,
+          content,
+          embedding,
+          metadata: { ...metadata, userId: options.userId },
+          updated_at: new Date().toISOString(),
+        },
+        options.userId ? { onConflict: "user_id,key" } : { onConflict: "key" },
       );
     if (error) {
       console.error("[SemanticStore.set] 写入失败:", error.message);
     }
   }
 
-  async get(key: string): Promise<MemoryRecord | null> {
+  async get(key: string, options: { userId?: string } = {}): Promise<MemoryRecord | null> {
     if (!hasSupabaseConfig()) return null;
-    const { data, error } = await getSupabase()
+    let query = getSupabase()
       .from(TABLE)
       .select(COLS)
-      .eq("key", key)
-      .maybeSingle();
+      .eq("key", key);
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { data, error } = await query.maybeSingle();
     if (error) {
       console.error("[SemanticStore.get] 读取失败:", error.message);
       return null;
@@ -68,21 +77,24 @@ export class SemanticStore implements SemanticMemoryStore {
     return data ? this.toRecord(data) : null;
   }
 
-  async forget(key: string): Promise<void> {
+  async forget(key: string, options: { userId?: string } = {}): Promise<void> {
     if (!hasSupabaseConfig()) return;
-    const { error } = await getSupabase().from(TABLE).delete().eq("key", key);
+    let query = getSupabase().from(TABLE).delete().eq("key", key);
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { error } = await query;
     if (error) {
       console.error("[SemanticStore.forget] 删除失败:", error.message);
     }
   }
 
-  async list(limit = 50): Promise<MemoryRecord[]> {
+  async list(limit = 50, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
-    const { data, error } = await getSupabase()
+    let query = getSupabase()
       .from(TABLE)
       .select(COLS)
-      .order("created_at", { ascending: false })
-      .limit(limit);
+      .order("created_at", { ascending: false });
+    if (options.userId) query = query.eq("user_id", options.userId);
+    const { data, error } = await query.limit(limit);
     if (error) {
       console.error("[SemanticStore.list] 列表失败:", error.message);
       return [];
@@ -91,12 +103,13 @@ export class SemanticStore implements SemanticMemoryStore {
   }
 
   // ⭐ 主角：按语义相似度召回
-  async recall(query: string, limit = 5): Promise<MemoryRecord[]> {
+  async recall(query: string, limit = 5, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
     const queryEmbedding = await this.getEmbedder().embedSingle(query);
     const { data, error } = await getSupabase().rpc(MATCH_FN, {
       query_embedding: queryEmbedding,
       match_count: limit,
+      filter_user_id: options.userId ?? null,
       // match_threshold 不传，用 SQL 默认 0.3
     });
     if (error) {

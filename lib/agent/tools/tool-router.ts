@@ -154,7 +154,10 @@ export async function executeToolCall(
 
   try {
     const result = await withTimeout(
-      tool.execute(toolCall.input),
+      tool.execute(toolCall.input, {
+        userId: options.userId,
+        scopeId: options.scopeId,
+      }),
       tool.runtime.timeoutSeconds,
       tool.name,
     );

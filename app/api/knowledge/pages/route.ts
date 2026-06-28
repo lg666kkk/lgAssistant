@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { requireUser } from "@/lib/auth/server";
 import ws from "ws";
 
 function createSupabaseClient() {
@@ -16,12 +17,16 @@ function createSupabaseClient() {
   });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   try {
     const supabase = createSupabaseClient();
     const { data, error } = await supabase
       .from("notion_pages")
       .select("page_id,page_title,page_url,last_edited_time,last_synced_at,chunk_count,metadata")
+      .eq("user_id", user.id)
       .order("last_synced_at", { ascending: false });
 
     if (error) {

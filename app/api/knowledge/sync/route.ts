@@ -1,4 +1,5 @@
 import { syncNotionPageTree, syncNotionPages } from "@/lib/server/sync";
+import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -28,6 +29,9 @@ function streamEvent(
 }
 
 export async function POST(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   let body: { input?: string; tree?: boolean; force?: boolean };
 
   try {
@@ -58,10 +62,12 @@ export async function POST(req: Request) {
 
         const results = syncTree
           ? await syncNotionPageTree(pageId, {
+              userId: user.id,
               force,
               onEvent: (event) => streamEvent(controller, encoder, event),
             })
           : await syncNotionPages([pageId], {
+              userId: user.id,
               force,
               onEvent: (event) => streamEvent(controller, encoder, event),
             });

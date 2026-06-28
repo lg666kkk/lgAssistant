@@ -6,8 +6,9 @@
 
 CREATE TABLE IF NOT EXISTS agent_memories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- 业务 key：set(key)/get(key) 配对用。UNIQUE 保证同 key 只有一行（见决策1）
-  key TEXT NOT NULL UNIQUE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- 业务 key：set(key)/get(key) 配对用。同一用户内唯一。
+  key TEXT NOT NULL,
   -- layer：长期表当前恒为 'longterm'，但保留列以支持「多层共用一张表」（见决策2）
   layer TEXT NOT NULL DEFAULT 'longterm',
   content TEXT NOT NULL,                      -- 记忆正文
@@ -16,6 +17,8 @@ CREATE TABLE IF NOT EXISTS agent_memories (
   updated_at TIMESTAMPTZ DEFAULT NOW()        -- upsert 覆盖时更新（见决策3）
 );
 
--- key 已是 UNIQUE，Postgres 自动建唯一索引，get(key) 走索引
+ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_memories_user_key_unique_idx ON agent_memories (user_id, key);
 CREATE INDEX IF NOT EXISTS agent_memories_layer_idx ON agent_memories (layer);
+CREATE INDEX IF NOT EXISTS agent_memories_user_id_layer_idx ON agent_memories (user_id, layer);
 CREATE INDEX IF NOT EXISTS agent_memories_created_at_idx ON agent_memories (created_at);

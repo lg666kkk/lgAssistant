@@ -1,4 +1,4 @@
-import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy, type ToolExecutionContext } from "./types";
 import { ragConfig } from "@/lib/config";
 import { RAGRetriever } from "@/lib/server/retriever";
 type SearchNoteInput = {
@@ -45,7 +45,7 @@ export const searchNotesTool: ToolDefinition = {
     maxConcurrency: 4,
   },
   riskLevel: "safe",
-  execute: async (input: unknown): Promise<ToolResult> => {
+  execute: async (input: unknown, context?: ToolExecutionContext): Promise<ToolResult> => {
     const { query, limit } = parseInput(input);
     if (!query.trim()) {
       return {
@@ -59,6 +59,7 @@ export const searchNotesTool: ToolDefinition = {
       let response = await retriever.searchWithDebug(query, {
         matchThreshold: ragConfig.similarityThreshold,
         matchCount: limit ?? ragConfig.maxResults,
+        userId: context?.userId,
         enableMmr: true,
         enableQueryRewrite: true,
         enableRerank: true,
@@ -69,6 +70,7 @@ export const searchNotesTool: ToolDefinition = {
         response = await retriever.searchWithDebug(query, {
           matchThreshold: 0,
           matchCount: limit ?? ragConfig.maxResults,
+          userId: context?.userId,
           enableMmr: true,
           enableQueryRewrite: true,
           enableRerank: true,

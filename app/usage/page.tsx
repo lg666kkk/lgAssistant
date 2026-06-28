@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { authFetch } from "@/lib/auth/client";
 
 type UsageSummary = {
   model: string;
@@ -162,7 +164,7 @@ export default function UsagePage() {
       setRequestsLoading(true);
     }
 
-    fetch(`/api/usage?limit=1000&page=${page}&pageSize=${pageSize}`)
+    authFetch(`/api/usage?limit=1000&page=${page}&pageSize=${pageSize}`)
       .then(async (r) => {
         const payload = await r.json();
         if (!r.ok) throw new Error(payload.error || "加载失败");
@@ -177,7 +179,7 @@ export default function UsagePage() {
   }, [page]);
 
   useEffect(() => {
-    fetch("/api/deepseek/balance")
+    authFetch("/api/deepseek/balance")
       .then(async (r) => {
         const payload = await r.json();
         if (!r.ok) throw new Error(payload.error || "余额加载失败");
@@ -191,6 +193,7 @@ export default function UsagePage() {
   const primaryBalance = balance?.balance_infos?.[0];
 
   return (
+    <AuthGate>
     <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
@@ -387,5 +390,6 @@ export default function UsagePage() {
         )}
       </div>
     </div>
+    </AuthGate>
   );
 }

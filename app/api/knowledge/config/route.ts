@@ -1,6 +1,7 @@
 import { CHUNKER_VERSION } from "@/lib/server/chunking";
 import { EMBEDDING_MODEL } from "@/lib/server/embedding";
 import { deepseekConfig, ragConfig } from "@/lib/config";
+import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,10 @@ function has(value: string | undefined) {
   return Boolean(value && value.trim());
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const dashscopeBaseUrl =
     process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";

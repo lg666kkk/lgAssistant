@@ -6,6 +6,8 @@ dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 
 type RagPage = {
+  id: string;
+  user_id: string | null;
   page_id: string;
   page_title: string;
   chunk_count: number | null;
@@ -33,6 +35,7 @@ function printUsage() {
       "用法:",
       "  npm run rag:reset              # 预览将删除的 RAG 页面和 chunk",
       "  npm run rag:reset -- --confirm # 确认删除所有 RAG 页面和 chunk",
+      "  npm run rag:reset -- --user-id <uuid> --confirm # 只删除某个用户的 RAG 数据",
       "",
       "说明:",
       "  只清理 notion_pages 和 documents 两张 RAG 表。",
@@ -45,12 +48,16 @@ function printUsage() {
 function formatPage(page: RagPage) {
   const syncedAt = page.last_synced_at ?? "unknown";
   const chunkCount = page.chunk_count ?? 0;
-  return `- ${page.page_title} (${page.page_id}) chunks=${chunkCount} synced=${syncedAt}`;
+  const owner = page.user_id ? ` user=${page.user_id}` : "";
+  return `- ${page.page_title} (${page.page_id}) chunks=${chunkCount} synced=${syncedAt}${owner}`;
 }
 
 async function main() {
   const args = process.argv.slice(2);
   const confirm = args.includes("--confirm");
+  const userId = args.includes("--user-id")
+    ? args[args.indexOf("--user-id") + 1]
+    : process.env.DEFAULT_USER_ID;
 
   if (args.includes("--help") || args.includes("-h")) {
     printUsage();
@@ -59,10 +66,16 @@ async function main() {
 
   const supabase = createSupabaseClient();
 
-  const { data: pages, error } = await supabase
+  let pagesQuery = supabase
     .from("notion_pages")
-    .select("page_id,page_title,chunk_count,last_synced_at")
+    .select("id,user_id,page_id,page_title,chunk_count,last_synced_at")
     .order("last_synced_at", { ascending: false });
+
+  if (userId) {
+    pagesQuery = pagesQuery.eq("user_id", userId);
+  }
+
+  const { data: pages, error } = await pagesQuery;
 
   if (error) {
     throw new Error(`读取 RAG 页面失败: ${error.message}`);
@@ -100,7 +113,7 @@ async function main() {
     const { error: deleteError } = await supabase
       .from("notion_pages")
       .delete()
-      .eq("page_id", page.page_id);
+      .eq("id", page.id);
 
     if (deleteError) {
       throw new Error(`删除页面 ${page.page_id} 失败: ${deleteError.message}`);

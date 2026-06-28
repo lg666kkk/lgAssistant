@@ -1,4 +1,5 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
+import { getAccessToken, authFetch } from "./auth/client";
 import type { ChatModelId } from "./agent/models";
 import type { ModelUsageEventData } from "./agent/runtime/events";
 import type { AgentEvent } from "./agent/runtime/events";
@@ -112,6 +113,7 @@ export class ChatSession {
       this.abortController = new AbortController();
       this.streaming = true;
       onUpdate();
+      const accessToken = await getAccessToken();
 
       const last = () => this.messages[this.messages.length - 1];
 
@@ -140,7 +142,10 @@ export class ChatSession {
       await fetchEventSource("/api/chat", {
         method: "POST",
         openWhenHidden: true,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({
           messages: this.messages.slice(0, -1).map((msg) => ({
             role: msg.role,
@@ -259,7 +264,7 @@ export class ChatSession {
     const message = this.messages[messageIndex];
     const toolCall = message?.toolCalls?.[toolCallIndex];
     if (!message || !toolCall) return;
-    const response = await fetch("/api/tools/confirm", {
+    const response = await authFetch("/api/tools/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

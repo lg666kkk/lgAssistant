@@ -1,3 +1,5 @@
+import { requireUser } from "@/lib/auth/server";
+
 type DeepSeekBalanceInfo = {
   currency: string;
   total_balance: string;
@@ -10,7 +12,10 @@ type DeepSeekBalanceResponse = {
   balance_infos: DeepSeekBalanceInfo[];
 };
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
   const apiKey = process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return Response.json(

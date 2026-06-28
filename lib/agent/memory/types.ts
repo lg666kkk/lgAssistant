@@ -11,14 +11,14 @@ export interface MemoryRecord {
 }
 // 记忆的基类
 export interface MemoryStore {
-    set(key: string, content: string, metadata?: Record<string, unknown>): Promise<void>;
-    get(key: string): Promise<MemoryRecord | null>;
-    forget(key: string): Promise<void>;
-    list(limit?: number): Promise<MemoryRecord[]>;
+    set(key: string, content: string, metadata?: Record<string, unknown>, options?: { userId?: string }): Promise<void>;
+    get(key: string, options?: { userId?: string }): Promise<MemoryRecord | null>;
+    forget(key: string, options?: { userId?: string }): Promise<void>;
+    list(limit?: number, options?: { userId?: string }): Promise<MemoryRecord[]>;
 }
 
 export interface SemanticMemoryStore extends MemoryStore {
-    recall(query: string, limit?: number): Promise<MemoryRecord[]>;
+    recall(query: string, limit?: number, options?: { userId?: string }): Promise<MemoryRecord[]>;
 }
 
 // ── 会话记忆（Redis）────────────────────────────────────────────
@@ -31,9 +31,9 @@ export interface SessionMessage {
 
 export interface SessionStore {
   // 往会话历史追加一条消息
-  append(sessionId: string, message: SessionMessage): Promise<void>;
+  append(userId: string, sessionId: string, message: SessionMessage): Promise<void>;
   // 读出整个会话历史（按时间顺序）
-  getHistory(sessionId: string): Promise<SessionMessage[]>;
+  getHistory(userId: string, sessionId: string): Promise<SessionMessage[]>;
   // 清空会话（对话结束时调用）
-  clear(sessionId: string): Promise<void>;
+  clear(userId: string, sessionId: string): Promise<void>;
 }

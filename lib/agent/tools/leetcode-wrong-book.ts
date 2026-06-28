@@ -1,4 +1,4 @@
-import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy } from "./types";
+import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy, type ToolExecutionContext } from "./types";
 import {
   formatLeetCodeWrongProblems,
   getDueLeetCodeReviews,
@@ -109,7 +109,7 @@ export const leetCodeWrongBookTool: ToolDefinition = {
     additionalProperties: false,
   },
   riskLevel: "safe",
-  execute: async (input: unknown): Promise<ToolResult> => {
+  execute: async (input: unknown, context?: ToolExecutionContext): Promise<ToolResult> => {
     const parsed = parseInput(input);
 
     try {
@@ -117,7 +117,7 @@ export const leetCodeWrongBookTool: ToolDefinition = {
         const problems = await listLeetCodeWrongProblems({
           dueOnly: parsed.dueOnly ?? false,
           limit: parsed.limit ?? 20,
-        });
+        }, { userId: context?.userId });
         return {
           ok: true,
           content: formatLeetCodeWrongProblems(problems),
@@ -130,7 +130,7 @@ export const leetCodeWrongBookTool: ToolDefinition = {
       if (parsed.action === "due") {
         const problems = await getDueLeetCodeReviews({
           limit: parsed.limit ?? 10,
-        });
+        }, { userId: context?.userId });
         return {
           ok: true,
           content: formatLeetCodeWrongProblems(problems),
@@ -154,7 +154,7 @@ export const leetCodeWrongBookTool: ToolDefinition = {
           title: parsed.title,
           isCorrect: parsed.isCorrect,
           notes: parsed.notes,
-        });
+        }, { userId: context?.userId });
 
         return {
           ok: true,
@@ -169,7 +169,7 @@ export const leetCodeWrongBookTool: ToolDefinition = {
         wrongReason: parsed.wrongReason,
         notes: parsed.notes,
         solvedAt: parsed.solvedAt,
-      });
+      }, { userId: context?.userId });
 
       return {
         ok: true,

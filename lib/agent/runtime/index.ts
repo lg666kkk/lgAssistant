@@ -354,6 +354,7 @@ export async function executeTools(
   toolUses: ToolUseBlock[],
   toolRegistry: ToolRegistry,
   scopeId?: string,
+  userId?: string,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -368,6 +369,7 @@ export async function executeTools(
     toolUses,
     toolRegistry,
     scopeId,
+    userId,
   );
   for (const { toolUse, toolResult } of executionResults) {
     const durationMs =
@@ -507,6 +509,7 @@ async function executeToolUsesWithScheduler(
   toolUses: ToolUseBlock[],
   toolRegistry: ToolRegistry,
   scopeId?: string,
+  userId?: string,
 ) {
   type ScheduledToolUse = {
     index: number;
@@ -576,6 +579,7 @@ async function executeToolUsesWithScheduler(
               item.toolUse,
               toolRegistry,
               scopeId,
+              userId,
             ),
           })),
         )),
@@ -599,7 +603,7 @@ async function executeToolUsesWithScheduler(
     results.push({
       index: item.index,
       toolUse: item.toolUse,
-      toolResult: await executeSingleToolUse(item.toolUse, toolRegistry, scopeId),
+      toolResult: await executeSingleToolUse(item.toolUse, toolRegistry, scopeId, userId),
     });
   }
 
@@ -610,6 +614,7 @@ function executeSingleToolUse(
   toolUse: ToolUseBlock,
   toolRegistry: ToolRegistry,
   scopeId?: string,
+  userId?: string,
 ) {
   return executeToolCall(
     toolRegistry,
@@ -618,7 +623,7 @@ function executeSingleToolUse(
       input: toolUse.input,
       id: toolUse.id,
     },
-    { scopeId },
+    { scopeId, userId },
   );
 }
 
@@ -643,6 +648,7 @@ export async function runAgentLoop(
   model: ChatModelId = defaultChatModel,
   // system 对应的段化结构，仅用于写进 trace 供详情页按段展示；不影响实际注入（注入仍用 system 字符串）
   systemSegments?: Array<{ kind: string; title: string; content: string }>,
+  userId?: string,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -933,7 +939,7 @@ export async function runAgentLoop(
       toolCalls,
       toolMetrics,
       toolSteps,
-    } = await executeTools(toolUses, toolRegistry, sessionId ?? requestId);
+    } = await executeTools(toolUses, toolRegistry, sessionId ?? requestId, userId);
     if (shouldStop()) {
       return {
         loopMessages,

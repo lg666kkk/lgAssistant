@@ -8,6 +8,7 @@ import {
 } from "./hot-100";
 
 type WrongBookRow = {
+  user_id?: string | null;
   problem_id: number;
   title: string;
   slug: string;
@@ -192,16 +193,18 @@ async function writeLocalRows(rows: WrongBookRow[]): Promise<void> {
   await writeFile(LOCAL_STORAGE_FILE, JSON.stringify(rows, null, 2), "utf8");
 }
 
-async function getAllRows(): Promise<WrongBookRow[]> {
+async function getAllRows(userId?: string): Promise<WrongBookRow[]> {
   if (!hasSupabaseConfig()) {
     return readLocalRows();
   }
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from("leetcode_wrong_problems")
     .select("*")
     .order("next_review_at", { ascending: true })
     .order("updated_at", { ascending: false });
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`读取 LeetCode 错题本失败: ${error.message}`);
@@ -210,17 +213,18 @@ async function getAllRows(): Promise<WrongBookRow[]> {
   return normalizeRows(data ?? []);
 }
 
-async function getExistingRow(problemId: number): Promise<WrongBookRow | null> {
+async function getExistingRow(problemId: number, userId?: string): Promise<WrongBookRow | null> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalRows();
     return rows.find((row) => row.problem_id === problemId) ?? null;
   }
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from("leetcode_wrong_problems")
     .select("*")
-    .eq("problem_id", problemId)
-    .maybeSingle();
+    .eq("problem_id", problemId);
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(`读取 LeetCode 错题失败: ${error.message}`);
@@ -229,7 +233,7 @@ async function getExistingRow(problemId: number): Promise<WrongBookRow | null> {
   return data as WrongBookRow | null;
 }
 
-async function saveRow(row: WrongBookRow): Promise<WrongBookRow> {
+async function saveRow(row: WrongBookRow, userId?: string): Promise<WrongBookRow> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalRows();
     const index = rows.findIndex((item) => item.problem_id === row.problem_id);
@@ -246,7 +250,7 @@ async function saveRow(row: WrongBookRow): Promise<WrongBookRow> {
 
   const { data, error } = await getSupabase()
     .from("leetcode_wrong_problems")
-    .upsert(row, { onConflict: "problem_id" })
+    .upsert({ ...row, user_id: userId }, userId ? { onConflict: "user_id,problem_id" } : { onConflict: "problem_id" })
     .select("*")
     .single();
 
@@ -271,17 +275,23 @@ function isDue(row: WrongBookRow, now = new Date()): boolean {
   return new Date(row.next_review_at).getTime() <= now.getTime();
 }
 
-export async function recordLeetCodeWrongProblem(input: RecordWrongProblemInput): Promise<LeetCodeWrongProblem> {
+export async function recordLeetCodeWrongProblem(
+  input: RecordWrongProblemInput,
+  options: { userId?: string } = {},
+): Promise<LeetCodeWrongProblem> {
   const problem = getProblemFromInput(input);
-  const existing = await getExistingRow(problem.id);
+  const existing = await getExistingRow(problem.id, options.userId);
   const row = toRow(problem, input, existing ?? undefined);
-  const saved = await saveRow(row);
+  const saved = await saveRow(row, options.userId);
   return toWrongProblem(saved);
 }
 
-export async function markLeetCodeProblemReviewed(input: UpdateReviewInput): Promise<LeetCodeWrongProblem> {
+export async function markLeetCodeProblemReviewed(
+  input: UpdateReviewInput,
+  options: { userId?: string } = {},
+): Promise<LeetCodeWrongProblem> {
   const problem = getProblemFromInput(input);
-  const existing = await getExistingRow(problem.id);
+  const existing = await getExistingRow(problem.id, options.userId);
 
   if (!existing) {
     throw new Error("错题本里没有这道题，先记录为错题再复习");
@@ -301,23 +311,29 @@ export async function markLeetCodeProblemReviewed(input: UpdateReviewInput): Pro
     updated_at: now,
   };
 
-  const saved = await saveRow(row);
+  const saved = await saveRow(row, options.userId);
   return toWrongProblem(saved);
 }
 
-export async function listLeetCodeWrongProblems(input: QueryWrongProblemsInput = {}): Promise<LeetCodeWrongProblem[]> {
-  const rows = await getAllRows();
+export async function listLeetCodeWrongProblems(
+  input: QueryWrongProblemsInput = {},
+  options: { userId?: string } = {},
+): Promise<LeetCodeWrongProblem[]> {
+  const rows = await getAllRows(options.userId);
   const filtered = input.dueOnly ? rows.filter((row) => isDue(row)) : rows;
   const sorted = sortProblems(filtered);
   const limited = typeof input.limit === "number" && input.limit > 0 ? sorted.slice(0, input.limit) : sorted;
   return limited.map(toWrongProblem);
 }
 
-export async function getDueLeetCodeReviews(input: { limit?: number } = {}): Promise<LeetCodeWrongProblem[]> {
+export async function getDueLeetCodeReviews(
+  input: { limit?: number } = {},
+  options: { userId?: string } = {},
+): Promise<LeetCodeWrongProblem[]> {
   return listLeetCodeWrongProblems({
     dueOnly: true,
     limit: input.limit ?? 10,
-  });
+  }, options);
 }
 
 export function formatLeetCodeWrongProblems(problems: LeetCodeWrongProblem[]): string {
@@ -339,4 +355,3 @@ export function formatLeetCodeWrongProblems(problems: LeetCodeWrongProblem[]): s
 
   return lines;
 }
-

@@ -10,8 +10,9 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS agent_semantic_memories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- 业务 key：set(key)/get(key) 配对用，UNIQUE → set 走 upsert 覆盖（与长期表一致）
-  key TEXT NOT NULL UNIQUE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- 业务 key：set(key)/get(key) 配对用。同一用户内唯一。
+  key TEXT NOT NULL,
   layer TEXT NOT NULL DEFAULT 'semantic',
   content TEXT NOT NULL,                       -- 记忆正文（也是被 embedding 的文本）
   embedding VECTOR(1024) NOT NULL,             -- 1024 维：对齐 lib/server/embedding.ts 的 text-embedding-v4
@@ -27,7 +28,10 @@ ON agent_semantic_memories
 USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
 
--- key 已是 UNIQUE（自动建唯一索引），get(key) 走索引
+ALTER TABLE agent_semantic_memories ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_semantic_memories_user_key_unique_idx ON agent_semantic_memories (user_id, key);
+CREATE INDEX IF NOT EXISTS agent_semantic_memories_user_id_layer_idx
+ON agent_semantic_memories (user_id, layer);
 CREATE INDEX IF NOT EXISTS agent_semantic_memories_created_at_idx
 ON agent_semantic_memories (created_at);
 
@@ -35,10 +39,13 @@ ON agent_semantic_memories (created_at);
 -- 向量召回函数：给一个 query 向量，返回最相似的 N 条记忆
 -- 照抄 match_documents，去掉 JOIN（语义记忆是自包含的，不像 documents 要关联 pages）
 -- ============================================
+DROP FUNCTION IF EXISTS match_memories(VECTOR(1024), FLOAT, INT);
+
 CREATE OR REPLACE FUNCTION match_memories(
   query_embedding VECTOR(1024),
   match_threshold FLOAT DEFAULT 0.3,   -- 阈值比 documents(0.7) 低：记忆召回宁可多召不漏
-  match_count INT DEFAULT 5
+  match_count INT DEFAULT 5,
+  filter_user_id UUID DEFAULT NULL
 )
 RETURNS TABLE (
   id UUID,
@@ -63,7 +70,10 @@ BEGIN
     1 - (m.embedding <=> query_embedding) AS similarity  -- 余弦相似度：越大越像
   FROM agent_semantic_memories m
   WHERE 1 - (m.embedding <=> query_embedding) > match_threshold
+    AND (filter_user_id IS NULL OR m.user_id = filter_user_id)
   ORDER BY m.embedding <=> query_embedding              -- 距离升序 = 最像的在前
   LIMIT match_count;
 END;
 $$;
+
+COMMENT ON FUNCTION match_memories(VECTOR(1024), FLOAT, INT, UUID) IS '语义记忆向量召回函数';

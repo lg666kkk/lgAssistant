@@ -6,10 +6,10 @@ import type { SessionMessage, SessionStore } from "./types";
 // 这正是选 Redis 而不是 Postgres 的核心原因之一。
 const DEFAULT_TTL_SECONDS = 2 * 60 * 60; // 2h
 
-// Redis key 格式：session:{sessionId}:messages
+// Redis key 格式：session:{userId}:{sessionId}:messages
 // 加前缀是好习惯 —— 将来 Redis 里可能存其他东西，前缀防止 key 命名冲突
-function sessionKey(sessionId: string): string {
-  return `session:${sessionId}:messages`;
+function sessionKey(userId: string, sessionId: string): string {
+  return `session:${userId}:${sessionId}:messages`;
 }
 
 /**
@@ -43,8 +43,8 @@ export class RedisSessionStore implements SessionStore {
     });
   }
 
-  async append(sessionId: string, message: SessionMessage): Promise<void> {
-    const key = sessionKey(sessionId);
+  async append(userId: string, sessionId: string, message: SessionMessage): Promise<void> {
+    const key = sessionKey(userId, sessionId);
     // RPUSH：把消息序列化成 JSON 字符串追加到列表尾部
     // Redis List 天然有序（按插入顺序），不需要额外排序字段
     await this.client.rpush(key, JSON.stringify(message));
@@ -53,8 +53,8 @@ export class RedisSessionStore implements SessionStore {
     await this.client.expire(key, DEFAULT_TTL_SECONDS);
   }
 
-  async getHistory(sessionId: string): Promise<SessionMessage[]> {
-    const key = sessionKey(sessionId);
+  async getHistory(userId: string, sessionId: string): Promise<SessionMessage[]> {
+    const key = sessionKey(userId, sessionId);
     // LRANGE key 0 -1：读出列表从 0 到最后一个元素（即全部）
     // 返回的是字符串数组，每个元素是序列化的 JSON
     const items = await this.client.lrange(key, 0, -1);
@@ -62,9 +62,9 @@ export class RedisSessionStore implements SessionStore {
     return items.map((item) => JSON.parse(item) as SessionMessage);
   }
 
-  async clear(sessionId: string): Promise<void> {
+  async clear(userId: string, sessionId: string): Promise<void> {
     // DEL：直接删掉整个 key（列表），比逐条删快得多
-    await this.client.del(sessionKey(sessionId));
+    await this.client.del(sessionKey(userId, sessionId));
   }
 
   // 优雅关闭连接（进程退出时调用）

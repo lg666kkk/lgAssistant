@@ -25,12 +25,14 @@ export type WikiCompileEvent = {
 };
 
 export type WikiCompileOptions = {
+  userId?: string;
   pageIds?: string[];
   force?: boolean;
   onEvent?: (event: WikiCompileEvent) => void;
 };
 
 type SourcePage = {
+  id: string;
   page_id: string;
   page_title: string;
   page_url: string;
@@ -68,8 +70,12 @@ export async function compileWiki(options: WikiCompileOptions = {}) {
 
   let query = supabase
     .from("notion_pages")
-    .select("page_id,page_title,page_url,last_synced_at,metadata")
+    .select("id,page_id,page_title,page_url,last_synced_at,metadata")
     .order("last_synced_at", { ascending: false });
+
+  if (options.userId) {
+    query = query.eq("user_id", options.userId);
+  }
 
   if (options.pageIds?.length) {
     query = query.in("page_id", options.pageIds);
@@ -112,12 +118,17 @@ export async function compileWiki(options: WikiCompileOptions = {}) {
 
 async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
   const supabase = getSupabase();
-  const { data: docs, error: docsError } = await supabase
+  let docsQuery = supabase
     .from("documents")
     .select("id,page_id,chunk_index,content,metadata")
-    .eq("page_id", page.page_id)
+    .eq("notion_page_id", page.id)
     .order("chunk_index", { ascending: true });
 
+  if (options.userId) {
+    docsQuery = docsQuery.eq("user_id", options.userId);
+  }
+
+  const { data: docs, error: docsError } = await docsQuery;
   if (docsError) throw new Error(`读取 chunks 失败: ${docsError.message}`);
 
   const documents = (docs ?? []) as SourceDocument[];
@@ -139,11 +150,16 @@ async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
     metadata: { sourceChars: sourceText.length },
   });
 
-  const { data: existing, error: existingError } = await supabase
+  let existingQuery = supabase
     .from("compiled_wiki_pages")
     .select("slug,content_hash")
-    .eq("slug", slug)
-    .maybeSingle();
+    .eq("slug", slug);
+
+  if (options.userId) {
+    existingQuery = existingQuery.eq("user_id", options.userId);
+  }
+
+  const { data: existing, error: existingError } = await existingQuery.maybeSingle();
 
   if (existingError) throw new Error(`读取编译页失败: ${existingError.message}`);
 
@@ -182,6 +198,7 @@ async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
     .upsert(
       {
         slug: normalized.slug,
+        user_id: options.userId,
         title: normalized.title,
         summary: normalized.summary,
         content: normalized.content,
@@ -196,7 +213,7 @@ async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
         },
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "slug" },
+      options.userId ? { onConflict: "user_id,slug" } : { onConflict: "slug" },
     );
 
   if (upsertError) throw new Error(`写入 wiki 页面失败: ${upsertError.message}`);
@@ -210,10 +227,15 @@ async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
     metadata: { concepts: normalized.concepts },
   });
 
-  await supabase.from("compiled_wiki_edges").delete().eq("from_slug", normalized.slug);
+  let deleteEdgesQuery = supabase.from("compiled_wiki_edges").delete().eq("from_slug", normalized.slug);
+  if (options.userId) {
+    deleteEdgesQuery = deleteEdgesQuery.eq("user_id", options.userId);
+  }
+  await deleteEdgesQuery;
   const edgeRows = normalized.links
     .filter((link) => link.target && link.relation)
     .map((link) => ({
+      user_id: options.userId,
       from_slug: normalized.slug,
       to_label: link.target.slice(0, 120),
       relation: link.relation.slice(0, 120),

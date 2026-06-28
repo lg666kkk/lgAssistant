@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/lib/auth/auth-gate";
+import { authFetch } from "@/lib/auth/client";
 
 type KnowledgePage = {
   page_id: string;
@@ -108,12 +110,12 @@ export default function KnowledgePage() {
     setLoading(true);
     setError(null);
     Promise.all([
-      fetch("/api/knowledge/pages", { cache: "no-store" }).then(async (response) => {
+      authFetch("/api/knowledge/pages", { cache: "no-store" }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "加载失败");
         return data;
       }),
-      fetch("/api/knowledge/wiki", { cache: "no-store" }).then(async (response) => {
+      authFetch("/api/knowledge/wiki", { cache: "no-store" }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "加载编译知识库失败");
         return data;
@@ -142,7 +144,7 @@ export default function KnowledgePage() {
     setSyncEvents([]);
 
     try {
-      const response = await fetch("/api/knowledge/sync", {
+      const response = await authFetch("/api/knowledge/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input, tree: syncTree, force: syncForce }),
@@ -196,7 +198,7 @@ export default function KnowledgePage() {
     setCompileEvents([]);
 
     try {
-      const response = await fetch("/api/knowledge/wiki/compile", {
+      const response = await authFetch("/api/knowledge/wiki/compile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force: compileForce }),
@@ -251,6 +253,7 @@ export default function KnowledgePage() {
     .find((event) => event.type === "page_start" || event.type === "page_read" || event.type === "chunking_start" || event.type === "embedding_start" || event.type.startsWith("db_"));
 
   return (
+    <AuthGate>
     <div className="h-screen overflow-y-auto bg-zinc-950 text-zinc-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">
@@ -605,5 +608,6 @@ export default function KnowledgePage() {
         )}
       </div>
     </div>
+    </AuthGate>
   );
 }

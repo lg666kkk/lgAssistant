@@ -8,6 +8,7 @@ import {
 } from "./hot-100";
 
 type PracticeRow = {
+  user_id?: string | null;
   practice_date: string;
   round_no: number;
   problem_ids: number[];
@@ -83,17 +84,18 @@ async function writeLocalPracticeRows(rows: PracticeRow[]): Promise<void> {
   await writeFile(LOCAL_STORAGE_FILE, JSON.stringify(rows, null, 2), "utf8");
 }
 
-async function getExistingPractice(date: string): Promise<PracticeRow | null> {
+async function getExistingPractice(date: string, userId?: string): Promise<PracticeRow | null> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalPracticeRows();
     return rows.find((row) => row.practice_date === date) ?? null;
   }
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from("leetcode_daily_practices")
     .select("practice_date, round_no, problem_ids, created_at")
-    .eq("practice_date", date)
-    .maybeSingle();
+    .eq("practice_date", date);
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(`读取 LeetCode 每日练习失败: ${error.message}`);
@@ -102,18 +104,19 @@ async function getExistingPractice(date: string): Promise<PracticeRow | null> {
   return data as PracticeRow | null;
 }
 
-async function getLatestPractice(): Promise<PracticeRow | null> {
+async function getLatestPractice(userId?: string): Promise<PracticeRow | null> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalPracticeRows();
     return rows.sort((a, b) => b.practice_date.localeCompare(a.practice_date))[0] ?? null;
   }
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from("leetcode_daily_practices")
     .select("practice_date, round_no, problem_ids, created_at")
     .order("practice_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(`读取 LeetCode 最新练习失败: ${error.message}`);
@@ -122,7 +125,7 @@ async function getLatestPractice(): Promise<PracticeRow | null> {
   return data as PracticeRow | null;
 }
 
-async function getRowsInRound(roundNo: number): Promise<PracticeRow[]> {
+async function getRowsInRound(roundNo: number, userId?: string): Promise<PracticeRow[]> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalPracticeRows();
     return rows
@@ -130,11 +133,13 @@ async function getRowsInRound(roundNo: number): Promise<PracticeRow[]> {
       .sort((a, b) => a.practice_date.localeCompare(b.practice_date));
   }
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from("leetcode_daily_practices")
     .select("practice_date, round_no, problem_ids, created_at")
     .eq("round_no", roundNo)
     .order("practice_date", { ascending: true });
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`读取 LeetCode 练习轮次失败: ${error.message}`);
@@ -143,7 +148,7 @@ async function getRowsInRound(roundNo: number): Promise<PracticeRow[]> {
   return (data ?? []) as PracticeRow[];
 }
 
-async function createPractice(row: PracticeRow): Promise<PracticeRow> {
+async function createPractice(row: PracticeRow, userId?: string): Promise<PracticeRow> {
   if (!hasSupabaseConfig()) {
     const rows = await readLocalPracticeRows();
     if (rows.some((item) => item.practice_date === row.practice_date)) {
@@ -160,13 +165,13 @@ async function createPractice(row: PracticeRow): Promise<PracticeRow> {
 
   const { data, error } = await getSupabase()
     .from("leetcode_daily_practices")
-    .insert(row)
+    .insert({ ...row, user_id: userId })
     .select("practice_date, round_no, problem_ids, created_at")
     .single();
 
   if (error) {
     if (error.code === "23505") {
-      const createdByConcurrentRequest = await getExistingPractice(row.practice_date);
+      const createdByConcurrentRequest = await getExistingPractice(row.practice_date, userId);
       if (createdByConcurrentRequest) {
         return createdByConcurrentRequest;
       }
@@ -195,21 +200,22 @@ export async function getDailyLeetCodePractice(options: {
   date?: Date;
   timeZone?: string;
   count?: number;
+  userId?: string;
 } = {}): Promise<DailyLeetCodePractice> {
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
   const count = options.count ?? DEFAULT_DAILY_COUNT;
   const practiceDate = getDateInTimeZone(options.date ?? new Date(), timeZone);
-  const existingPractice = await getExistingPractice(practiceDate);
+  const existingPractice = await getExistingPractice(practiceDate, options.userId);
 
   if (existingPractice) {
-    const roundRows = await getRowsInRound(existingPractice.round_no);
+    const roundRows = await getRowsInRound(existingPractice.round_no, options.userId);
     const usedIds = roundRows.flatMap((row) => row.problem_ids);
     return toPracticeResult(existingPractice, usedIds);
   }
 
-  const latestPractice = await getLatestPractice();
+  const latestPractice = await getLatestPractice(options.userId);
   let roundNo = latestPractice?.round_no ?? 1;
-  let roundRows = await getRowsInRound(roundNo);
+  let roundRows = await getRowsInRound(roundNo, options.userId);
   let usedIds = new Set(roundRows.flatMap((row) => row.problem_ids));
 
   if (usedIds.size >= LEETCODE_HOT_100_TOTAL) {
@@ -226,7 +232,7 @@ export async function getDailyLeetCodePractice(options: {
     practice_date: practiceDate,
     round_no: roundNo,
     problem_ids: selectedIds,
-  });
+  }, options.userId);
   const currentUsedIds = Array.from(usedIds).concat(selectedIds);
   return toPracticeResult(createdPractice, currentUsedIds);
 }
