@@ -7,11 +7,14 @@
     "build": "next build",
     "rag:sync": "tsx scripts/rag-sync.ts",
     "rag:search": "tsx scripts/rag-search.ts",
+    "rag:reset": "tsx scripts/rag-reset.ts",
+    "wiki:compile": "tsx scripts/wiki-compile.ts",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:eval": "vitest run lib/agent/eval"
+    "test:eval": "vitest run lib/agent/eval",
+    "test:rag": "tsx scripts/rag-eval.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.73",

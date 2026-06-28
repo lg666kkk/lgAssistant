@@ -56,16 +56,24 @@ export const searchNotesTool: ToolDefinition = {
     }
     try {
       const retriever = new RAGRetriever();
-      let results = await retriever.search(query, {
+      let response = await retriever.searchWithDebug(query, {
         matchThreshold: ragConfig.similarityThreshold,
         matchCount: limit ?? ragConfig.maxResults,
+        enableMmr: true,
+        enableQueryRewrite: true,
+        enableRerank: true,
       });
+      let results = response.results;
 
       if (results.length === 0) {
-        results = await retriever.search(query, {
+        response = await retriever.searchWithDebug(query, {
           matchThreshold: 0,
           matchCount: limit ?? ragConfig.maxResults,
+          enableMmr: true,
+          enableQueryRewrite: true,
+          enableRerank: true,
         });
+        results = response.results;
       }
 
       if (results.length === 0) {
@@ -75,6 +83,7 @@ export const searchNotesTool: ToolDefinition = {
           data: {
             query,
             results: [],
+            debug: response.debug,
           },
         };
       }
@@ -90,6 +99,10 @@ export const searchNotesTool: ToolDefinition = {
         data: {
           query,
           results,
+          debug: response.debug,
+        },
+        metadata: {
+          rag: response.debug,
         },
       };
     } catch (error) {

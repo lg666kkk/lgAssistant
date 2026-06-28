@@ -82,6 +82,11 @@ interface DocContent {
   pageId?: unknown;
   pageUrl?: unknown;
   similarity?: unknown;
+  vectorScore?: unknown;
+  keywordScore?: unknown;
+  combinedScore?: unknown;
+  rerankScore?: unknown;
+  headingPath?: unknown;
   content?: unknown;
 }
 
@@ -204,7 +209,7 @@ function shapeWebSearchContent(toolResult: Awaited<ReturnType<typeof executeTool
     return undefined;
   }
 
-  const data = toolResult.data as WebSearchContent;
+      const data = toolResult.data as WebSearchContent;
   const results = data.response?.results ?? [];
   if (!Array.isArray(results) || results.length === 0) return undefined;
 
@@ -238,13 +243,23 @@ function shapeSearchNotesContent(toolResult: Awaited<ReturnType<typeof executeTo
       const doc = result as DocContent;
       const title = typeof doc.pageTitle === "string" ? doc.pageTitle : "(无标题)";
       const url = typeof doc.pageUrl === "string" ? doc.pageUrl : "";
+      const headingPath = Array.isArray(doc.headingPath)
+        ? doc.headingPath.filter((v): v is string => typeof v === "string")
+        : [];
       const similarity =
         typeof doc.similarity === "number" ? `相似度：${doc.similarity.toFixed(3)}` : undefined;
+      const scores = [
+        typeof doc.vectorScore === "number" ? `向量：${doc.vectorScore.toFixed(3)}` : undefined,
+        typeof doc.keywordScore === "number" ? `关键词：${doc.keywordScore.toFixed(3)}` : undefined,
+        typeof doc.rerankScore === "number" ? `精排：${doc.rerankScore.toFixed(3)}` : undefined,
+      ].filter(Boolean).join(" / ");
       const content = typeof doc.content === "string" ? compactTextPrefix(doc.content, 700) : "";
       return [
         `${index + 1}. ${title}`,
+        headingPath.length > 0 ? `位置：${headingPath.join(" / ")}` : undefined,
         url ? `链接：${url}` : undefined,
         similarity,
+        scores ? `分数：${scores}` : undefined,
         content ? `摘录：${content}` : undefined,
       ]
         .filter((item) => item !== undefined)
@@ -475,6 +490,7 @@ export async function executeTools(
       rawContentTruncated: rawPreview.truncated,
       rawContentOriginalChars: rawPreview.originalChars,
       error: toolResult.error,
+      metadata: toolResult.metadata,
       costPerUse,
     });
   }

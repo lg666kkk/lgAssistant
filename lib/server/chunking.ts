@@ -1,7 +1,14 @@
 /**
  * 文本切块模块
- * 用于将长文本切分成适合向量化的小块
+ * 用于将长文本切分成适合向量化的小块。
+ *
+ * 设计目标：
+ * 1. 优先保留标题/段落/列表结构，而不是从任意字符处硬切。
+ * 2. 每个 chunk 携带 headingPath，后续可用于引用、过滤、重排。
+ * 3. 对超长段落保留字符级兜底，避免异常长文本撑爆 embedding 输入。
  */
+
+export const CHUNKER_VERSION = 'recursive-heading-v1';
 
 /**
  * 文本块
@@ -11,13 +18,14 @@ export interface TextChunk {
   index: number;
   startChar: number;
   endChar: number;
+  headingPath: string[];
 }
 
 /**
  * 切块配置
  */
 export interface ChunkOptions {
-  chunkSize?: number;      // 每块的字符数（默认 500）
+  chunkSize?: number;      // 每块的目标字符数（默认 700）
   overlap?: number;         // 重叠字符数（默认 50）
   minChunkSize?: number;    // 最小块大小（默认 100）
 }
@@ -33,7 +41,7 @@ export function chunkText(
   options: ChunkOptions = {}
 ): TextChunk[] {
   const {
-    chunkSize = 500,
+    chunkSize = 700,
     overlap = 50,
     minChunkSize = 100,
   } = options;
@@ -53,41 +61,130 @@ export function chunkText(
         index: 0,
         startChar: 0,
         endChar: cleanText.length,
+        headingPath: inferHeadingPath(cleanText),
       },
     ];
   }
 
   const chunks: TextChunk[] = [];
-  let startChar = 0;
-  let chunkIndex = 0;
+  const blocks = splitStructuredBlocks(cleanText);
+  let currentText = '';
+  let currentStart = 0;
+  let currentEnd = 0;
+  let currentHeadingPath: string[] = [];
 
-  while (startChar < cleanText.length) {
-    // 计算当前块的结束位置
-    let endChar = Math.min(startChar + chunkSize, cleanText.length);
+  const pushCurrent = () => {
+    const text = currentText.trim();
+    if (text.length >= minChunkSize) {
+      chunks.push({
+        text,
+        index: chunks.length,
+        startChar: currentStart,
+        endChar: currentEnd,
+        headingPath: currentHeadingPath,
+      });
+    }
+    currentText = '';
+  };
 
-    // 如果不是最后一块，尝试在句子边界处切分
-    if (endChar < cleanText.length) {
-      endChar = findBestSplitPoint(cleanText, startChar, endChar);
+  for (const block of blocks) {
+    if (block.text.length > chunkSize * 1.5) {
+      pushCurrent();
+      const fallbackChunks = chunkByCharacters(block.text, {
+        chunkSize,
+        overlap,
+        minChunkSize,
+        offset: block.startChar,
+        headingPath: block.headingPath,
+        startIndex: chunks.length,
+      });
+      chunks.push(...fallbackChunks);
+      continue;
     }
 
-    // 提取文本块
-    const chunkText = cleanText.substring(startChar, endChar).trim();
+    const separator = currentText ? '\n\n' : '';
+    const nextText = `${currentText}${separator}${block.text}`;
+    if (currentText && nextText.length > chunkSize) {
+      pushCurrent();
+    }
 
-    // 只保留足够长的块
-    if (chunkText.length >= minChunkSize) {
+    if (!currentText) {
+      currentStart = block.startChar;
+      currentHeadingPath = block.headingPath;
+    }
+    currentText = currentText ? `${currentText}\n\n${block.text}` : block.text;
+    currentEnd = block.endChar;
+  }
+
+  pushCurrent();
+
+  return chunks.map((chunk, index) => ({ ...chunk, index }));
+}
+
+type StructuredBlock = {
+  text: string;
+  startChar: number;
+  endChar: number;
+  headingPath: string[];
+};
+
+function splitStructuredBlocks(text: string): StructuredBlock[] {
+  const blocks: StructuredBlock[] = [];
+  const headings: string[] = [];
+  const pattern = /[^\n]+(?:\n(?!\n)[^\n]+)*/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    const raw = match[0].trim();
+    if (!raw) continue;
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(raw.split('\n')[0].trim());
+    if (heading) {
+      const level = heading[1].length;
+      headings.length = level - 1;
+      headings[level - 1] = heading[2].trim();
+    }
+
+    blocks.push({
+      text: raw,
+      startChar: match.index,
+      endChar: match.index + match[0].length,
+      headingPath: headings.filter(Boolean),
+    });
+  }
+
+  return blocks;
+}
+
+function chunkByCharacters(
+  text: string,
+  options: Required<ChunkOptions> & {
+    offset: number;
+    headingPath: string[];
+    startIndex: number;
+  },
+): TextChunk[] {
+  const chunks: TextChunk[] = [];
+  let startChar = 0;
+
+  while (startChar < text.length) {
+    let endChar = Math.min(startChar + options.chunkSize, text.length);
+    if (endChar < text.length) {
+      endChar = findBestSplitPoint(text, startChar, endChar);
+    }
+
+    const chunkText = text.substring(startChar, endChar).trim();
+    if (chunkText.length >= options.minChunkSize) {
       chunks.push({
         text: chunkText,
-        index: chunkIndex,
-        startChar,
-        endChar,
+        index: options.startIndex + chunks.length,
+        startChar: options.offset + startChar,
+        endChar: options.offset + endChar,
+        headingPath: options.headingPath,
       });
-      chunkIndex++;
     }
 
-    // 移动到下一块的起始位置（考虑重叠）
-    const nextStart = endChar - overlap;
-
-    // 避免无限循环：确保每次都向前移动
+    const nextStart = endChar - options.overlap;
     if (nextStart <= startChar) {
       startChar = endChar;
     } else {
@@ -96,6 +193,18 @@ export function chunkText(
   }
 
   return chunks;
+}
+
+function inferHeadingPath(text: string): string[] {
+  const headings: string[] = [];
+  for (const line of text.split('\n')) {
+    const match = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    if (!match) continue;
+    const level = match[1].length;
+    headings.length = level - 1;
+    headings[level - 1] = match[2].trim();
+  }
+  return headings.filter(Boolean);
 }
 
 /**

@@ -5,6 +5,8 @@
 
 import OpenAI from 'openai';
 
+export const EMBEDDING_MODEL = 'text-embedding-v4';
+
 /**
  * Embedding 客户端类
  * 封装了向量生成的所有操作
@@ -27,7 +29,7 @@ export class EmbeddingClient {
       baseURL: baseURL || 'https://dashscope.aliyuncs.com/compatible-mode/v1'
     });
 
-    this.model = 'text-embedding-v4';
+    this.model = EMBEDDING_MODEL;
   }
 
   /**

@@ -22,6 +22,10 @@ export interface NotionPageInfo {
   lastEditedTime: string;
 }
 
+export interface NotionPageTreeItem extends NotionPageInfo {
+  depth: number;
+}
+
 /**
  * Notion 客户端类
  */
@@ -68,7 +72,11 @@ export class NotionClient {
   /**
    * 获取页面的所有 blocks（内容块）
    */
-  async getPageBlocks(pageId: string, depth = 0): Promise<NotionBlockWithDepth[]> {
+  async getPageBlocks(
+    pageId: string,
+    depth = 0,
+    includeChildPageContent = false,
+  ): Promise<NotionBlockWithDepth[]> {
     if (depth >= MAX_BLOCK_DEPTH) {
       return [];
     }
@@ -87,8 +95,14 @@ export class NotionClient {
       for (const block of response.results) {
         blocks.push({ block, depth });
 
-        if ('has_children' in block && block.has_children && 'id' in block) {
-          const childBlocks = await this.getPageBlocks(block.id, depth + 1);
+        const shouldReadChildren =
+          'has_children' in block &&
+          block.has_children &&
+          'id' in block &&
+          (includeChildPageContent || block.type !== 'child_page');
+
+        if (shouldReadChildren) {
+          const childBlocks = await this.getPageBlocks(block.id, depth + 1, includeChildPageContent);
           blocks.push(...childBlocks);
         }
       }
@@ -154,6 +168,9 @@ export class NotionClient {
       case 'divider':
         return '\n---\n';
 
+      case 'child_page':
+        return content?.title ? `${indent}- [子页面] ${content.title}` : '';
+
       default:
         // 不支持的 block 类型（如图片、文件等）
         return '';
@@ -198,5 +215,33 @@ export class NotionClient {
       ...info,
       content,
     };
+  }
+
+  /**
+   * 获取页面及其下级 child_page 页面树。
+   */
+  async getPageTree(pageId: string, maxDepth = 8): Promise<NotionPageTreeItem[]> {
+    const visited = new Set<string>();
+    const pages: NotionPageTreeItem[] = [];
+
+    const visit = async (currentPageId: string, depth: number) => {
+      if (depth > maxDepth || visited.has(currentPageId)) {
+        return;
+      }
+
+      visited.add(currentPageId);
+      const info = await this.getPageInfo(currentPageId);
+      pages.push({ ...info, depth });
+
+      const blocks = await this.getPageBlocks(currentPageId, 0, false);
+      for (const { block } of blocks) {
+        if (block.type === 'child_page' && 'id' in block) {
+          await visit(block.id, depth + 1);
+        }
+      }
+    };
+
+    await visit(pageId, 0);
+    return pages;
   }
 }

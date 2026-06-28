@@ -75,14 +75,22 @@ async function main() {
   }
 
   const retriever = new RAGRetriever();
-  const results = await retriever.search(options.query, {
+  const response = await retriever.searchWithDebug(options.query, {
     matchThreshold: options.threshold,
     matchCount: options.limit,
+    enableQueryRewrite: true,
+    enableMmr: true,
+    enableRerank: true,
   });
+  const { results, debug } = response;
 
   console.log(`查询: ${options.query}`);
+  if (debug.rewrittenQueries.length > 1) {
+    console.log(`改写: ${debug.rewrittenQueries.join(" | ")}`);
+  }
   console.log(`阈值: ${options.threshold}`);
-  console.log(`数量: ${options.limit}`);
+  console.log(`候选: ${debug.candidateCount}`);
+  console.log(`数量: ${debug.returnedCount}/${options.limit}`);
   console.log("");
 
   if (results.length === 0) {
@@ -93,7 +101,12 @@ async function main() {
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     console.log(`#${index + 1} ${result.pageTitle}`);
-    console.log(`相似度: ${result.similarity.toFixed(3)}`);
+    console.log(
+      `分数: sim=${result.similarity.toFixed(3)} vector=${result.vectorScore.toFixed(3)} keyword=${result.keywordScore.toFixed(3)} rerank=${(result.rerankScore ?? result.combinedScore).toFixed(3)}`,
+    );
+    if (result.headingPath.length > 0) {
+      console.log(`位置: ${result.headingPath.join(" / ")}`);
+    }
     console.log(`链接: ${result.pageUrl}`);
     console.log(`Page ID: ${result.pageId}`);
     console.log(`摘录: ${compactExcerpt(result.content)}`);

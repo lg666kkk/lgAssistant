@@ -52,6 +52,7 @@ type ToolStep = {
   rawContentTruncated?: boolean;
   rawContentOriginalChars?: number;
   error?: string;
+  metadata?: Record<string, unknown>;
   costPerUse: number;
 };
 
@@ -399,6 +400,12 @@ export default function TraceDetailPage({
                               ? `（${step.rawContentOriginalChars} 字符已截断）`
                               : undefined
                           }
+                        />
+                      )}
+                      {step.metadata && (
+                        <Collapsible
+                          label="工具 metadata"
+                          body={toText(step.metadata)}
                         />
                       )}
                       {step.error && (

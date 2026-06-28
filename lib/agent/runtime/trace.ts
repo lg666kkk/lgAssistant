@@ -49,6 +49,7 @@ export type ToolTraceStep = TraceStepBase & {
   rawContentTruncated?: boolean;
   rawContentOriginalChars?: number;
   error?: string;
+  metadata?: Record<string, unknown>;
   costPerUse: number;
 };
 
