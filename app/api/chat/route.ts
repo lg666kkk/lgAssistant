@@ -7,7 +7,6 @@ import {
   forwardTextStream,
 } from "@/lib/agent/runtime";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
-import { formatTraceTree } from "@/lib/agent/runtime/trace";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
@@ -20,6 +19,28 @@ import { RAGRetriever } from "@/lib/server/retriever";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
+const SESSION_FALLBACK_MESSAGE_LIMIT = 15;
+
+type SessionHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+function previewLoopMessages(messages: Array<{ role: string; content: unknown }>) {
+  return messages.map((message, index) => {
+    const content =
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content);
+
+    return {
+      index,
+      role: message.role,
+      chars: content.length,
+      preview: content.slice(0, 300),
+    };
+  });
+}
 
 function shouldAutoSearchKnowledge(query: string) {
   const text = query.trim();
@@ -46,6 +67,82 @@ function shouldAutoSearchKnowledge(query: string) {
   ];
 
   return knowledgeSignals.some((signal) => lower.includes(signal.toLowerCase()));
+}
+
+async function persistSessionTurn(input: {
+  userId: string;
+  sessionId?: string;
+  userMessage?: string;
+  assistantMessage?: string;
+}) {
+  if (!input.sessionId) return;
+
+  if (input.userMessage?.trim()) {
+    await sessionStore.append(input.userId, input.sessionId, {
+      role: "user",
+      content: input.userMessage,
+    });
+  }
+
+  if (input.assistantMessage?.trim()) {
+    await sessionStore.append(input.userId, input.sessionId, {
+      role: "assistant",
+      content: input.assistantMessage,
+    });
+  }
+}
+
+function extractLastAssistantText(messages: unknown[]) {
+  return [...messages]
+    .reverse()
+    .reduce((found: string, m: any) => {
+      if (found || m.role !== "assistant") return found;
+      const text = Array.isArray(m.content)
+        ? m.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
+        : typeof m.content === "string" ? m.content : "";
+      return text || found;
+    }, "");
+}
+
+async function restoreSessionHistoryFromDatabase(input: {
+  userId: string;
+  sessionId?: string;
+}): Promise<SessionHistoryMessage[]> {
+  if (!input.sessionId) return [];
+
+  const { data, error } = await getSupabase()
+    .from("messages")
+    .select("role,content,created_at")
+    .eq("user_id", input.userId)
+    .eq("session_id", input.sessionId)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .limit(SESSION_FALLBACK_MESSAGE_LIMIT);
+
+  if (error) {
+    throw new Error(`从数据库恢复会话历史失败: ${error.message}`);
+  }
+
+  return (data ?? [])
+    .reverse()
+    .filter((message: any) => typeof message.content === "string")
+    .map((message: any) => ({
+      role: message.role as "user" | "assistant",
+      content: message.content as string,
+    }));
+}
+
+async function hydrateRedisSessionHistory(input: {
+  userId: string;
+  sessionId?: string;
+  history: SessionHistoryMessage[];
+}) {
+  if (!input.sessionId || input.history.length === 0) return;
+
+  await sessionStore.clear(input.userId, input.sessionId);
+  for (const message of input.history) {
+    await sessionStore.append(input.userId, input.sessionId, message);
+  }
 }
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
@@ -146,7 +243,29 @@ export async function POST(req: Request) {
         let loopMessages = [...modelMessages];
         if (sessionId && messages.length === 1) {
           try {
-            const history = await sessionStore.getHistory(user.id, sessionId);
+            let history = await sessionStore.getHistory(user.id, sessionId);
+            if (history.length === 0) {
+              const restoredHistory = await restoreSessionHistoryFromDatabase({
+                userId: user.id,
+                sessionId,
+              });
+              if (restoredHistory.length > 0) {
+                const currentUserContent = modelMessages[0]?.content;
+                history = restoredHistory.filter(
+                  (message, index) =>
+                    !(
+                      index === restoredHistory.length - 1 &&
+                      message.role === "user" &&
+                      message.content === currentUserContent
+                    ),
+                );
+                await hydrateRedisSessionHistory({
+                  userId: user.id,
+                  sessionId,
+                  history,
+                });
+              }
+            }
             if (history.length > 0) {
               // 把 Redis 里的历史拼在本轮消息前面
               loopMessages = [...history, ...modelMessages];
@@ -155,6 +274,8 @@ export async function POST(req: Request) {
             console.error("[session] 读取历史失败，跳过:", e.message);
           }
         }
+
+        console.log("[chat] loopMessages 实际发送给 Agent:", previewLoopMessages(loopMessages));
 
         let allToolSources: ToolSourceType[] = [];
 
@@ -253,14 +374,9 @@ export async function POST(req: Request) {
           systemSegments, // 段化结构，写进 trace 供详情页按段展示
           user.id,
         );
-        console.log(
-          "=== Agent Loop Trace ===",
-          formatTraceTree(agentLoopResult.trace),
-        );
         void saveTrace(agentLoopResult.trace, user.id).catch((e: any) =>
           console.error("[trace] 保存失败，跳过:", e.message),
         );
-        console.log("[AgentLoopMetrics]", agentLoopResult.metrics);
         loopMessages = agentLoopResult.loopMessages;
 
         // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
@@ -268,32 +384,17 @@ export async function POST(req: Request) {
           console.error("[consolidate] 失败:", e.message),
         );
 
-        // ④ 会话记忆写入：非关键路径，失败不应中断已生成的流式回答。
-        if (sessionId) {
-          void (async () => {
-            const lastUser2 = [...messages].reverse().find((m: any) => m.role === "user");
-            if (lastUser2) {
-              await sessionStore.append(user.id, sessionId, { role: "user", content: lastUser2.content });
-            }
-            // 取最后一条有 text 内容的 assistant 消息（thinking 模式工具调用轮没有 text）
-            const assistantText = [...agentLoopResult.loopMessages]
-              .reverse()
-              .reduce((found: string, m: any) => {
-                if (found || m.role !== "assistant") return found;
-                const text = Array.isArray(m.content)
-                  ? m.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
-                  : typeof m.content === "string" ? m.content : "";
-                return text || found;
-              }, "");
-            if (assistantText) {
-              await sessionStore.append(user.id, sessionId, { role: "assistant", content: assistantText });
-            }
-          })().catch((e: any) =>
-            console.error("[session] 写入历史失败:", e.message),
-          );
-        }
+        const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user")?.content;
 
         if (agentLoopResult.completed) {
+          void persistSessionTurn({
+            userId: user.id,
+            sessionId,
+            userMessage: lastUserMessage,
+            assistantMessage: extractLastAssistantText(agentLoopResult.loopMessages),
+          }).catch((e: any) =>
+            console.error("[session] 写入历史失败:", e.message),
+          );
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
@@ -307,6 +408,7 @@ export async function POST(req: Request) {
         } else if (agentLoopResult.stopReason === "repeated_tool_call") {
           enqueueTextEvent("\n\n检测到重复工具调用，我会基于当前结果总结。\n\n");
         }
+        let finalAssistantText = "";
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
         stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel);
@@ -315,7 +417,10 @@ export async function POST(req: Request) {
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
         const finalStopReason = await forwardTextStream(
           stream,
-          enqueueTextEvent,
+          (text) => {
+            finalAssistantText += text;
+            return enqueueTextEvent(text);
+          },
           () => req.signal.aborted || closed,
         );
 
@@ -327,10 +432,18 @@ export async function POST(req: Request) {
           enqueueSources(allToolSources, enqueueText);
         }
         if (finalStopReason === "max_tokens") {
-          enqueueTextEvent(
-            "\n\n（输出达到模型单次回复上限，内容可能未完整生成。）",
-          );
+          const maxTokenNotice = "\n\n（输出达到模型单次回复上限，内容可能未完整生成。）";
+          finalAssistantText += maxTokenNotice;
+          enqueueTextEvent(maxTokenNotice);
         }
+        void persistSessionTurn({
+          userId: user.id,
+          sessionId,
+          userMessage: lastUserMessage,
+          assistantMessage: finalAssistantText,
+        }).catch((e: any) =>
+          console.error("[session] 写入历史失败:", e.message),
+        );
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();

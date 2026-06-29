@@ -147,10 +147,8 @@ export class ChatSession {
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
-          messages: this.messages.slice(0, -1).map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-          })),
+          // 只发送本轮用户消息；历史上下文由服务端通过 Redis sessionId 补齐。
+          messages: [userMessage],
           sessionId: this.id,
           enableWebSearch: options.webSearchEnabled !== false,
           model: options.model,

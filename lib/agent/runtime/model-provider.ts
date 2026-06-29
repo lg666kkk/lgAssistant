@@ -152,14 +152,12 @@ export async function callModelWithProvider(input: {
     messages: toAIMessages(input.messages),
     tools: toAITools(input.tools),
   });
-  console.log('xxxxx', result.fullStream);
   let text = "";
   let finishReason: string | undefined;
   let usage: LanguageModelUsage | undefined;
   const toolCalls: any[] = [];
 
   for await (const part of result.fullStream) {
-    console.log('part', part);
     if (part.type === "text-delta") {
       text += part.text;
       input.onTextDelta?.(part.text);
