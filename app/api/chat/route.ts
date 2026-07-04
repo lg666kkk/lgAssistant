@@ -259,7 +259,10 @@ export async function POST(req: Request) {
             }
             if (history.length > 0) {
               // 把 Redis 里的历史拼在本轮消息前面
-              loopMessages = [...history, ...modelMessages];
+              loopMessages = [
+                ...history.slice(-SESSION_FALLBACK_MESSAGE_LIMIT),
+                ...modelMessages,
+              ];
             }
           } catch (e: any) {
             console.error("[session] 读取历史失败，跳过:", e.message);

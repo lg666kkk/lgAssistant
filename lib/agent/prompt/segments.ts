@@ -18,6 +18,7 @@ export type PromptSegment = {
 
 export type BuildSegmentsInput = {
   includeIdentity?: boolean; // 是否注入基础身份段，默认 true
+  userMessage?: string; // 当前轮用户消息，用来约束模型只回答最新问题
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   webSearchEnabled?: boolean; // 开启联网搜索 → 构造策略段
@@ -39,6 +40,24 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       tokenBudget: 200,
       source: "system",
       dynamic: false,
+    });
+  }
+
+  const userMessage = input.userMessage?.trim();
+  if (userMessage) {
+    segments.push({
+      kind: "task-context",
+      title: "当前问题",
+      content: [
+        "当前轮必须优先回答下面这一条用户消息：",
+        userMessage,
+        "",
+        "历史对话只作为背景使用；不要主动逐个回答历史里的旧问题，也不要把旧回答重新输出，除非当前用户明确要求回顾或总结历史。",
+      ].join("\n"),
+      priority: 110,
+      tokenBudget: 500,
+      source: "user",
+      dynamic: true,
     });
   }
 
