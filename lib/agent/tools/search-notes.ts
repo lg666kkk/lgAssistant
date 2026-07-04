@@ -20,7 +20,8 @@ function parseInput(input: unknown): SearchNoteInput {
 
 export const searchNotesTool: ToolDefinition = {
   name: "search_notes",
-  description: "在知识库中搜索笔记内容",
+  description:
+    "在用户的个人知识库（Notion 笔记、文档、资料）中检索内容。凡是可能与用户自己记录过的东西相关的问题——个人笔记、过往方案、读书/会议记录、私有资料、'我之前写的/记的/整理的…'——都应优先调用本工具，这是回答的第一信息来源。它只能查到用户私有的内容，查不到公开网络信息。若问题同时涉及个人资料和实时/公开信息，可与 web_search 一起调用，各取所长。",
   input_schema: {
     type: "object",
     properties: {

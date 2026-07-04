@@ -46,7 +46,6 @@ function shouldAutoSearchKnowledge(query: string) {
   const text = query.trim();
   if (!text) return false;
 
-  const lower = text.toLowerCase();
   const skipPatterns = [
     /^(你好|hello|hi|嗨|谢谢|thanks|ok|好的|嗯|哈哈)/i,
     /(现在几点|今天几号|当前时间|天气|新闻|最新|价格|汇率|股价)/,
@@ -54,19 +53,9 @@ function shouldAutoSearchKnowledge(query: string) {
     /(计算|算一下|\d+\s*[\+\-\*\/×÷]\s*\d+)/,
   ];
 
-  if (skipPatterns.some((pattern) => pattern.test(text))) {
-    return false;
-  }
-
-  const knowledgeSignals = [
-    "知识库",
-    "笔记",
-    "文档",
-    "资料",
-    "notion"
-  ];
-
-  return knowledgeSignals.some((signal) => lower.includes(signal.toLowerCase()));
+  // 用户显式开启「知识库搜索」即代表优先从知识库查找：除寒暄、实时类、
+  // 纯文本改写、算术这类明显无需检索的输入外，一律尝试自动检索。
+  return !skipPatterns.some((pattern) => pattern.test(text));
 }
 
 async function persistSessionTurn(input: {
@@ -165,6 +154,7 @@ export async function POST(req: Request) {
   const requestId = crypto.randomUUID();
   const { messages, sessionId } = body;
   const enableWebSearch = body.enableWebSearch !== false;
+  const enableKnowledgeSearch = body.enableKnowledgeSearch !== false;
   const selectedModel = resolveChatModel(body.model);
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -200,7 +190,8 @@ export async function POST(req: Request) {
   // 给模型看的工具说明
   const tools = toolRegistry
     .listForModel()
-    .filter((tool) => enableWebSearch || tool.name !== "web_search");
+    .filter((tool) => enableWebSearch || tool.name !== "web_search")
+    .filter((tool) => enableKnowledgeSearch || tool.name !== "search_notes");
   // 最大工具调用次数
   const maxToolIterations = 8;
 
@@ -292,7 +283,7 @@ export async function POST(req: Request) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
           }
 
-          if (shouldAutoSearchKnowledge(lastUser.content)) {
+          if (enableKnowledgeSearch && shouldAutoSearchKnowledge(lastUser.content)) {
             try {
               const retriever = new RAGRetriever();
               let knowledgeResponse = await retriever.searchWithDebug(

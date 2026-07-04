@@ -32,7 +32,7 @@ function parseInput(input: unknown): WebSearchInput {
 export const webSearchTool: ToolDefinition = {
   name: "web_search",
   description:
-    "联网搜索公开网页信息，适合查询最新信息、新闻、版本变化、价格、政策等需要实时资料的问题。",
+    "联网搜索公开网页信息，适合查询最新信息、新闻、版本变化、价格、政策等需要实时、公开、外部资料的问题。它只能查到公开网络内容，查不到用户的个人笔记或私有资料——那类问题请用 search_notes。若问题同时涉及实时/公开信息和用户个人资料，可与 search_notes 一起调用，各取所长。",
   input_schema: {
     type: "object",
     properties: {

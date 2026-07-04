@@ -2,8 +2,8 @@
  * RAG 检索模块
  *
  * 当前实现是“可直接落地”的混合检索第一版：
- * - pgvector 做第一阶段快速召回
- * - 本地关键词得分补足精确术语/错误码/API 名称
+ * - pgvector 做语义召回
+ * - Postgres FTS 做关键词召回（BM25-style lexical path）
  * - 候选采样先多取，再用 MMR 去重
  * - 轻量规则 rerank，不额外引入模型调用成本
  */
@@ -17,6 +17,7 @@ const DEFAULT_KEYWORD_WEIGHT = 0.3;
 const DEFAULT_MMR_LAMBDA = 0.7;
 const DEFAULT_CANDIDATE_MULTIPLIER = 4;
 const DEFAULT_MAX_CANDIDATES = 50;
+const DEFAULT_KEYWORD_SEARCH_ENABLED = true;
 
 /**
  * 检索结果
@@ -28,10 +29,12 @@ export interface SearchResult {
   pageUrl: string;
   content: string;
   similarity: number;
+  keywordRank?: number;
   vectorScore: number;
   keywordScore: number;
   combinedScore: number;
   rerankScore?: number;
+  retrievalSources: Array<'vector' | 'keyword'>;
   headingPath: string[];
   metadata?: Record<string, unknown>;
 }
@@ -40,10 +43,14 @@ export interface RAGSearchDebug {
   originalQuery: string;
   rewrittenQueries: string[];
   candidateCount: number;
+  vectorCandidateCount: number;
+  keywordCandidateCount: number;
+  mergedCandidateCount: number;
   returnedCount: number;
   matchThreshold: number;
   vectorWeight: number;
   keywordWeight: number;
+  keywordSearchEnabled: boolean;
   mmrEnabled: boolean;
   rerankEnabled: boolean;
 }
@@ -64,6 +71,7 @@ export interface RAGSearchOptions {
   mmrLambda?: number;
   enableQueryRewrite?: boolean;
   enableRerank?: boolean;
+  enableKeywordSearch?: boolean;
 }
 
 /**
@@ -117,19 +125,28 @@ export class RAGRetriever {
     const keywordWeight = options.keywordWeight ?? DEFAULT_KEYWORD_WEIGHT;
     const enableMmr = options.enableMmr ?? true;
     const enableRerank = options.enableRerank ?? true;
+    const enableKeywordSearch = options.enableKeywordSearch ?? DEFAULT_KEYWORD_SEARCH_ENABLED;
     const rewrittenQueries = options.enableQueryRewrite === false
       ? [query]
       : rewriteQuery(query);
 
     const queryEmbedding = await this.embeddingClient.embedSingle(rewrittenQueries[0]);
-    const candidates = await this.vectorSearch(queryEmbedding, {
+    const vectorCandidates = await this.vectorSearch(queryEmbedding, {
       userId: options.userId,
       matchThreshold,
       matchCount: candidateCount,
     });
+    const keywordCandidates = enableKeywordSearch
+      ? await this.keywordSearch(rewrittenQueries, {
+          userId: options.userId,
+          matchCount: candidateCount,
+        })
+      : [];
+    const candidates = mergeCandidates(vectorCandidates, keywordCandidates);
 
     const scored = candidates.map((candidate) => {
-      const keywordScore = scoreKeywords(rewrittenQueries, candidate);
+      const localKeywordScore = scoreKeywords(rewrittenQueries, candidate);
+      const keywordScore = Math.max(normalize01(candidate.keywordRank), localKeywordScore);
       const vectorScore = normalize01(candidate.similarity);
       const combinedScore = vectorScore * vectorWeight + keywordScore * keywordWeight;
       const rerankScore = enableRerank
@@ -158,10 +175,14 @@ export class RAGRetriever {
         originalQuery: query,
         rewrittenQueries,
         candidateCount: candidates.length,
+        vectorCandidateCount: vectorCandidates.length,
+        keywordCandidateCount: keywordCandidates.length,
+        mergedCandidateCount: candidates.length,
         returnedCount: diversified.length,
         matchThreshold,
         vectorWeight,
         keywordWeight,
+        keywordSearchEnabled: enableKeywordSearch,
         mmrEnabled: enableMmr,
         rerankEnabled: enableRerank,
       },
@@ -196,9 +217,58 @@ export class RAGRetriever {
         pageUrl: item.page_url,
         content: item.content,
         similarity: item.similarity,
+        keywordRank: undefined,
         vectorScore: normalize01(item.similarity),
         keywordScore: 0,
         combinedScore: normalize01(item.similarity),
+        retrievalSources: ['vector'],
+        headingPath: Array.isArray(metadata.heading_path)
+          ? metadata.heading_path.filter((v: unknown): v is string => typeof v === 'string')
+          : [],
+        metadata,
+      };
+    });
+  }
+
+  private async keywordSearch(
+    queries: string[],
+    options: {
+      matchCount: number;
+      userId?: string;
+    },
+  ): Promise<SearchResult[]> {
+    const queryText = buildKeywordQuery(queries);
+    if (!queryText) return [];
+
+    const { data, error } = await this.supabase.rpc('match_documents_keyword', {
+      query_text: queryText,
+      match_count: options.matchCount,
+      filter_user_id: options.userId ?? null,
+    });
+
+    if (error) {
+      if (isMissingRpcError(error)) {
+        console.warn("[rag] match_documents_keyword RPC 不存在，已降级为仅向量检索");
+        return [];
+      }
+      throw new Error(`关键词检索失败: ${error.message}`);
+    }
+
+    return (data || []).map((item: any) => {
+      const metadata = isRecord(item.metadata) ? item.metadata : {};
+      const keywordRank = normalize01(item.keyword_rank);
+      return {
+        id: item.id,
+        pageId: item.page_id,
+        pageTitle: item.page_title,
+        pageUrl: item.page_url,
+        content: item.content,
+        similarity: 0,
+        keywordRank,
+        vectorScore: 0,
+        keywordScore: keywordRank,
+        combinedScore: keywordRank,
+        retrievalSources: ['keyword'],
         headingPath: Array.isArray(metadata.heading_path)
           ? metadata.heading_path.filter((v: unknown): v is string => typeof v === 'string')
           : [],
@@ -258,6 +328,52 @@ function rewriteQuery(query: string): string[] {
   }
 
   return Array.from(variants).slice(0, 3);
+}
+
+function buildKeywordQuery(queries: string[]) {
+  const tokens = new Set<string>();
+  for (const query of queries) {
+    for (const token of Array.from(tokenize(query))) {
+      tokens.add(token);
+    }
+  }
+  return Array.from(tokens).slice(0, 16).join(' ');
+}
+
+function mergeCandidates(
+  vectorCandidates: SearchResult[],
+  keywordCandidates: SearchResult[],
+) {
+  const byId = new Map<string, SearchResult>();
+
+  for (const candidate of vectorCandidates) {
+    byId.set(candidate.id, {
+      ...candidate,
+      retrievalSources: ['vector'],
+    });
+  }
+
+  for (const candidate of keywordCandidates) {
+    const existing = byId.get(candidate.id);
+    if (!existing) {
+      byId.set(candidate.id, {
+        ...candidate,
+        retrievalSources: ['keyword'],
+      });
+      continue;
+    }
+
+    byId.set(candidate.id, {
+      ...existing,
+      keywordRank: Math.max(normalize01(existing.keywordRank), normalize01(candidate.keywordRank)),
+      keywordScore: Math.max(existing.keywordScore, candidate.keywordScore),
+      retrievalSources: Array.from(
+        new Set<Array<'vector' | 'keyword'>[number]>([...existing.retrievalSources, 'keyword']),
+      ),
+    });
+  }
+
+  return Array.from(byId.values());
 }
 
 function scoreKeywords(queries: string[], candidate: SearchResult) {
@@ -358,4 +474,12 @@ function normalize01(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isMissingRpcError(error: { code?: string; message?: string }) {
+  const message = error.message ?? '';
+  return (
+    error.code === 'PGRST202' ||
+    message.includes('match_documents_keyword') && message.includes('schema cache')
+  );
 }

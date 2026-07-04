@@ -50,5 +50,7 @@
 | 07b | └─ 架构蓝图（已整合至 07） | [agent-engineering-roadmap.md](./agent/agent-engineering-roadmap.md) | 存档 |
 | 08 | 可观测性可视化：Trace UI（承接能力 3） | [trace-visualization.md](./agent/trace-visualization.md) | 已完成 |
 | 09 | Prompt 段化注入（Prompt Pipe 最小内核） | [prompt-segmentation.md](./agent/prompt-segmentation.md) | 已完成 |
+| 10 | 定时任务能力（Scheduler 设计） | [scheduled-tasks.md](./agent/scheduled-tasks.md) | 设计（待实现） |
+| 11 | 知识库搜索开关（优先从知识库查找） | [knowledge-search-toggle.md](./agent/knowledge-search-toggle.md) | 已完成 |
 
 > 后续每实现一个功能，在此表格追加一行。

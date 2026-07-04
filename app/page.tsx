@@ -106,6 +106,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  const [knowledgeSearchEnabled, setKnowledgeSearchEnabled] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
@@ -146,6 +147,7 @@ export default function Home() {
     requestAnimationFrame(() => inputRef.current?.focus());
     await activeSession.send(text, rerender, {
       webSearchEnabled,
+      knowledgeSearchEnabled,
       model: selectedModel,
     });
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -694,6 +696,8 @@ export default function Home() {
           onChange={setInput}
           webSearchEnabled={webSearchEnabled}
           onWebSearchEnabledChange={setWebSearchEnabled}
+          knowledgeSearchEnabled={knowledgeSearchEnabled}
+          onKnowledgeSearchEnabledChange={setKnowledgeSearchEnabled}
           selectedModel={selectedModel}
           onSelectedModelChange={setSelectedModel}
           onSend={handleSend}

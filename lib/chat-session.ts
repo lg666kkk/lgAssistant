@@ -67,7 +67,11 @@ export class ChatSession {
   async send(
     input: string,
     onUpdate: () => void,
-    options: { webSearchEnabled?: boolean; model?: ChatModelId } = {},
+    options: {
+      webSearchEnabled?: boolean;
+      knowledgeSearchEnabled?: boolean;
+      model?: ChatModelId;
+    } = {},
   ) {
     if (!input.trim() || this.loading) return;
 
@@ -151,6 +155,7 @@ export class ChatSession {
           messages: [userMessage],
           sessionId: this.id,
           enableWebSearch: options.webSearchEnabled !== false,
+          enableKnowledgeSearch: options.knowledgeSearchEnabled !== false,
           model: options.model,
         }),
         signal: this.abortController.signal,

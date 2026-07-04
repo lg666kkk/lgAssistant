@@ -12,6 +12,58 @@ function sessionKey(userId: string, sessionId: string): string {
   return `session:${userId}:${sessionId}:messages`;
 }
 
+type RedisSessionClient = {
+  rpush(key: string, value: string): Promise<unknown>;
+  expire(key: string, seconds: number): Promise<unknown>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
+  del(key: string): Promise<unknown>;
+  quit(): Promise<unknown>;
+};
+
+class UpstashRestSessionClient implements RedisSessionClient {
+  constructor(
+    private readonly restUrl: string,
+    private readonly token: string,
+  ) {}
+
+  private async command<T>(command: Array<string | number>): Promise<T> {
+    const response = await fetch(this.restUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(command),
+    });
+
+    const payload = (await response.json()) as { result?: T; error?: string };
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error ?? `Upstash REST error: ${response.status}`);
+    }
+    return payload.result as T;
+  }
+
+  async rpush(key: string, value: string): Promise<unknown> {
+    return this.command(["RPUSH", key, value]);
+  }
+
+  async expire(key: string, seconds: number): Promise<unknown> {
+    return this.command(["EXPIRE", key, seconds]);
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return this.command<string[]>(["LRANGE", key, start, stop]);
+  }
+
+  async del(key: string): Promise<unknown> {
+    return this.command(["DEL", key]);
+  }
+
+  async quit(): Promise<unknown> {
+    return undefined;
+  }
+}
+
 /**
  * 会话记忆实现：本次对话的消息历史，存本地 Redis。
  * 和 MemoryStore 是平级关系（不继承）—— 访问模式是「列表追加/读取」，不是 key-value。
@@ -27,9 +79,17 @@ function sessionKey(userId: string, sessionId: string): string {
  * 但数据在 Redis 里持久，不受冷启动影响（这点比内存版好）。
  */
 export class RedisSessionStore implements SessionStore {
-  private client: Redis;
+  private client: RedisSessionClient;
 
-  constructor(redisUrl = "redis://127.0.0.1:6379") {
+  constructor(redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379") {
+    if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+      this.client = new UpstashRestSessionClient(
+        process.env.UPSTASH_REDIS_REST_URL,
+        process.env.UPSTASH_REDIS_REST_TOKEN,
+      );
+      return;
+    }
+
     this.client = new Redis(redisUrl, {
       // 连接失败时不要无限重试（测试/开发时 Redis 可能没跑）
       maxRetriesPerRequest: 3,

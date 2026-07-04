@@ -9,9 +9,11 @@ type ChatInputProps = {
   disabled?: boolean;
   isRunning?: boolean;
   webSearchEnabled: boolean;
+  knowledgeSearchEnabled: boolean;
   selectedModel: ChatModelId;
   onChange: (value: string) => void;
   onWebSearchEnabledChange: (enabled: boolean) => void;
+  onKnowledgeSearchEnabledChange: (enabled: boolean) => void;
   onSelectedModelChange: (model: ChatModelId) => void;
   onSend: () => void;
   onStop: () => void;
@@ -35,9 +37,11 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       disabled = false,
       isRunning = false,
       webSearchEnabled,
+      knowledgeSearchEnabled,
       selectedModel,
       onChange,
       onWebSearchEnabledChange,
+      onKnowledgeSearchEnabledChange,
       onSelectedModelChange,
       onSend,
       onStop,
@@ -104,6 +108,34 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     <path d="M12 2a15.3 15.3 0 0 0 0 20" />
                   </svg>
                   联网搜索
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onKnowledgeSearchEnabledChange(!knowledgeSearchEnabled)
+                  }
+                  aria-pressed={knowledgeSearchEnabled}
+                  className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition-colors ${
+                    knowledgeSearchEnabled
+                      ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200"
+                      : "border-slate-700 bg-slate-800/70 text-slate-400 hover:border-cyan-500/40 hover:text-cyan-300"
+                  }`}
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                  </svg>
+                  知识库搜索
                 </button>
                 <ModelPicker
                   selectedModel={selectedModel}
