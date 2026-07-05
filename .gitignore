@@ -8,3 +8,4 @@ dist
 .vercel
 *.tsbuildinfo
 next-env.d.ts
+reports/rag-eval/*.json

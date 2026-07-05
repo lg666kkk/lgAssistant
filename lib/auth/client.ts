@@ -1,8 +1,9 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-let browserClient: ReturnType<typeof createClient> | null = null;
+let browserClient: SupabaseClient | null = null;
 
 export function getBrowserSupabase() {
   if (browserClient) return browserClient;
@@ -16,7 +17,7 @@ export function getBrowserSupabase() {
     throw new Error("缺少 Supabase 浏览器端环境变量");
   }
 
-  browserClient = createClient(supabaseUrl, supabaseKey);
+  browserClient = createBrowserClient(supabaseUrl, supabaseKey);
   return browserClient;
 }
 

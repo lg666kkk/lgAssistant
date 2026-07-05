@@ -33,7 +33,12 @@ export type ModelTraceStep = TraceStepBase & {
   systemPromptOriginalChars?: number;
   // 段化后的注入结构（身份/记忆/策略…）。详情页优先按段分块展示，
   // 没有时回退到 systemPrompt 整段。旧 trace 没有此字段，前端兼容处理。
-  systemSegments?: Array<{ kind: string; title: string; content: string }>;
+  systemSegments?: Array<{
+    kind: string;
+    title: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }>;
 };
 
 export type ToolTraceStep = TraceStepBase & {

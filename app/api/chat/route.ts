@@ -15,7 +15,7 @@ import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/supabase";
 import { ragConfig } from "@/lib/config";
-import { RAGRetriever } from "@/lib/server/retriever";
+import { RAGRetriever, type RAGSearchResponse } from "@/lib/server/retriever";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
@@ -56,6 +56,32 @@ function shouldAutoSearchKnowledge(query: string) {
   // 用户显式开启「知识库搜索」即代表优先从知识库查找：除寒暄、实时类、
   // 纯文本改写、算术这类明显无需检索的输入外，一律尝试自动检索。
   return !skipPatterns.some((pattern) => pattern.test(text));
+}
+
+function buildRagTraceAttempt(input: {
+  label: string;
+  threshold: number;
+  response: RAGSearchResponse;
+}) {
+  return {
+    label: input.label,
+    threshold: input.threshold,
+    debug: input.response.debug,
+    topResults: input.response.results.slice(0, 5).map((result, index) => ({
+      rank: index + 1,
+      id: result.id,
+      pageId: result.pageId,
+      pageTitle: result.pageTitle,
+      pageUrl: result.pageUrl,
+      similarity: result.similarity,
+      vectorScore: result.vectorScore,
+      keywordScore: result.keywordScore,
+      rerankScore: result.rerankScore ?? result.combinedScore,
+      retrievalSources: result.retrievalSources,
+      headingPath: result.headingPath,
+      excerpt: result.content.replace(/\s+/g, " ").trim().slice(0, 240),
+    })),
+  };
 }
 
 async function persistSessionTurn(input: {
@@ -279,6 +305,7 @@ export async function POST(req: Request) {
           .find((m: any) => m.role === "user");
         let memorySystem = "";
         let knowledgeSystem = "";
+        let knowledgeMetadata: Record<string, unknown> | undefined;
         if (lastUser) {
           try {
             memorySystem = await recallForPrompt(lastUser.content, { userId: user.id });
@@ -289,6 +316,8 @@ export async function POST(req: Request) {
           if (enableKnowledgeSearch && shouldAutoSearchKnowledge(lastUser.content)) {
             try {
               const retriever = new RAGRetriever();
+              const ragStartedAt = Date.now();
+              const attempts: Array<ReturnType<typeof buildRagTraceAttempt>> = [];
               let knowledgeResponse = await retriever.searchWithDebug(
                 lastUser.content,
                 {
@@ -300,6 +329,13 @@ export async function POST(req: Request) {
                   enableRerank: true,
                 },
               );
+              attempts.push(
+                buildRagTraceAttempt({
+                  label: "primary",
+                  threshold: ragConfig.similarityThreshold,
+                  response: knowledgeResponse,
+                }),
+              );
 
               if (knowledgeResponse.results.length === 0) {
                 knowledgeResponse = await retriever.searchWithDebug(lastUser.content, {
@@ -310,9 +346,35 @@ export async function POST(req: Request) {
                   enableQueryRewrite: true,
                   enableRerank: true,
                 });
+                attempts.push(
+                  buildRagTraceAttempt({
+                    label: "fallback_threshold_0",
+                    threshold: 0,
+                    response: knowledgeResponse,
+                  }),
+                );
               }
 
+              knowledgeMetadata = {
+                type: "rag_auto_knowledge",
+                query: lastUser.content,
+                triggered: true,
+                usedFallback: attempts.length > 1,
+                durationMs: Date.now() - ragStartedAt,
+                finalReturnedCount: knowledgeResponse.results.length,
+                attempts,
+              };
+
               if (knowledgeResponse.results.length > 0) {
+                allToolSources.push(
+                  ...knowledgeResponse.results.map((result) => ({
+                    title: result.pageTitle,
+                    notionPageId: result.pageId,
+                    pageUrl: result.pageUrl,
+                    similarity: result.rerankScore ?? result.combinedScore,
+                    excerpt: result.content.substring(0, 180),
+                  })),
+                );
                 knowledgeSystem = [
                   "以下是从用户个人知识库自动检索到的资料。回答和这些资料相关的问题时，优先基于这里的内容；如果资料不足，请说明不足，不要硬编。",
                   "",
@@ -321,6 +383,12 @@ export async function POST(req: Request) {
               }
             } catch (e: any) {
               console.error("[knowledge] 自动检索失败，跳过注入:", e.message);
+              knowledgeMetadata = {
+                type: "rag_auto_knowledge",
+                query: lastUser.content,
+                triggered: true,
+                error: e.message,
+              };
             }
           }
         }
@@ -330,6 +398,7 @@ export async function POST(req: Request) {
           userMessage: lastUser?.content ?? "",
           memory: memorySystem,
           knowledge: knowledgeSystem,
+          knowledgeMetadata,
           webSearchEnabled: enableWebSearch,
           currentDate: new Date().toISOString(),
           maxTokens: 4200,

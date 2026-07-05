@@ -6,6 +6,7 @@ export type PromptPipeInput = {
   userMessage: string;
   memory?: string;
   knowledge?: string;
+  knowledgeMetadata?: Record<string, unknown>;
   webSearchEnabled?: boolean;
   currentDate?: string;
   maxTokens?: number;

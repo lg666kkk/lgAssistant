@@ -665,7 +665,12 @@ export async function runAgentLoop(
   shouldStop: () => boolean = () => false,
   model: ChatModelId = defaultChatModel,
   // system 对应的段化结构，仅用于写进 trace 供详情页按段展示；不影响实际注入（注入仍用 system 字符串）
-  systemSegments?: Array<{ kind: string; title: string; content: string }>,
+  systemSegments?: Array<{
+    kind: string;
+    title: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }>,
   userId?: string,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用

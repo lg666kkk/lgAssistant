@@ -18,6 +18,23 @@ function parseInput(input: unknown): SearchNoteInput {
   };
 }
 
+function buildRagTopResults(results: Awaited<ReturnType<RAGRetriever["searchWithDebug"]>>["results"]) {
+  return results.slice(0, 5).map((result, index) => ({
+    rank: index + 1,
+    id: result.id,
+    pageId: result.pageId,
+    pageTitle: result.pageTitle,
+    pageUrl: result.pageUrl,
+    similarity: result.similarity,
+    vectorScore: result.vectorScore,
+    keywordScore: result.keywordScore,
+    rerankScore: result.rerankScore ?? result.combinedScore,
+    retrievalSources: result.retrievalSources,
+    headingPath: result.headingPath,
+    excerpt: result.content.replace(/\s+/g, " ").trim().slice(0, 240),
+  }));
+}
+
 export const searchNotesTool: ToolDefinition = {
   name: "search_notes",
   description:
@@ -88,6 +105,12 @@ export const searchNotesTool: ToolDefinition = {
             results: [],
             debug: response.debug,
           },
+          metadata: {
+            rag: response.debug,
+            ragReturnedCount: 0,
+            ragQuery: query,
+            ragTopResults: [],
+          },
         };
       }
       const content = results
@@ -106,6 +129,9 @@ export const searchNotesTool: ToolDefinition = {
         },
         metadata: {
           rag: response.debug,
+          ragReturnedCount: results.length,
+          ragQuery: query,
+          ragTopResults: buildRagTopResults(results),
         },
       };
     } catch (error) {

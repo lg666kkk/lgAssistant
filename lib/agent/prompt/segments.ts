@@ -14,6 +14,7 @@ export type PromptSegment = {
   tokenBudget?: number;   // 这个段最多允许多少 token
   source?: string;        // memory / system / runtime / user
   dynamic?: boolean;      // 是否每轮变化
+  metadata?: Record<string, unknown>; // trace 展示用的结构化调试信息
 };
 
 export type BuildSegmentsInput = {
@@ -21,6 +22,7 @@ export type BuildSegmentsInput = {
   userMessage?: string; // 当前轮用户消息，用来约束模型只回答最新问题
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
+  knowledgeMetadata?: Record<string, unknown>; // RAG debug summary，写进 trace
   webSearchEnabled?: boolean; // 开启联网搜索 → 构造策略段
 };
 
@@ -84,6 +86,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       tokenBudget: 1200,
       source: "knowledge",
       dynamic: true,
+      metadata: input.knowledgeMetadata,
     });
   }
 

@@ -90,17 +90,18 @@ export class RedisSessionStore implements SessionStore {
       return;
     }
 
-    this.client = new Redis(redisUrl, {
+    const redisClient = new Redis(redisUrl, {
       // 连接失败时不要无限重试（测试/开发时 Redis 可能没跑）
       maxRetriesPerRequest: 3,
       // 连接失败静默报错，不崩进程
       lazyConnect: true,
     });
 
-    this.client.on("error", (err) => {
+    redisClient.on("error", (err) => {
       // 只 log，不抛。Redis 挂了不该让整个对话崩掉
       console.error("[SessionStore] Redis 连接错误:", err.message);
     });
+    this.client = redisClient;
   }
 
   async append(userId: string, sessionId: string, message: SessionMessage): Promise<void> {
