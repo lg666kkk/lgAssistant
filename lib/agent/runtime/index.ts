@@ -365,12 +365,53 @@ export async function executeTools(
     durationMs?: number;
     costPerUse: number;
   }> = [];
-  const executionResults = await executeToolUsesWithScheduler(
-    toolUses,
-    toolRegistry,
-    scopeId,
-    userId,
+
+  const originalIndexById = new Map<string, number>();
+  const seenBatchKeys = new Set<string>();
+  const uniqueToolUses: ToolUseBlock[] = [];
+  const duplicateExecutionResults: Array<{
+    toolUse: ToolUseBlock;
+    toolResult: Awaited<ReturnType<typeof executeToolCall>>;
+  }> = [];
+
+  toolUses.forEach((toolUse, index) => {
+    originalIndexById.set(toolUse.id, index);
+    const key = getToolCallKey(toolUse);
+    if (seenBatchKeys.has(key)) {
+      duplicateExecutionResults.push({
+        toolUse,
+        toolResult: {
+          ok: false,
+          toolName: toolUse.name,
+          toolCallId: toolUse.id,
+          content: `重复工具调用已跳过：${toolUse.name}`,
+          error: `Duplicate tool call skipped: ${toolUse.name}`,
+          metadata: {
+            status: "duplicate_skipped",
+            duplicateKey: key,
+          },
+        },
+      });
+      return;
+    }
+    seenBatchKeys.add(key);
+    uniqueToolUses.push(toolUse);
+  });
+
+  const executionResults = [
+    ...(await executeToolUsesWithScheduler(
+      uniqueToolUses,
+      toolRegistry,
+      scopeId,
+      userId,
+    )),
+    ...duplicateExecutionResults,
+  ].sort(
+    (a, b) =>
+      (originalIndexById.get(a.toolUse.id) ?? 0) -
+      (originalIndexById.get(b.toolUse.id) ?? 0),
   );
+
   for (const { toolUse, toolResult } of executionResults) {
     const durationMs =
       typeof toolResult.metadata?.durationMs === "number"
@@ -458,24 +499,26 @@ export async function executeTools(
       content: truncated.content,
       is_error: !toolResult.ok,
     });
-    // 不再拼 marker 字符串，直接造结构化事件 payload（前端按 type 分发，不靠分隔符切割）
-    toolCalls.push({
-      name: toolUse.name,
-      input: toolUse.input,
-      id: toolUse.id,
-      ok: toolResult.ok,
-      content: truncated.content,
-      truncated: truncated.truncated,
-      originalChars: truncated.originalChars,
-      error: toolResult.error,
-      metadata: {
-        ...toolResult.metadata,
-        modelContentCompressed: truncated.content !== rawPreview.content,
-        rawContentPreview: rawPreview.content,
-        rawContentTruncated: rawPreview.truncated,
-        rawContentOriginalChars: rawPreview.originalChars,
-      },
-    });
+    if (toolResult.metadata?.status !== "duplicate_skipped") {
+      // 不再拼 marker 字符串，直接造结构化事件 payload（前端按 type 分发，不靠分隔符切割）
+      toolCalls.push({
+        name: toolUse.name,
+        input: toolUse.input,
+        id: toolUse.id,
+        ok: toolResult.ok,
+        content: truncated.content,
+        truncated: truncated.truncated,
+        originalChars: truncated.originalChars,
+        error: toolResult.error,
+        metadata: {
+          ...toolResult.metadata,
+          modelContentCompressed: truncated.content !== rawPreview.content,
+          rawContentPreview: rawPreview.content,
+          rawContentTruncated: rawPreview.truncated,
+          rawContentOriginalChars: rawPreview.originalChars,
+        },
+      });
+    }
     toolSteps.push({
       type: "tool",
       index: 0,

@@ -7,6 +7,12 @@ const MATCH_FN = "match_memories";
 // get/list 用：不取 embedding（1024 维白传），列出其余字段
 const COLS = "id, key, layer, content, metadata, created_at";
 
+function requireUserId(options: { userId?: string }, operation: string): string | null {
+  if (options.userId) return options.userId;
+  console.warn(`[SemanticStore.${operation}] 缺少 userId，跳过语义记忆操作`);
+  return null;
+}
+
 /**
  * 语义记忆实现：按相似度召回（recall），存 Supabase + pgvector。
  * 实现 SemanticMemoryStore（= MemoryStore 的 get/set/forget/list + recall）。
@@ -42,20 +48,23 @@ export class SemanticStore implements SemanticMemoryStore {
     options: { userId?: string } = {},
   ): Promise<void> {
     if (!hasSupabaseConfig()) return;
+    const userId = requireUserId(options, "set");
+    if (!userId) return;
+
     // 内容变了向量必须跟着变，否则存的是新文本旧向量，recall 会按旧语义召回
     const embedding = await this.getEmbedder().embedSingle(content);
     const { error } = await getSupabase()
       .from(TABLE)
       .upsert(
         {
-          user_id: options.userId,
+          user_id: userId,
           key,
           content,
           embedding,
-          metadata: { ...metadata, userId: options.userId },
+          metadata: { ...metadata, userId },
           updated_at: new Date().toISOString(),
         },
-        options.userId ? { onConflict: "user_id,key" } : { onConflict: "key" },
+        { onConflict: "user_id,key" },
       );
     if (error) {
       console.error("[SemanticStore.set] 写入失败:", error.message);
@@ -64,11 +73,14 @@ export class SemanticStore implements SemanticMemoryStore {
 
   async get(key: string, options: { userId?: string } = {}): Promise<MemoryRecord | null> {
     if (!hasSupabaseConfig()) return null;
-    let query = getSupabase()
+    const userId = requireUserId(options, "get");
+    if (!userId) return null;
+
+    const query = getSupabase()
       .from(TABLE)
       .select(COLS)
-      .eq("key", key);
-    if (options.userId) query = query.eq("user_id", options.userId);
+      .eq("key", key)
+      .eq("user_id", userId);
     const { data, error } = await query.maybeSingle();
     if (error) {
       console.error("[SemanticStore.get] 读取失败:", error.message);
@@ -79,9 +91,14 @@ export class SemanticStore implements SemanticMemoryStore {
 
   async forget(key: string, options: { userId?: string } = {}): Promise<void> {
     if (!hasSupabaseConfig()) return;
-    let query = getSupabase().from(TABLE).delete().eq("key", key);
-    if (options.userId) query = query.eq("user_id", options.userId);
-    const { error } = await query;
+    const userId = requireUserId(options, "forget");
+    if (!userId) return;
+
+    const { error } = await getSupabase()
+      .from(TABLE)
+      .delete()
+      .eq("key", key)
+      .eq("user_id", userId);
     if (error) {
       console.error("[SemanticStore.forget] 删除失败:", error.message);
     }
@@ -89,12 +106,15 @@ export class SemanticStore implements SemanticMemoryStore {
 
   async list(limit = 50, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
-    let query = getSupabase()
+    const userId = requireUserId(options, "list");
+    if (!userId) return [];
+
+    const { data, error } = await getSupabase()
       .from(TABLE)
       .select(COLS)
-      .order("created_at", { ascending: false });
-    if (options.userId) query = query.eq("user_id", options.userId);
-    const { data, error } = await query.limit(limit);
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
     if (error) {
       console.error("[SemanticStore.list] 列表失败:", error.message);
       return [];
@@ -105,11 +125,14 @@ export class SemanticStore implements SemanticMemoryStore {
   // ⭐ 主角：按语义相似度召回
   async recall(query: string, limit = 5, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
+    const userId = requireUserId(options, "recall");
+    if (!userId) return [];
+
     const queryEmbedding = await this.getEmbedder().embedSingle(query);
     const { data, error } = await getSupabase().rpc(MATCH_FN, {
       query_embedding: queryEmbedding,
       match_count: limit,
-      filter_user_id: options.userId ?? null,
+      filter_user_id: userId,
       // match_threshold 不传，用 SQL 默认 0.3
     });
     if (error) {

@@ -10,8 +10,10 @@ import { SemanticStore } from "./semantic-store";
 const canRun =
   hasSupabaseConfig() &&
   Boolean(process.env.DASHSCOPE_API_KEY) &&
+  Boolean(process.env.MEMORY_TEST_USER_ID) &&
   process.env.CONSOLIDATE_TEST === "1";
 const sessionId = `test-flow-${process.pid}-${Date.now()}`;
+const testUserId = process.env.MEMORY_TEST_USER_ID;
 
 describe("记忆流动闭环（沉淀 → 召回）", () => {
   const longTerm = new LongTermStore();
@@ -22,8 +24,8 @@ describe("记忆流动闭环（沉淀 → 召回）", () => {
   afterAll(async () => {
     if (!canRun) return;
     for (const k of savedKeys) {
-      await longTerm.forget(k);
-      await semantic.forget(k);
+      await longTerm.forget(k, { userId: testUserId });
+      await semantic.forget(k, { userId: testUserId });
     }
   });
 
@@ -36,7 +38,7 @@ describe("记忆流动闭环（沉淀 → 召回）", () => {
         { role: "user", content: "提醒一下，我对香菜过敏，以后给我推荐菜别带香菜" },
       ];
 
-      const saved = await consolidate(conversation, { sessionId });
+      const saved = await consolidate(conversation, { sessionId, userId: testUserId });
       saved.forEach((r) => savedKeys.push(r.key));
 
       // 模型应抽出「香菜过敏」这类长期事实
@@ -49,7 +51,9 @@ describe("记忆流动闭环（沉淀 → 召回）", () => {
     "沉淀后，用语义相近的问题能召回到这条记忆",
     async () => {
       // 注意：这里依赖上一个用例已写入。recall 用「饮食禁忌」这种不含「香菜」字样的问法
-      const systemText = await recallForPrompt("用户有什么饮食上的禁忌或过敏？");
+      const systemText = await recallForPrompt("用户有什么饮食上的禁忌或过敏？", {
+        userId: testUserId,
+      });
 
       expect(systemText).toContain("香菜"); // 召回成功并拼进 system 文本
       expect(systemText).toContain("已知信息"); // 是拼好的 system 段落格式
@@ -61,7 +65,7 @@ describe("记忆流动闭环（沉淀 → 召回）", () => {
       { role: "user", content: "帮我算一下 23 乘以 17 等于多少" },
       { role: "assistant", content: "23 × 17 = 391" },
     ];
-    const saved = await consolidate(conversation, { sessionId });
+    const saved = await consolidate(conversation, { sessionId, userId: testUserId });
     saved.forEach((r) => savedKeys.push(r.key));
 
     // 「算个乘法」是一次性任务，不该抽成长期记忆

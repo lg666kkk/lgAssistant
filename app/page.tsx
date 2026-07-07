@@ -108,6 +108,7 @@ export default function Home() {
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [knowledgeSearchEnabled, setKnowledgeSearchEnabled] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [confirmingToolKey, setConfirmingToolKey] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -318,6 +319,30 @@ export default function Home() {
                   </svg>
                 </span>
                 <span>用量统计</span>
+              </Link>
+              <Link
+                href="/schedule"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setAccountMenuOpen(false)}
+                className="mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-slate-200 transition-colors hover:bg-slate-800"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 text-slate-300">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                </span>
+                <span>定时任务</span>
               </Link>
               <Link
                 href="/settings"
@@ -611,19 +636,30 @@ export default function Home() {
                                     "pending_confirmation" && (
                                     <div className="mt-2 flex gap-2">
                                       <button
-                                        className="bg-slate-700/70 rounded-md px-2"
+                                        type="button"
+                                        disabled={confirmingToolKey === `${i}:${idx}`}
+                                        className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600 disabled:cursor-not-allowed disabled:text-slate-500"
                                         onClick={async () => {
-                                          await activeSession?.confirmToolCall(
-                                            i,
-                                            idx,
-                                          );
-                                          rerender();
+                                          const key = `${i}:${idx}`;
+                                          setConfirmingToolKey(key);
+                                          try {
+                                            await activeSession?.confirmToolCall(
+                                              i,
+                                              idx,
+                                            );
+                                            rerender();
+                                          } finally {
+                                            setConfirmingToolKey(null);
+                                          }
                                         }}
                                       >
-                                        确认执行
+                                        {confirmingToolKey === `${i}:${idx}`
+                                          ? "执行中..."
+                                          : "确认执行"}
                                       </button>
                                       <button
                                         onClick={async () => {
+                                          if (confirmingToolKey) return;
                                           await activeSession?.cancelToolCall(
                                             i,
                                             idx,

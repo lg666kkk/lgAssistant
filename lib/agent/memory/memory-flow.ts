@@ -29,6 +29,8 @@ export async function recallForPrompt(
   query: string,
   opts: { limit?: number; userId?: string } = {},
 ): Promise<string> {
+  if (!opts.userId) return "";
+
   const hits = await semantic.recall(query, opts.limit ?? 5, { userId: opts.userId });
   if (hits.length === 0) return ""; // 没召回到就返回空串，调用方不注入 system
 
@@ -65,6 +67,7 @@ export async function consolidate(
   opts: { sessionId?: string; userId?: string } = {},
 ): Promise<MemoryRecord[]> {
   if (conversation.length === 0) return [];
+  if (!opts.userId) return [];
 
   // 把对话拼成纯文本喂给抽取器
   const transcript = conversation

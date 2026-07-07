@@ -6,6 +6,7 @@ import { searchNotesTool } from "./search-notes";
 import { createTodoTool } from "./create-todo";
 import { dailyLeetCodeTool } from "./daily-leetcode";
 import { leetCodeWrongBookTool } from "./leetcode-wrong-book";
+import { createScheduledJobTool } from "./scheduled-jobs";
 import { webSearchTool } from "./web-search";
 import { webFetchTool } from "./web-fetch";
 
@@ -19,6 +20,7 @@ export function createBuiltinToolRegistry(): ToolRegistry {
   registry.register(createTodoTool);
   registry.register(dailyLeetCodeTool);
   registry.register(leetCodeWrongBookTool);
+  registry.register(createScheduledJobTool);
   registry.register(webSearchTool);
   registry.register(webFetchTool);
 
