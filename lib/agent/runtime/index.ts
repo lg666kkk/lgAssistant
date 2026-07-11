@@ -14,6 +14,7 @@ import type { ToolCallEventData } from "@/lib/agent/runtime/events";
 import {
   callModelWithProvider,
   generateTextWithProvider,
+  type ModelTelemetryMetadata,
   streamTextWithProvider,
 } from "@/lib/agent/runtime/model-provider";
 import {
@@ -110,6 +111,7 @@ interface WebSearchContent {
       title?: unknown;
       url?: unknown;
       content?: unknown;
+      score?: unknown;
     }>;
   };
 }
@@ -295,6 +297,7 @@ export async function callModel(
   system?: string,
   onTextDelta?: (text: string) => void,
   model: ChatModelId = defaultChatModel,
+  telemetryMetadata?: ModelTelemetryMetadata,
 ): Promise<Anthropic.Message> {
   const result = await callModelWithProvider({
     messages,
@@ -302,6 +305,7 @@ export async function callModel(
     system,
     onTextDelta,
     model,
+    telemetryMetadata,
   });
 
   return result as Anthropic.Message;
@@ -341,12 +345,20 @@ export async function callCompressionModel(input: {
   targetTokens: number;
   middleMessageCount: number;
   model?: ChatModelId;
+  telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<string> {
   return generateTextWithProvider({
     model: input.model ?? "deepseek-v4-flash",
     maxOutputTokens: Math.min(Math.max(512, input.targetTokens), 2_000),
+    telemetryFunctionId: "conversation-context-compress",
     system: COMPACTION_SYSTEM_PROMPT,
     prompt: buildCompactionPrompt(input),
+    telemetryMetadata: {
+      ...input.telemetryMetadata,
+      operation: "conversation-context-compress",
+      targetTokens: input.targetTokens,
+      middleMessageCount: input.middleMessageCount,
+    },
   });
 }
 
@@ -455,6 +467,40 @@ export async function executeTools(
               excerpt: doc.content.substring(0, 100),
             });
           }
+        }
+      }
+    }
+    if (
+      toolUse.name === "web_search" &&
+      toolResult.ok &&
+      toolResult.data &&
+      typeof toolResult.data === "object"
+    ) {
+      const search = toolResult.data as WebSearchContent;
+      const results = search.response?.results;
+      if (Array.isArray(results)) {
+        for (const result of results) {
+          const pageUrl = typeof result.url === "string" ? result.url : "";
+          if (!pageUrl) continue;
+
+          const title =
+            typeof result.title === "string" && result.title.trim()
+              ? result.title
+              : pageUrl;
+          const excerpt =
+            typeof result.content === "string" ? result.content.substring(0, 180) : "";
+          const similarity =
+            typeof result.score === "number" && Number.isFinite(result.score)
+              ? result.score
+              : 1;
+
+          toolSources.push({
+            title,
+            notionPageId: pageUrl,
+            pageUrl,
+            similarity,
+            excerpt,
+          });
         }
       }
     }
@@ -777,6 +823,13 @@ export async function runAgentLoop(
         callCompressionModel({
           ...input,
           model: compressionModel,
+          telemetryMetadata: {
+            operation: "context-compaction",
+            requestId,
+            sessionId,
+            userId,
+            messageCount: loopMessages.length,
+          },
         }),
     });
     loopMessages = compacted.messages;
@@ -860,6 +913,13 @@ export async function runAgentLoop(
       system,
       onTextDelta,
       model,
+      {
+        operation: "agent-loop",
+        requestId,
+        sessionId,
+        userId,
+        modelCallIndex: metrics.modelCallCount,
+      },
     );
     if (shouldStop()) {
       return {
@@ -965,6 +1025,10 @@ export async function runAgentLoop(
       if (allToolSources.length > 0) {
         enqueueSources(allToolSources, enqueueText);
       }
+      loopMessages = [
+        ...loopMessages,
+        { role: "assistant" as const, content: initialResponse.content },
+      ];
       return {
         loopMessages,
         completed: true,
@@ -1054,11 +1118,13 @@ export async function streamModelResponse(
   messages: ModelMessage[],
   system?: string,
   model: ChatModelId = defaultChatModel,
+  telemetryMetadata?: ModelTelemetryMetadata,
 ) {
   return streamTextWithProvider({
     model,
     messages,
     system,
+    telemetryMetadata,
   });
 }
 

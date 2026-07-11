@@ -1,5 +1,6 @@
 import { compileWiki } from "@/lib/server/wiki-compiler";
 import { requireUser } from "@/lib/auth/server";
+import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 export const runtime = "nodejs";
 
@@ -25,30 +26,88 @@ export async function POST(req: Request) {
     return Response.json({ error: "请求体格式错误，需要 JSON" }, { status: 400 });
   }
 
+  const requestId = crypto.randomUUID();
+  const pageIds = Array.isArray(body.pageIds) && body.pageIds.length > 0 ? body.pageIds : undefined;
+  const force = Boolean(body.force);
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
-      try {
-        const results = await compileWiki({
-          pageIds: Array.isArray(body.pageIds) && body.pageIds.length > 0 ? body.pageIds : undefined,
-          userId: user.id,
-          force: Boolean(body.force),
-          onEvent: (event) => streamEvent(controller, encoder, event),
-        });
+      const traceInput = {
+        requestId,
+        userId: user.id,
+        pageIds,
+        force,
+      };
 
-        streamEvent(controller, encoder, {
-          type: "done",
-          message: "编译任务结束",
-          results,
+      await startActiveObservation("knowledge-wiki-compile", async (langfuseTrace) => {
+        langfuseTrace.update({
+          input: traceInput,
+          metadata: {
+            requestId,
+            userId: user.id,
+            pageCount: pageIds?.length,
+            force,
+          },
         });
-      } catch (error) {
-        streamEvent(controller, encoder, {
-          type: "error",
-          message: error instanceof Error ? error.message : "编译失败",
+        langfuseTrace.setTraceIO({ input: traceInput });
+
+        await propagateAttributes({
+          userId: user.id,
+          traceName: "knowledge-wiki-compile",
+          tags: ["knowledge", "wiki-compile"],
+          metadata: {
+            requestId,
+            pageCount: String(pageIds?.length ?? "all"),
+            force: String(force),
+          },
+        }, async () => {
+          try {
+            const results = await compileWiki({
+              pageIds,
+              userId: user.id,
+              force,
+              onEvent: (event) => streamEvent(controller, encoder, event),
+            });
+
+            langfuseTrace.update({
+              output: {
+                completed: true,
+                results,
+              },
+            });
+            langfuseTrace.setTraceIO({
+              input: traceInput,
+              output: results,
+            });
+
+            streamEvent(controller, encoder, {
+              type: "done",
+              message: "编译任务结束",
+              results,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "编译失败";
+            langfuseTrace.update({
+              output: {
+                completed: false,
+                error: message,
+              },
+              level: "ERROR",
+              statusMessage: message,
+            });
+            langfuseTrace.setTraceIO({
+              input: traceInput,
+              output: { error: message },
+            });
+            streamEvent(controller, encoder, {
+              type: "error",
+              message,
+            });
+          } finally {
+            controller.close();
+          }
         });
-      } finally {
-        controller.close();
-      }
+      }, { asType: "span" });
     },
   });
 

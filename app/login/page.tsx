@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getBrowserSupabase } from "@/lib/auth/client";
 
 function isValidEmail(value: string) {
@@ -28,9 +28,19 @@ function getAuthErrorMessage(error: unknown) {
   return message || "登录失败";
 }
 
+function getSafeNextPath(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/";
+  }
+
+  return value;
+}
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = getBrowserSupabase();
+  const nextPath = getSafeNextPath(searchParams.get("next"));
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,9 +52,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) router.replace("/");
+      if (data.user) router.replace(nextPath);
     });
-  }, [router, supabase.auth]);
+  }, [nextPath, router, supabase.auth]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -72,7 +82,7 @@ export default function LoginPage() {
       if (mode === "signup" && !result.data.session) {
         setMessage("注册成功，请到邮箱确认后再登录。");
       } else {
-        router.replace("/");
+        router.replace(nextPath);
       }
     } catch (e) {
       setError(getAuthErrorMessage(e));

@@ -12,10 +12,10 @@ import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
+import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/supabase";
-import { ragConfig } from "@/lib/config";
-import { RAGRetriever, type RAGSearchResponse } from "@/lib/server/retriever";
+import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
@@ -40,51 +40,6 @@ function previewLoopMessages(messages: Array<{ role: string; content: unknown }>
       preview: content.slice(0, 300),
     };
   });
-}
-
-function shouldAutoSearchKnowledge(query: string) {
-  const text = query.trim();
-  if (!text) return false;
-
-  const skipPatterns = [
-    /^(你好|hello|hi|嗨|谢谢|thanks|ok|好的|嗯|哈哈)/i,
-    /(现在几点|今天几号|当前时间|天气|新闻|最新|价格|汇率|股价)/,
-    /(翻译|润色|改写|生成|写一段|帮我写|总结这段|解释这段)/,
-    /(计算|算一下|\d+\s*[\+\-\*\/×÷]\s*\d+)/,
-    /(创建|新建|增加|添加|设置|设定|安排).{0,12}(定时|定时器|任务|提醒|cron|闹钟)/i,
-    /(定时|定时器|cron).{0,20}(提醒|推送|发送|执行|运行|跑)/i,
-    /(每天|每周|每月|明天|后天|今晚|早上|上午|下午|晚上).{0,20}(提醒|推送|发送|执行|运行|跑)/,
-  ];
-
-  // 用户显式开启「知识库搜索」即代表优先从知识库查找：除寒暄、实时类、
-  // 纯文本改写、算术这类明显无需检索的输入外，一律尝试自动检索。
-  return !skipPatterns.some((pattern) => pattern.test(text));
-}
-
-function buildRagTraceAttempt(input: {
-  label: string;
-  threshold: number;
-  response: RAGSearchResponse;
-}) {
-  return {
-    label: input.label,
-    threshold: input.threshold,
-    debug: input.response.debug,
-    topResults: input.response.results.slice(0, 5).map((result, index) => ({
-      rank: index + 1,
-      id: result.id,
-      pageId: result.pageId,
-      pageTitle: result.pageTitle,
-      pageUrl: result.pageUrl,
-      similarity: result.similarity,
-      vectorScore: result.vectorScore,
-      keywordScore: result.keywordScore,
-      rerankScore: result.rerankScore ?? result.combinedScore,
-      retrievalSources: result.retrievalSources,
-      headingPath: result.headingPath,
-      excerpt: result.content.replace(/\s+/g, " ").trim().slice(0, 240),
-    })),
-  };
 }
 
 async function persistSessionTurn(input: {
@@ -120,6 +75,32 @@ function extractLastAssistantText(messages: unknown[]) {
         : typeof m.content === "string" ? m.content : "";
       return text || found;
     }, "");
+}
+
+function buildLangfuseTraceInput(input: {
+  requestId: string;
+  sessionId?: string;
+  userId: string;
+  model: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+}) {
+  const currentUserMessage = [...input.messages]
+    .reverse()
+    .find((message) => message.role === "user")?.content ?? "";
+
+  return {
+    requestId: input.requestId,
+    sessionId: input.sessionId,
+    userId: input.userId,
+    model: input.model,
+    query: currentUserMessage,
+    messageCount: input.messages.length,
+    historyPreview: input.messages.slice(0, -1).slice(-6).map((message) => ({
+      role: message.role,
+      chars: message.content.length,
+      preview: message.content.slice(0, 160),
+    })),
+  };
 }
 
 async function restoreSessionHistoryFromDatabase(input: {
@@ -183,7 +164,6 @@ export async function POST(req: Request) {
   const requestId = crypto.randomUUID();
   const { messages, sessionId } = body;
   const enableWebSearch = body.enableWebSearch !== false;
-  const enableKnowledgeSearch = body.enableKnowledgeSearch !== false;
   const selectedModel = resolveChatModel(body.model);
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -214,13 +194,18 @@ export async function POST(req: Request) {
     role: msg.role as "user" | "assistant",
     content: msg.content,
   }));
+  let knowledgeProfile: string | undefined;
+  try {
+    knowledgeProfile = await buildKnowledgeProfileForTool({ userId: user.id });
+  } catch (error: any) {
+    console.error("[knowledge] 构建工具画像失败，使用默认 search_notes 描述:", error.message);
+  }
   // 有哪些工具
-  const toolRegistry = createBuiltinToolRegistry();
+  const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile });
   // 给模型看的工具说明
   const tools = toolRegistry
     .listForModel()
-    .filter((tool) => enableWebSearch || tool.name !== "web_search")
-    .filter((tool) => enableKnowledgeSearch || tool.name !== "search_notes");
+    .filter((tool) => enableWebSearch || tool.name !== "web_search");
   // 最大工具调用次数
   const maxToolIterations = 8;
 
@@ -257,6 +242,37 @@ export async function POST(req: Request) {
         }
       };
 
+      await startActiveObservation("agent-chat", async (langfuseTrace) => {
+        const traceInput = buildLangfuseTraceInput({
+          requestId,
+          sessionId,
+          userId: user.id,
+          model: selectedModel,
+          messages: modelMessages,
+        });
+        const traceDisplayInput = traceInput.query || "(空消息)";
+        langfuseTrace.update({
+          input: traceDisplayInput,
+          metadata: {
+            requestId,
+            sessionId,
+            userId: user.id,
+            model: selectedModel,
+            traceInput,
+          },
+        });
+        langfuseTrace.setTraceIO({ input: traceDisplayInput });
+
+        await propagateAttributes({
+          userId: user.id,
+          sessionId,
+          traceName: "agent-chat",
+          tags: ["api-chat", "agent"],
+          metadata: {
+            requestId,
+            model: selectedModel,
+          },
+        }, async () => {
       try {
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖
@@ -307,92 +323,11 @@ export async function POST(req: Request) {
           .reverse()
           .find((m: any) => m.role === "user");
         let memorySystem = "";
-        let knowledgeSystem = "";
-        let knowledgeMetadata: Record<string, unknown> | undefined;
         if (lastUser) {
           try {
             memorySystem = await recallForPrompt(lastUser.content, { userId: user.id });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
-          }
-
-          if (enableKnowledgeSearch && shouldAutoSearchKnowledge(lastUser.content)) {
-            try {
-              const retriever = new RAGRetriever();
-              const ragStartedAt = Date.now();
-              const attempts: Array<ReturnType<typeof buildRagTraceAttempt>> = [];
-              let knowledgeResponse = await retriever.searchWithDebug(
-                lastUser.content,
-                {
-                  matchThreshold: ragConfig.similarityThreshold,
-                  matchCount: ragConfig.maxResults,
-                  userId: user.id,
-                  enableMmr: true,
-                  enableQueryRewrite: true,
-                  enableRerank: true,
-                },
-              );
-              attempts.push(
-                buildRagTraceAttempt({
-                  label: "primary",
-                  threshold: ragConfig.similarityThreshold,
-                  response: knowledgeResponse,
-                }),
-              );
-
-              if (knowledgeResponse.results.length === 0) {
-                knowledgeResponse = await retriever.searchWithDebug(lastUser.content, {
-                  matchThreshold: 0,
-                  matchCount: ragConfig.maxResults,
-                  userId: user.id,
-                  enableMmr: true,
-                  enableQueryRewrite: true,
-                  enableRerank: true,
-                });
-                attempts.push(
-                  buildRagTraceAttempt({
-                    label: "fallback_threshold_0",
-                    threshold: 0,
-                    response: knowledgeResponse,
-                  }),
-                );
-              }
-
-              knowledgeMetadata = {
-                type: "rag_auto_knowledge",
-                query: lastUser.content,
-                triggered: true,
-                usedFallback: attempts.length > 1,
-                durationMs: Date.now() - ragStartedAt,
-                finalReturnedCount: knowledgeResponse.results.length,
-                attempts,
-              };
-
-              if (knowledgeResponse.results.length > 0) {
-                allToolSources.push(
-                  ...knowledgeResponse.results.map((result) => ({
-                    title: result.pageTitle,
-                    notionPageId: result.pageId,
-                    pageUrl: result.pageUrl,
-                    similarity: result.rerankScore ?? result.combinedScore,
-                    excerpt: result.content.substring(0, 180),
-                  })),
-                );
-                knowledgeSystem = [
-                  "以下是从用户个人知识库自动检索到的资料。回答和这些资料相关的问题时，优先基于这里的内容；如果资料不足，请说明不足，不要硬编。",
-                  "",
-                  retriever.formatContext(knowledgeResponse.results),
-                ].join("\n");
-              }
-            } catch (e: any) {
-              console.error("[knowledge] 自动检索失败，跳过注入:", e.message);
-              knowledgeMetadata = {
-                type: "rag_auto_knowledge",
-                query: lastUser.content,
-                triggered: true,
-                error: e.message,
-              };
-            }
           }
         }
         // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
@@ -400,8 +335,6 @@ export async function POST(req: Request) {
         const prompt = buildPromptPipe({
           userMessage: lastUser?.content ?? "",
           memory: memorySystem,
-          knowledge: knowledgeSystem,
-          knowledgeMetadata,
           webSearchEnabled: enableWebSearch,
           currentDate: new Date().toISOString(),
           maxTokens: 4200,
@@ -453,11 +386,23 @@ export async function POST(req: Request) {
         const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user")?.content;
 
         if (agentLoopResult.completed) {
+          const assistantMessage = extractLastAssistantText(agentLoopResult.loopMessages);
+          langfuseTrace.update({
+            output: {
+              completed: true,
+              stopReason: agentLoopResult.stopReason,
+              assistantMessage,
+            },
+          });
+          langfuseTrace.setTraceIO({
+            input: traceDisplayInput,
+            output: assistantMessage,
+          });
           void persistSessionTurn({
             userId: user.id,
             sessionId,
             userMessage: lastUserMessage,
-            assistantMessage: extractLastAssistantText(agentLoopResult.loopMessages),
+            assistantMessage,
           }).catch((e: any) =>
             console.error("[session] 写入历史失败:", e.message),
           );
@@ -477,7 +422,13 @@ export async function POST(req: Request) {
         let finalAssistantText = "";
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
-        stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel);
+        stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel, {
+          operation: "final-answer",
+          requestId,
+          sessionId,
+          userId: user.id,
+          messageCount: loopMessages.length,
+        });
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
@@ -491,6 +442,17 @@ export async function POST(req: Request) {
         );
 
         if (req.signal.aborted || closed) {
+          langfuseTrace.update({
+            output: {
+              completed: false,
+              stopReason: "aborted",
+              assistantMessage: finalAssistantText,
+            },
+          });
+          langfuseTrace.setTraceIO({
+            input: traceDisplayInput,
+            output: finalAssistantText,
+          });
           closeStream();
           return;
         }
@@ -510,11 +472,37 @@ export async function POST(req: Request) {
         }).catch((e: any) =>
           console.error("[session] 写入历史失败:", e.message),
         );
+        langfuseTrace.update({
+          output: {
+            completed: true,
+            stopReason: finalStopReason ?? "end_turn",
+            assistantMessage: finalAssistantText,
+          },
+        });
+        langfuseTrace.setTraceIO({
+          input: traceDisplayInput,
+          output: finalAssistantText,
+        });
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();
       } catch (error: any) {
         if (req.signal.aborted || closed) {
+          langfuseTrace.update({
+            output: {
+              completed: false,
+              stopReason: "aborted",
+              error: error.message || "未知错误",
+            },
+            level: "WARNING",
+          });
+          langfuseTrace.setTraceIO({
+            input: traceDisplayInput,
+            output: {
+              error: error.message || "未知错误",
+              aborted: true,
+            },
+          });
           closeStream();
           return;
         }
@@ -527,8 +515,25 @@ export async function POST(req: Request) {
           },
           enqueueText,
         );
+        langfuseTrace.update({
+          output: {
+            completed: false,
+            stopReason: "error",
+            error: error.message || "未知错误",
+          },
+          level: "ERROR",
+          statusMessage: error.message || "未知错误",
+        });
+        langfuseTrace.setTraceIO({
+          input: traceDisplayInput,
+          output: {
+            error: error.message || "未知错误",
+          },
+        });
         closeStream();
       }
+        });
+      }, { asType: "agent" });
     },
   });
 

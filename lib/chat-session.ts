@@ -69,7 +69,6 @@ export class ChatSession {
     onUpdate: () => void,
     options: {
       webSearchEnabled?: boolean;
-      knowledgeSearchEnabled?: boolean;
       model?: ChatModelId;
     } = {},
   ) {
@@ -155,7 +154,6 @@ export class ChatSession {
           messages: [userMessage],
           sessionId: this.id,
           enableWebSearch: options.webSearchEnabled !== false,
-          enableKnowledgeSearch: options.knowledgeSearchEnabled !== false,
           model: options.model,
         }),
         signal: this.abortController.signal,

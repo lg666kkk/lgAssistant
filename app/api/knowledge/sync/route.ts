@@ -1,5 +1,6 @@
 import { syncNotionPageTree, syncNotionPages } from "@/lib/server/sync";
 import { requireUser } from "@/lib/auth/server";
+import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
   const pageId = extractNotionPageId(body.input ?? "");
   const syncTree = body.tree !== false;
   const force = Boolean(body.force);
+  const requestId = crypto.randomUUID();
 
   if (!pageId) {
     return Response.json({ error: "请输入有效的 Notion 页面链接或页面 ID" }, { status: 400 });
@@ -51,40 +53,92 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
-      try {
-        streamEvent(controller, encoder, {
-          type: "input_parsed",
-          message: `已解析页面 ID：${pageId}`,
-          pageId,
-          tree: syncTree,
-          force,
-        });
+      const traceInput = {
+        requestId,
+        userId: user.id,
+        pageId,
+        tree: syncTree,
+        force,
+      };
 
-        const results = syncTree
-          ? await syncNotionPageTree(pageId, {
-              userId: user.id,
+      await startActiveObservation("knowledge-sync", async (langfuseTrace) => {
+        langfuseTrace.update({
+          input: traceInput,
+          metadata: traceInput,
+        });
+        langfuseTrace.setTraceIO({ input: traceInput });
+
+        await propagateAttributes({
+          userId: user.id,
+          traceName: "knowledge-sync",
+          tags: ["knowledge", "notion-sync"],
+          metadata: {
+            requestId,
+            pageId,
+            tree: String(syncTree),
+            force: String(force),
+          },
+        }, async () => {
+          try {
+            streamEvent(controller, encoder, {
+              type: "input_parsed",
+              message: `已解析页面 ID：${pageId}`,
+              pageId,
+              tree: syncTree,
               force,
-              onEvent: (event) => streamEvent(controller, encoder, event),
-            })
-          : await syncNotionPages([pageId], {
-              userId: user.id,
-              force,
-              onEvent: (event) => streamEvent(controller, encoder, event),
             });
 
-        streamEvent(controller, encoder, {
-          type: "done",
-          message: "同步任务结束",
-          results,
+            const results = syncTree
+              ? await syncNotionPageTree(pageId, {
+                  userId: user.id,
+                  force,
+                  onEvent: (event) => streamEvent(controller, encoder, event),
+                })
+              : await syncNotionPages([pageId], {
+                  userId: user.id,
+                  force,
+                  onEvent: (event) => streamEvent(controller, encoder, event),
+                });
+
+            langfuseTrace.update({
+              output: {
+                completed: true,
+                results,
+              },
+            });
+            langfuseTrace.setTraceIO({
+              input: traceInput,
+              output: results,
+            });
+
+            streamEvent(controller, encoder, {
+              type: "done",
+              message: "同步任务结束",
+              results,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "同步失败";
+            langfuseTrace.update({
+              output: {
+                completed: false,
+                error: message,
+              },
+              level: "ERROR",
+              statusMessage: message,
+            });
+            langfuseTrace.setTraceIO({
+              input: traceInput,
+              output: { error: message },
+            });
+            streamEvent(controller, encoder, {
+              type: "error",
+              message,
+            });
+          } finally {
+            controller.close();
+          }
         });
-      } catch (error) {
-        streamEvent(controller, encoder, {
-          type: "error",
-          message: error instanceof Error ? error.message : "同步失败",
-        });
-      } finally {
-        controller.close();
-      }
+      }, { asType: "span" });
     },
   });
 

@@ -35,10 +35,17 @@ function buildRagTopResults(results: Awaited<ReturnType<RAGRetriever["searchWith
   }));
 }
 
-export const searchNotesTool: ToolDefinition = {
+const BASE_SEARCH_NOTES_DESCRIPTION =
+  "在用户的个人知识库（Notion 笔记、文档、资料）中检索内容。只有在用户明确要求查询个人知识库/笔记/文档，或当前问题与工具描述附带的知识库画像高度匹配时，才调用本工具。不要因为泛泛的事实问题、代码问题、闲聊、计算、实时公开信息查询而调用。它只能查到用户私有内容，查不到公开网络信息；公开或实时信息请用 web_search。若问题同时涉及个人资料和实时/公开信息，可与 web_search 一起调用，各取所长。";
+
+export function createSearchNotesTool(options: {
+  knowledgeProfile?: string;
+} = {}): ToolDefinition {
+  return {
   name: "search_notes",
-  description:
-    "在用户的个人知识库（Notion 笔记、文档、资料）中检索内容。凡是可能与用户自己记录过的东西相关的问题——个人笔记、过往方案、读书/会议记录、私有资料、'我之前写的/记的/整理的…'——都应优先调用本工具，这是回答的第一信息来源。它只能查到用户私有的内容，查不到公开网络信息。若问题同时涉及个人资料和实时/公开信息，可与 web_search 一起调用，各取所长。",
+  description: options.knowledgeProfile
+    ? `${BASE_SEARCH_NOTES_DESCRIPTION}\n\n${options.knowledgeProfile}`
+    : BASE_SEARCH_NOTES_DESCRIPTION,
   input_schema: {
     type: "object",
     properties: {
@@ -142,4 +149,7 @@ export const searchNotesTool: ToolDefinition = {
       };
     }
   },
-};
+  };
+}
+
+export const searchNotesTool: ToolDefinition = createSearchNotesTool();

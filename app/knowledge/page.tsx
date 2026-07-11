@@ -41,6 +41,21 @@ type WikiPage = {
   metadata?: Record<string, unknown>;
 };
 
+type KnowledgeResetCounts = {
+  notionPages: number;
+  documents: number;
+  compiledWikiPages: number;
+  compiledWikiEdges: number;
+  knowledgeProfiles?: number;
+};
+
+type KnowledgeResetResult = {
+  deleted: boolean;
+  includeRag: boolean;
+  includeCompiledWiki: boolean;
+  counts: KnowledgeResetCounts;
+};
+
 function formatMetaValue(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (Array.isArray(value)) {
@@ -108,6 +123,11 @@ export default function KnowledgePage() {
   const [compileForce, setCompileForce] = useState(false);
   const [compileEvents, setCompileEvents] = useState<SyncEvent[]>([]);
   const [compileError, setCompileError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetIncludeRag, setResetIncludeRag] = useState(true);
+  const [resetIncludeCompiledWiki, setResetIncludeCompiledWiki] = useState(true);
+  const [resetPreview, setResetPreview] = useState<KnowledgeResetResult | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const loadPages = () => {
     setLoading(true);
@@ -246,8 +266,53 @@ export default function KnowledgePage() {
     }
   }
 
+  async function runReset(confirm: boolean) {
+    if (resetting || (!resetIncludeRag && !resetIncludeCompiledWiki)) return;
+
+    if (confirm) {
+      const ok = window.confirm("确认清空选中的知识库数据？这个操作不可撤销。");
+      if (!ok) return;
+    }
+
+    setResetting(true);
+    setResetError(null);
+
+    try {
+      const response = await authFetch("/api/knowledge/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirm,
+          includeRag: resetIncludeRag,
+          includeCompiledWiki: resetIncludeCompiledWiki,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "清空知识库失败");
+      }
+
+      setResetPreview(data as KnowledgeResetResult);
+      if (confirm) {
+        loadPages();
+      }
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : "清空知识库失败");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   const summaryEvent = syncEvents.find((event) => event.type === "batch_done");
   const doneEvent = syncEvents.find((event) => event.type === "done");
+  const resetTotal = resetPreview
+    ? resetPreview.counts.notionPages +
+      resetPreview.counts.documents +
+      resetPreview.counts.compiledWikiPages +
+      resetPreview.counts.compiledWikiEdges +
+      (resetPreview.counts.knowledgeProfiles ?? 0)
+    : 0;
   const currentTreeEvent = [...syncEvents]
     .reverse()
     .find((event) => event.type === "tree_page_scanning" || event.type === "tree_page_found");
@@ -552,6 +617,116 @@ export default function KnowledgePage() {
           )}
         </section>
 
+        <section className="mt-6 rounded-lg border border-rose-950 bg-zinc-950">
+          <div className="flex flex-col gap-3 border-b border-rose-950/80 px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-rose-100">知识库产物管理</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                清空 raw RAG 或已编译 Wiki 产物；编译能力在上方 Wiki 面板执行。
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => runReset(false)}
+                disabled={resetting || (!resetIncludeRag && !resetIncludeCompiledWiki)}
+                className="rounded-md border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
+              >
+                {resetting ? "处理中" : "预览清空"}
+              </button>
+              <button
+                type="button"
+                onClick={() => runReset(true)}
+                disabled={resetting || syncing || compiling || (!resetIncludeRag && !resetIncludeCompiledWiki)}
+                className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+              >
+                确认清空
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-sm text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={resetIncludeRag}
+                  onChange={(event) => {
+                    setResetIncludeRag(event.target.checked);
+                    setResetPreview(null);
+                  }}
+                  disabled={resetting}
+                  className="h-4 w-4 accent-rose-600"
+                />
+                Raw RAG 页面和 chunks
+              </label>
+              <label className="flex items-center gap-2 text-sm text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={resetIncludeCompiledWiki}
+                  onChange={(event) => {
+                    setResetIncludeCompiledWiki(event.target.checked);
+                    setResetPreview(null);
+                  }}
+                  disabled={resetting}
+                  className="h-4 w-4 accent-rose-600"
+                />
+                编译 Wiki 页面和关系
+              </label>
+            </div>
+
+            <div>
+              {resetError && (
+                <div className="mb-3 rounded-md border border-rose-900 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">
+                  {resetError}
+                </div>
+              )}
+
+              {resetPreview ? (
+                <div className="grid gap-2 text-center text-xs sm:grid-cols-4">
+                  <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+                    <div className="text-zinc-500">Raw 页面</div>
+                    <div className="mt-1 text-lg font-semibold text-zinc-100">
+                      {resetPreview.counts.notionPages}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+                    <div className="text-zinc-500">Chunks</div>
+                    <div className="mt-1 text-lg font-semibold text-zinc-100">
+                      {resetPreview.counts.documents}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+                    <div className="text-zinc-500">Wiki 页面</div>
+                    <div className="mt-1 text-lg font-semibold text-zinc-100">
+                      {resetPreview.counts.compiledWikiPages}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+                    <div className="text-zinc-500">关系</div>
+                    <div className="mt-1 text-lg font-semibold text-zinc-100">
+                      {resetPreview.counts.compiledWikiEdges}
+                    </div>
+                  </div>
+                  <div className={`rounded-md border px-3 py-2 text-left text-sm sm:col-span-4 ${
+                    resetPreview.deleted
+                      ? "border-emerald-900 bg-emerald-950/30 text-emerald-300"
+                      : "border-amber-900 bg-amber-950/20 text-amber-300"
+                  }`}>
+                    {resetPreview.deleted
+                      ? `已清空 ${resetTotal} 条知识库记录。`
+                      : `预览会清空 ${resetTotal} 条知识库记录，确认后才会删除。`}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-6 text-center text-sm text-zinc-500">
+                  先预览将要清空的数据范围。
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
         {loading && <div className="mt-8 text-slate-500">加载中...</div>}
         {error && (
           <div className="mt-8 rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
@@ -580,7 +755,7 @@ export default function KnowledgePage() {
                         rel="noreferrer"
                         className="text-slate-100 hover:text-sky-300"
                       >
-                        {page.page_title}
+                        {page.page_title?.trim() || "Untitled"}
                       </a>
                       <div className="mt-1 font-mono text-xs text-slate-600">
                         {page.page_id}

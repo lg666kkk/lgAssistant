@@ -1,10 +1,11 @@
 import {
   IDENTITY_CONTENT,
+  KNOWLEDGE_SEARCH_POLICY,
   SEARCH_QUERY_POLICY,
   WEB_SEARCH_CONTENT,
 } from "./policies";
 
-export type PromptSegmentKind = "identity" | "memory" | "web-search-policy" | "search-query-policy" | "task-context" | "safety";
+export type PromptSegmentKind = "identity" | "memory" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "task-context" | "safety";
 
 export type PromptSegment = {
   kind: PromptSegmentKind;
@@ -75,6 +76,16 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       dynamic: false,
     });
   }
+
+  segments.push({
+    kind: "knowledge-search-policy",
+    title: "知识库检索策略",
+    content: KNOWLEDGE_SEARCH_POLICY,
+    priority: 85,
+    tokenBudget: 360,
+    source: "system",
+    dynamic: false,
+  });
 
   const knowledge = input.knowledge?.trim();
   if (knowledge) {

@@ -28,6 +28,17 @@ export async function getAccessToken() {
   return session?.access_token ?? null;
 }
 
+function redirectToLogin() {
+  if (typeof window === "undefined") return;
+
+  const current = `${window.location.pathname}${window.location.search}`;
+  const target = `/login?next=${encodeURIComponent(current)}`;
+
+  if (window.location.pathname !== "/login") {
+    window.location.assign(target);
+  }
+}
+
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const token = await getAccessToken();
   const headers = new Headers(init.headers);
@@ -36,8 +47,15 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  return fetch(input, {
+  const response = await fetch(input, {
     ...init,
     headers,
   });
+
+  if (response.status === 401) {
+    await getBrowserSupabase().auth.signOut().catch(() => undefined);
+    redirectToLogin();
+  }
+
+  return response;
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getSupabase } from "@/lib/supabase";
 import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
 import { defaultChatModel } from "@/lib/agent/models";
+import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 
 const COMPILER_VERSION = "llm-wiki-page-v1";
 const MAX_SOURCE_CHARS = 12000;
@@ -106,11 +107,20 @@ export async function compileWiki(options: WikiCompileOptions = {}) {
     }
   }
 
+  let knowledgeProfile: string | undefined;
+  if (options.userId) {
+    try {
+      knowledgeProfile = await buildKnowledgeProfileForTool({ userId: options.userId });
+    } catch (error) {
+      console.error("[wiki] 构建知识库画像失败:", error);
+    }
+  }
+
   emit(options, {
     type: "compile_done",
     totalPages: sourcePages.length,
     message: `编译完成：${results.length}/${sourcePages.length} 个页面`,
-    metadata: { results },
+    metadata: { results, knowledgeProfile },
   });
 
   return results;
@@ -282,6 +292,7 @@ async function compileWithLLM(input: {
   const text = await generateTextWithProvider({
     model: defaultChatModel,
     maxOutputTokens: 3000,
+    telemetryFunctionId: "wiki-page-compile",
     system: [
       "你是 LLM 编译知识库的知识编译器。",
       "任务：把原始资料编译成结构化 wiki 页面，而不是简单摘要。",
@@ -290,6 +301,13 @@ async function compileWithLLM(input: {
       '格式：{"title":"页面标题","slug":"稳定英文或拼音短 slug","summary":"一句话摘要","content":"Markdown 正文","concepts":["概念"],"links":[{"target":"相关概念或页面","relation":"关系","evidence":"证据"}]}',
     ].join("\n"),
     prompt,
+    telemetryMetadata: {
+      operation: "wiki-compile",
+      sourceSlug: input.slug,
+      pageId: input.page.page_id,
+      pageTitle: input.page.page_title,
+      sourceChars: input.sourceText.length,
+    },
   });
 
   try {

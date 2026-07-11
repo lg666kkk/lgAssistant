@@ -14,6 +14,32 @@ type NotionBlockWithDepth = {
   depth: number;
 };
 
+function extractPageTitle(page: any): string {
+  if (!page || !('properties' in page)) {
+    return 'Untitled';
+  }
+
+  for (const property of Object.values(page.properties ?? {})) {
+    if (
+      property &&
+      typeof property === 'object' &&
+      'type' in property &&
+      property.type === 'title' &&
+      'title' in property &&
+      Array.isArray(property.title)
+    ) {
+      const title = property.title
+        .map((item: { plain_text?: string }) => item.plain_text ?? '')
+        .join('')
+        .trim();
+
+      if (title) return title;
+    }
+  }
+
+  return 'Untitled';
+}
+
 /**
  * Notion 页面信息
  */
@@ -92,14 +118,7 @@ export class NotionClient {
       throw new Error('无法读取 Notion 页面完整信息');
     }
 
-    // 提取标题
-    let title = 'Untitled';
-    if ('properties' in page && page.properties.title) {
-      const titleProp = page.properties.title;
-      if (titleProp.type === 'title' && titleProp.title.length > 0) {
-        title = titleProp.title[0].plain_text;
-      }
-    }
+    const title = extractPageTitle(page);
 
     return {
       id: page.id,

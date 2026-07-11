@@ -1,3 +1,4 @@
+import "@/instrumentation";
 import { deepseekConfig } from "@/lib/config";
 import type { ChatModelId } from "@/lib/agent/models";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -11,6 +12,11 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 type ModelMessage = Anthropic.MessageParam;
 type ModelContentBlock = Anthropic.Messages.ContentBlock;
+export type ModelTelemetryMetadata = Record<
+  string,
+  string | number | boolean | null | undefined
+>;
+type CompactModelTelemetryMetadata = Record<string, string | number | boolean>;
 
 export type ModelCallResult = {
   content: ModelContentBlock[];
@@ -23,7 +29,8 @@ export type ModelCallResult = {
 
 function resolveOpenAIBaseURL() {
   if (process.env.AI_SDK_BASE_URL) return process.env.AI_SDK_BASE_URL;
-  if (process.env.DEEPSEEK_OPENAI_BASE_URL) return process.env.DEEPSEEK_OPENAI_BASE_URL;
+  if (process.env.DEEPSEEK_OPENAI_BASE_URL)
+    return process.env.DEEPSEEK_OPENAI_BASE_URL;
   if (deepseekConfig.baseURL.endsWith("/anthropic")) {
     return deepseekConfig.baseURL.replace(/\/anthropic$/, "/v1");
   }
@@ -121,7 +128,9 @@ function toAIMessages(messages: ModelMessage[]) {
   return messages.map((message) => toAIMessage(message, toolNameByCallId));
 }
 
-function toAnthropicUsage(usage?: LanguageModelUsage): ModelCallResult["usage"] {
+function toAnthropicUsage(
+  usage?: LanguageModelUsage,
+): ModelCallResult["usage"] {
   if (!usage) return undefined;
   return {
     input_tokens: usage.inputTokens ?? 0,
@@ -137,12 +146,25 @@ function toStopReason(finishReason?: string): Anthropic.Messages.StopReason {
   return "end_turn";
 }
 
+function compactMetadata(
+  metadata?: ModelTelemetryMetadata,
+): CompactModelTelemetryMetadata | undefined {
+  if (!metadata) return undefined;
+  const compacted: CompactModelTelemetryMetadata = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === undefined || value === null) continue;
+    compacted[key] = value;
+  }
+  return compacted;
+}
+
 export async function callModelWithProvider(input: {
   messages: ModelMessage[];
   tools: Anthropic.Tool[];
   system?: string;
   onTextDelta?: (text: string) => void;
   model: ChatModelId;
+  telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<ModelCallResult> {
   const result = streamText({
     model: provider.chat(input.model),
@@ -151,6 +173,17 @@ export async function callModelWithProvider(input: {
     system: input.system,
     messages: toAIMessages(input.messages),
     tools: toAITools(input.tools),
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId: "agent-loop-model-call",
+      metadata: compactMetadata({
+        ...input.telemetryMetadata,
+        model: input.model,
+        hasTools: input.tools.length > 0,
+        messageCount: input.messages.length,
+        toolCount: input.tools.length,
+      }),
+    },
   });
   let text = "";
   let finishReason: string | undefined;
@@ -200,6 +233,8 @@ export async function generateTextWithProvider(input: {
   system?: string;
   model: ChatModelId;
   maxOutputTokens: number;
+  telemetryFunctionId?: string;
+  telemetryMetadata?: ModelTelemetryMetadata;
 }) {
   const result = await generateText({
     model: provider.chat(input.model),
@@ -207,6 +242,14 @@ export async function generateTextWithProvider(input: {
     temperature: deepseekConfig.temperature,
     system: input.system,
     prompt: input.prompt,
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId: input.telemetryFunctionId ?? "generate-text",
+      metadata: compactMetadata({
+        ...input.telemetryMetadata,
+        model: input.model,
+      }),
+    },
   });
 
   return result.text;
@@ -216,6 +259,7 @@ export async function streamTextWithProvider(input: {
   messages: ModelMessage[];
   system?: string;
   model: ChatModelId;
+  telemetryMetadata?: ModelTelemetryMetadata;
 }) {
   const result = streamText({
     model: provider.chat(input.model),
@@ -223,6 +267,15 @@ export async function streamTextWithProvider(input: {
     temperature: deepseekConfig.temperature,
     system: input.system,
     messages: toAIMessages(input.messages),
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId: "final-answer-stream",
+      metadata: compactMetadata({
+        ...input.telemetryMetadata,
+        model: input.model,
+        messageCount: input.messages.length,
+      }),
+    },
   });
 
   return {

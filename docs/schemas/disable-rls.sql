@@ -10,6 +10,7 @@ ALTER TABLE notion_pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE compiled_wiki_pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE compiled_wiki_edges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_semantic_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leetcode_daily_practices ENABLE ROW LEVEL SECURITY;
@@ -24,6 +25,7 @@ DROP POLICY IF EXISTS "用户只能访问自己的 notion_pages" ON notion_pages
 DROP POLICY IF EXISTS "用户只能访问自己的 documents" ON documents;
 DROP POLICY IF EXISTS "用户只能访问自己的 compiled_wiki_pages" ON compiled_wiki_pages;
 DROP POLICY IF EXISTS "用户只能访问自己的 compiled_wiki_edges" ON compiled_wiki_edges;
+DROP POLICY IF EXISTS "用户只能访问自己的 knowledge_profiles" ON knowledge_profiles;
 DROP POLICY IF EXISTS "用户只能访问自己的 agent_memories" ON agent_memories;
 DROP POLICY IF EXISTS "用户只能访问自己的 agent_semantic_memories" ON agent_semantic_memories;
 DROP POLICY IF EXISTS "用户只能访问自己的 leetcode_daily_practices" ON leetcode_daily_practices;
@@ -61,6 +63,11 @@ CREATE POLICY "用户只能访问自己的 compiled_wiki_pages"
 
 CREATE POLICY "用户只能访问自己的 compiled_wiki_edges"
   ON compiled_wiki_edges FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "用户只能访问自己的 knowledge_profiles"
+  ON knowledge_profiles FOR ALL
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
