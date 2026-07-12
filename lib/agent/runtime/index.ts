@@ -8,6 +8,7 @@ import {
 import {
   compactLoopMessagesSemantic,
 } from "@/lib/agent/runtime/compaction";
+import { saveToolArtifact } from "@/lib/agent/runtime/artifact-store";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
@@ -156,6 +157,68 @@ export function appendToolResults(
   ];
 }
 
+function getLatestToolResultTrigger(messages: ModelMessage[]) {
+  const latestMessage = messages[messages.length - 1] as any;
+  if (
+    latestMessage?.role !== "user" ||
+    !Array.isArray(latestMessage.content) ||
+    !latestMessage.content.some((block: any) => block?.type === "tool_result")
+  ) {
+    return {
+      trigger: "initial" as const,
+      toolNames: [] as string[],
+    };
+  }
+
+  const toolResultIds = new Set(
+    latestMessage.content
+      .filter((block: any) => block?.type === "tool_result")
+      .map((block: any) => block.tool_use_id)
+      .filter((id: unknown): id is string => typeof id === "string" && id.length > 0),
+  );
+
+  const previousAssistant = [...messages]
+    .slice(0, -1)
+    .reverse()
+    .find((message: any) => message.role === "assistant" && Array.isArray(message.content)) as
+    | { content: unknown[] }
+    | undefined;
+
+  const toolNames = previousAssistant?.content
+    ?.filter((block: any) => block?.type === "tool_use" && toolResultIds.has(block.id))
+    .map((block: any) => block.name)
+    .filter((name: unknown): name is string => typeof name === "string" && name.length > 0) ?? [];
+
+  return {
+    trigger: "after_tools" as const,
+    toolNames: Array.from(new Set(toolNames)),
+  };
+}
+
+function buildAgentLoopTelemetry(input: {
+  messages: ModelMessage[];
+}) {
+  const trigger = getLatestToolResultTrigger(input.messages);
+  if (trigger.trigger === "initial") {
+    return {
+      functionId: "agent-loop-initial",
+      trigger: trigger.trigger,
+      triggeringTools: "",
+    };
+  }
+
+  const toolSummary = trigger.toolNames.length > 0
+    ? trigger.toolNames.slice(0, 5).join("+")
+    : "unknown_tool";
+  const overflow = trigger.toolNames.length > 5 ? "+more" : "";
+
+  return {
+    functionId: `agent-loop-after-tools:${toolSummary}${overflow}`,
+    trigger: trigger.trigger,
+    triggeringTools: trigger.toolNames.join(","),
+  };
+}
+
 function compactTextHeadTail(text: string, maxChars: number) {
   const normalized = text.replace(/\n{3,}/g, "\n\n").trim();
   if (normalized.length <= maxChars) return normalized;
@@ -274,6 +337,10 @@ function shapeToolResultContent(
   toolName: string,
   toolResult: Awaited<ReturnType<typeof executeToolCall>>,
 ) {
+  if (toolName === "read_tool_artifact") {
+    return truncateToolContent(toolResult.content, 4_000);
+  }
+
   const shaped =
     toolName === "web_fetch"
       ? shapeWebFetchContent(toolResult)
@@ -284,6 +351,67 @@ function shapeToolResultContent(
           : undefined;
 
   return truncateToolContent(shaped ?? toolResult.content, 1_200);
+}
+
+const ARTIFACT_ELIGIBLE_TOOLS = new Set([
+  "web_fetch",
+  "web_search",
+  "search_notes",
+]);
+
+function shouldStoreToolArtifact(
+  toolName: string,
+  toolResult: Awaited<ReturnType<typeof executeToolCall>>,
+  shapedResult: ReturnType<typeof truncateToolContent>,
+) {
+  if (!toolResult.ok || !ARTIFACT_ELIGIBLE_TOOLS.has(toolName)) return false;
+  if (toolName === "web_fetch") return true;
+
+  const rawDataSize =
+    toolResult.data === undefined ? 0 : JSON.stringify(toolResult.data).length;
+  return (
+    shapedResult.truncated ||
+    toolResult.content.length > 2_000 ||
+    rawDataSize > 4_000
+  );
+}
+
+async function maybeStoreToolArtifact(input: {
+  toolUse: ToolUseBlock;
+  toolResult: Awaited<ReturnType<typeof executeToolCall>>;
+  shapedResult: ReturnType<typeof truncateToolContent>;
+  scopeId?: string;
+  userId?: string;
+  requestId?: string;
+}) {
+  if (!shouldStoreToolArtifact(input.toolUse.name, input.toolResult, input.shapedResult)) {
+    return undefined;
+  }
+
+  const artifact = await saveToolArtifact({
+    userId: input.userId,
+    scopeId: input.scopeId,
+    requestId: input.requestId,
+    toolCallId: input.toolUse.id,
+    toolName: input.toolUse.name,
+    input: input.toolUse.input,
+    content: input.toolResult.content,
+    data: input.toolResult.data,
+    metadata: input.toolResult.metadata,
+  });
+  const compactSummary = truncateToolContent(input.shapedResult.content, 800);
+
+  return {
+    artifact,
+    modelContent: [
+      `${input.toolUse.name} 完整结果已保存到服务端本地 artifact。`,
+      `artifact_id: ${artifact.id}`,
+      `如需查看完整原文，请调用 read_tool_artifact({"artifactId":"${artifact.id}"}).`,
+      "",
+      "当前可用摘要：",
+      compactSummary.content,
+    ].join("\n"),
+  };
 }
 
 const AGENT_LOOP_TOKEN_BUDGET = 24_000;
@@ -298,6 +426,7 @@ export async function callModel(
   onTextDelta?: (text: string) => void,
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
+  telemetryFunctionId?: string,
 ): Promise<Anthropic.Message> {
   const result = await callModelWithProvider({
     messages,
@@ -306,6 +435,7 @@ export async function callModel(
     onTextDelta,
     model,
     telemetryMetadata,
+    telemetryFunctionId,
   });
 
   return result as Anthropic.Message;
@@ -367,6 +497,7 @@ export async function executeTools(
   toolRegistry: ToolRegistry,
   scopeId?: string,
   userId?: string,
+  requestId?: string,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -416,6 +547,7 @@ export async function executeTools(
       toolRegistry,
       scopeId,
       userId,
+      requestId,
     )),
     ...duplicateExecutionResults,
   ].sort(
@@ -538,11 +670,20 @@ export async function executeTools(
       }
     }
     const truncated = shapeToolResultContent(toolUse.name, toolResult);
+    const artifactResult = await maybeStoreToolArtifact({
+      toolUse,
+      toolResult,
+      shapedResult: truncated,
+      scopeId,
+      userId,
+      requestId,
+    });
+    const modelContent = artifactResult?.modelContent ?? truncated.content;
     const rawPreview = truncateToolContent(toolResult.content, 1_200);
     toolResultBlocks.push({
       type: "tool_result",
       tool_use_id: toolUse.id,
-      content: truncated.content,
+      content: modelContent,
       is_error: !toolResult.ok,
     });
     if (toolResult.metadata?.status !== "duplicate_skipped") {
@@ -552,12 +693,14 @@ export async function executeTools(
         input: toolUse.input,
         id: toolUse.id,
         ok: toolResult.ok,
-        content: truncated.content,
+        content: modelContent,
         truncated: truncated.truncated,
         originalChars: truncated.originalChars,
         error: toolResult.error,
         metadata: {
           ...toolResult.metadata,
+          artifactId: artifactResult?.artifact.id,
+          artifactStored: Boolean(artifactResult),
           modelContentCompressed: truncated.content !== rawPreview.content,
           rawContentPreview: rawPreview.content,
           rawContentTruncated: rawPreview.truncated,
@@ -574,14 +717,18 @@ export async function executeTools(
       input: toolUse.input,
       ok: toolResult.ok,
       toolCallId: toolUse.id,
-      contentSummary: truncated.content,
+      contentSummary: modelContent,
       contentTruncated: truncated.truncated,
       contentOriginalChars: truncated.originalChars,
       rawContentSummary: rawPreview.content,
       rawContentTruncated: rawPreview.truncated,
       rawContentOriginalChars: rawPreview.originalChars,
       error: toolResult.error,
-      metadata: toolResult.metadata,
+      metadata: {
+        ...toolResult.metadata,
+        artifactId: artifactResult?.artifact.id,
+        artifactStored: Boolean(artifactResult),
+      },
       costPerUse,
     });
   }
@@ -599,6 +746,7 @@ async function executeToolUsesWithScheduler(
   toolRegistry: ToolRegistry,
   scopeId?: string,
   userId?: string,
+  requestId?: string,
 ) {
   type ScheduledToolUse = {
     index: number;
@@ -669,6 +817,7 @@ async function executeToolUsesWithScheduler(
               toolRegistry,
               scopeId,
               userId,
+              requestId,
             ),
           })),
         )),
@@ -692,7 +841,13 @@ async function executeToolUsesWithScheduler(
     results.push({
       index: item.index,
       toolUse: item.toolUse,
-      toolResult: await executeSingleToolUse(item.toolUse, toolRegistry, scopeId, userId),
+      toolResult: await executeSingleToolUse(
+        item.toolUse,
+        toolRegistry,
+        scopeId,
+        userId,
+        requestId,
+      ),
     });
   }
 
@@ -704,6 +859,7 @@ function executeSingleToolUse(
   toolRegistry: ToolRegistry,
   scopeId?: string,
   userId?: string,
+  requestId?: string,
 ) {
   return executeToolCall(
     toolRegistry,
@@ -712,7 +868,7 @@ function executeSingleToolUse(
       input: toolUse.input,
       id: toolUse.id,
     },
-    { scopeId, userId },
+    { scopeId, userId, requestId },
   );
 }
 
@@ -907,6 +1063,9 @@ export async function runAgentLoop(
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
     const onTextDelta = (text: string) =>
       enqueueEvent({ type: "text", content: text }, enqueueText);
+    const loopTelemetry = buildAgentLoopTelemetry({
+      messages: loopMessages,
+    });
     let initialResponse = await deps.callModel(
       loopMessages,
       tools,
@@ -919,7 +1078,10 @@ export async function runAgentLoop(
         sessionId,
         userId,
         modelCallIndex: metrics.modelCallCount,
+        loopTrigger: loopTelemetry.trigger,
+        triggeringTools: loopTelemetry.triggeringTools,
       },
+      loopTelemetry.functionId,
     );
     if (shouldStop()) {
       return {
@@ -1069,7 +1231,13 @@ export async function runAgentLoop(
       toolCalls,
       toolMetrics,
       toolSteps,
-    } = await executeTools(toolUses, toolRegistry, sessionId ?? requestId, userId);
+    } = await executeTools(
+      toolUses,
+      toolRegistry,
+      sessionId ?? requestId,
+      userId,
+      requestId,
+    );
     if (shouldStop()) {
       return {
         loopMessages,

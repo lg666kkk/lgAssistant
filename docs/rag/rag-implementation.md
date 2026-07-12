@@ -21,11 +21,11 @@ Notion 页面
 
 | 模块 | 文件 | 职责 |
 | --- | --- | --- |
-| Notion 加载 | `lib/server/notion.ts` | 读取页面信息，递归展开 `has_children` blocks，转换成 Markdown-like 文本 |
-| 分块 | `lib/server/chunking.ts` | 按标题/段落优先分块，超长块字符级兜底，输出 `headingPath` |
-| 向量 | `lib/server/embedding.ts` | DashScope OpenAI-compatible API，模型 `text-embedding-v4` |
-| 同步 | `lib/server/sync.ts` | 页面 hash 增量跳过，写入 `notion_pages` 和 `documents` |
-| 检索 | `lib/server/retriever.ts` | pgvector 召回、关键词评分、候选采样、MMR、轻量 rerank |
+| Notion 加载 | `lib/knowledge/notion.ts` | 读取页面信息，递归展开 `has_children` blocks，转换成 Markdown-like 文本 |
+| 分块 | `lib/knowledge/chunking.ts` | 按标题/段落优先分块，超长块字符级兜底，输出 `headingPath` |
+| 向量 | `lib/knowledge/embedding.ts` | DashScope OpenAI-compatible API，模型 `text-embedding-v4` |
+| 同步 | `lib/knowledge/sync.ts` | 页面 hash 增量跳过，写入 `notion_pages` 和 `documents` |
+| 检索 | `lib/knowledge/retriever.ts` | pgvector 召回、关键词评分、候选采样、MMR、轻量 rerank |
 | 工具 | `lib/agent/tools/search-notes.ts` | Agent 可调用的知识库搜索工具 |
 | CLI | `scripts/rag-sync.ts` / `scripts/rag-search.ts` | 本地同步和检索验证 |
 

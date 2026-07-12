@@ -75,7 +75,7 @@ const readable = new ReadableStream({
 })
 ```
 
-**前端** `lib/chat-session.ts`：
+**前端** `lib/chat/chat-session.ts`：
 
 ```typescript
 // 关键4：用 reader 逐块读取流式响应

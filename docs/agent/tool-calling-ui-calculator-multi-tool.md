@@ -34,7 +34,7 @@
 
 ```text
 app/api/chat/route.ts
-lib/chat-session.ts
+lib/chat/chat-session.ts
 app/page.tsx
 lib/agent/tools/calculator.ts
 lib/agent/tools/builtin.ts
@@ -43,7 +43,7 @@ lib/agent/tools/builtin.ts
 其中：
 
 - `app/api/chat/route.ts`：后端工具调用、多工具执行、工具 marker 注入。
-- `lib/chat-session.ts`：前端流式响应解析、工具调用数据落库。
+- `lib/chat/chat-session.ts`：前端流式响应解析、工具调用数据落库。
 - `app/page.tsx`：工具调用 UI 展示。
 - `lib/agent/tools/calculator.ts`：新增 calculator 工具。
 - `lib/agent/tools/builtin.ts`：注册内置工具。
@@ -54,7 +54,7 @@ lib/agent/tools/builtin.ts
 
 ### 3.1 扩展 Message 类型
 
-在 `lib/chat-session.ts` 中，为消息类型增加 `toolCalls` 字段：
+在 `lib/chat/chat-session.ts` 中，为消息类型增加 `toolCalls` 字段：
 
 ```ts
 toolCalls?: Array<{
@@ -103,7 +103,7 @@ __END_TOOL_CALL__
 
 ### 3.3 前端解析工具 marker
 
-前端在 `lib/chat-session.ts` 中解析流式响应。
+前端在 `lib/chat/chat-session.ts` 中解析流式响应。
 
 核心思路：
 

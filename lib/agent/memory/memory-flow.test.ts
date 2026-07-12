@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { hasSupabaseConfig } from "@/lib/supabase";
+import { hasSupabaseConfig } from "@/lib/platform/supabase";
 import { recallForPrompt, consolidate } from "./memory-flow";
 import { LongTermStore } from "./longterm-store";
 import { SemanticStore } from "./semantic-store";

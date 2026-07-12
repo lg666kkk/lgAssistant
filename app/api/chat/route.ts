@@ -14,7 +14,7 @@ import { resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 import { requireUser } from "@/lib/auth/server";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/platform/supabase";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new

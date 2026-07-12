@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { RAGRetriever } from "../lib/server/retriever";
+import { RAGRetriever } from "../lib/knowledge/retriever";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });

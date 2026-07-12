@@ -13,7 +13,7 @@
 - Next.js 14 + TypeScript + Tailwind 基础应用
 - 流式聊天 + 停止生成 + textarea 输入体验
 - 多会话 + **Redis 持久化**（刷新/重启可恢复历史）
-- 配置模块 + 模型选择（`lib/config.ts`、`lib/agent/models.ts`）
+- 配置模块 + 模型选择（`lib/platform/config.ts`、`lib/agent/models.ts`）
 - **RAG 全链路已打通并接入对话**（Notion → chunk → embedding → 检索，经 `search_notes` 工具）
 - **Tool Use 引擎 + Tool Registry + Agentic Loop**（`lib/agent/runtime/`、`tools/`）
 - **工具权限分级**（safe / confirm / dangerous）+ 审批路由
@@ -232,7 +232,7 @@
 目标：把聊天请求从单一 API 处理函数，整理成可扩展的后端流程。
 
 ### M2.1 目录结构调整
-- 新增 `lib/server` 或类似服务端目录
+- 新增 `lib/knowledge` 或类似领域服务目录
 - 区分 client-safe 代码和 server-only 代码
 - 避免 service role key 被前端误引用
 

@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { syncNotionPageTree, syncNotionPages } from "../lib/server/sync";
+import { syncNotionPageTree, syncNotionPages } from "../lib/knowledge/sync";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });

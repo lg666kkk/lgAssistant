@@ -3,7 +3,7 @@
  * 负责会话和消息的数据库操作
  */
 
-import { getBrowserSupabase } from './auth/client';
+import { getBrowserSupabase } from "@/lib/auth/client";
 
 /**
  * 会话类型

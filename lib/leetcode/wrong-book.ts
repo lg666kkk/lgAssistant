@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import {
   LEETCODE_HOT_100_PROBLEMS,
   type LeetCodeDifficulty,

@@ -17,7 +17,7 @@
 | 风险等级 + 限流 + 超时 | tool-router.ts | ✅ |
 | RAG（作为工具） | [search-notes.ts](../../lib/agent/tools/search-notes.ts) | ✅ |
 | 流式 + 文本 marker 协议 | route.ts / chat-session.ts | ✅ |
-| 会话持久化 | [session-manager.ts](../../lib/session-manager.ts) | ✅ |
+| 会话持久化 | [session-manager.ts](../../lib/chat/session-manager.ts) | ✅ |
 | 危险工具人类确认 | tool-router.ts + confirm route | 🟡 半成品 |
 
 **一句话判断当前水平**：你已经能让 Agent"多步执行 + 调工具 + 查知识库"，但 Agent 的"上下文/记忆/可观测/自我规划"几乎为零——而这四样才是 Agent 区别于"循环调函数"的核心。
@@ -144,7 +144,7 @@
 ## 能力 4：结构化事件协议（替代文本 marker） ⭐⭐
 
 ### 要学什么
-- 你现在的前后端协议是把 `__TOOL_CALL__ … __END_TOOL_CALL__` 字符串混在文本流里（见 [chat-session.ts:121-179](../../lib/chat-session.ts)）。
+- 你现在的前后端协议是把 `__TOOL_CALL__ … __END_TOOL_CALL__` 字符串混在文本流里（见 [chat-session.ts:121-179](../../lib/chat/chat-session.ts)）。
 - SSE / NDJSON 事件流：每个事件有明确 `type`，前端按类型分发，不靠字符串切割。
 
 ### 为什么重要
@@ -152,7 +152,7 @@
 
 ### 当前缺口
 - [runtime/index.ts:146](../../lib/agent/runtime/index.ts) 拼字符串 marker。
-- [chat-session.ts:125-203](../../lib/chat-session.ts) 用 `indexOf` 手工切割三种 marker，逻辑脆弱。
+- [chat-session.ts:125-203](../../lib/chat/chat-session.ts) 用 `indexOf` 手工切割三种 marker，逻辑脆弱。
 
 ### 实现步骤
 1. 定义事件类型：`{ type: "text"|"tool_call"|"tool_result"|"sources"|"error"|"done", ... }`。

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS agent_semantic_memories (
   key TEXT NOT NULL,
   layer TEXT NOT NULL DEFAULT 'semantic',
   content TEXT NOT NULL,                       -- 记忆正文（也是被 embedding 的文本）
-  embedding VECTOR(1024) NOT NULL,             -- 1024 维：对齐 lib/server/embedding.ts 的 text-embedding-v4
+  embedding VECTOR(1024) NOT NULL,             -- 1024 维：对齐 lib/knowledge/embedding.ts 的 text-embedding-v4
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

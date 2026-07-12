@@ -78,7 +78,7 @@ type AgentEvent = TextEvent | ToolCallEvent | SourcesEvent | ErrorEvent | DoneEv
 lib/agent/runtime/events.ts    ← 事件类型定义 + serializeEvent（SSE 格式）
 lib/agent/runtime/index.ts     ← executeTools 返回结构化对象，enqueueEvent 发送
 app/api/chat/route.ts          ← Content-Type: text/event-stream + done/error 事件
-lib/chat-session.ts            ← fetchEventSource 替代手写 reader 循环
+lib/chat/chat-session.ts            ← fetchEventSource 替代手写 reader 循环
 ```
 
 ### 后端序列化（events.ts）

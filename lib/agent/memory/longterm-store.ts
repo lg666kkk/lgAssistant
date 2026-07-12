@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import type { MemoryRecord, MemoryStore } from "./types";
 
 const TABLE = "agent_memories";

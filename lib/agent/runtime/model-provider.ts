@@ -1,5 +1,5 @@
 import "@/instrumentation";
-import { deepseekConfig } from "@/lib/config";
+import { deepseekConfig } from "@/lib/platform/config";
 import type { ChatModelId } from "@/lib/agent/models";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
@@ -164,6 +164,7 @@ export async function callModelWithProvider(input: {
   system?: string;
   onTextDelta?: (text: string) => void;
   model: ChatModelId;
+  telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<ModelCallResult> {
   const result = streamText({
@@ -175,7 +176,7 @@ export async function callModelWithProvider(input: {
     tools: toAITools(input.tools),
     experimental_telemetry: {
       isEnabled: true,
-      functionId: "agent-loop-model-call",
+      functionId: input.telemetryFunctionId ?? "agent-loop-model-call",
       metadata: compactMetadata({
         ...input.telemetryMetadata,
         model: input.model,

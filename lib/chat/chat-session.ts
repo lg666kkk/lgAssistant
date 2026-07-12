@@ -1,8 +1,8 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
-import { getAccessToken, authFetch } from "./auth/client";
-import type { ChatModelId } from "./agent/models";
-import type { ModelUsageEventData } from "./agent/runtime/events";
-import type { AgentEvent } from "./agent/runtime/events";
+import { getAccessToken, authFetch } from "@/lib/auth/client";
+import type { ChatModelId } from "@/lib/agent/models";
+import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
+import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
 export interface Message {
   id?: string;

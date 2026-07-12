@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/platform/supabase";
 import { getSchedulerRedis } from "@/lib/scheduler/redis";
 import type {
   ScheduledJob,

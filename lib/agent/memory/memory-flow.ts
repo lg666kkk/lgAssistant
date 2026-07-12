@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { deepseekConfig } from "@/lib/config";
+import { deepseekConfig } from "@/lib/platform/config";
 import { LongTermStore } from "./longterm-store";
 import { SemanticStore } from "./semantic-store";
 import type { MemoryRecord } from "./types";

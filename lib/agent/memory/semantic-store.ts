@@ -1,5 +1,5 @@
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
-import { EmbeddingClient } from "@/lib/server/embedding";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
+import { EmbeddingClient } from "@/lib/knowledge/embedding";
 import type { MemoryRecord, SemanticMemoryStore } from "./types";
 
 const TABLE = "agent_semantic_memories";

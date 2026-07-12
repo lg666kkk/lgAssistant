@@ -62,7 +62,7 @@ describe.skipIf(!RUN_LIVE)("eval (live)", () => { /* EVAL_LIVE=1 才真调模型
 ## 踩坑记录
 
 - **vitest 不认 `@/` 别名**：tsconfig 的 `paths` vitest 不自动读，必须加 `vite-tsconfig-paths` 插件，否则 `import "@/lib/..."` 报 Cannot find module。
-- **config 模块加载即校验 env**：`lib/config.ts` 在 `typeof window === 'undefined'` 时立即 `validateEnv()`——**只要 import 链碰到它就校验**。所以 `vitest.config.ts` 顶部要先 `dotenv.config({ path: ".env.local" })` 注入环境变量，否则一 import 就抛"缺少环境变量"。
+- **config 模块加载即校验 env**：`lib/platform/config.ts` 在 `typeof window === 'undefined'` 时立即 `validateEnv()`——**只要 import 链碰到它就校验**。所以 `vitest.config.ts` 顶部要先 `dotenv.config({ path: ".env.local" })` 注入环境变量，否则一 import 就抛"缺少环境变量"。
 - **纯类型文件用 `import type`**：trace.ts 从 index.ts 导类型用 `import type`，避免把 Anthropic client 的副作用拉进来——否则 vitest 测纯函数也会因缺 key 而炸。
 - **live 轨 401 反向印证双轨价值**：实测 live 轨因 `.env.local` 的 key 失效全部 401，而 mock 轨照常绿。这正说明把 key/网络这类环境问题隔离在 live 轨之外、CI 只跑 mock 轨是对的——key 过期不会让 CI 误报。
 - **anon client vs service-role client**：用错 client 落库会撞 RLS。后端落库一律走 service-role。

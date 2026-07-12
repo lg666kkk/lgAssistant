@@ -6,7 +6,7 @@
 ---
 
 > ⚠️ **文档状态校准（2026-06-13）**：本文件早期“当前状态”严重滞后于真实代码。
-> 经核对实际实现后重写。下面的「已实现」反映 `lib/agent/` 与 `lib/server/` 的真实代码。
+> 经核对实际实现后重写。下面的「已实现」反映 `lib/agent/` 与 `lib/knowledge/` 的真实代码。
 
 ## 当前项目状态（已实现）
 
@@ -29,7 +29,7 @@
 - ✅ **审批路由** — `app/api/tools/confirm/route.ts`
 
 **RAG（路线图原标“未做”，实际已打通）**
-- ✅ **RAG 全链路** — `lib/server/`：`NotionClient` 读取 → `chunkText` 分块 → `EmbeddingClient` 向量化 → `syncNotionPages` 入库 → `RAGRetriever` 检索
+- ✅ **RAG 全链路** — `lib/knowledge/`：`NotionClient` 读取 → `chunkText` 分块 → `EmbeddingClient` 向量化 → `syncNotionPages` 入库 → `RAGRetriever` 检索
 - ✅ **RAG 已接入对话** — `search_notes` 工具内部调用 `RAGRetriever`，模型可自主检索知识库
 
 **记忆系统（路线图原标“未做”，实际已实现）**
@@ -53,7 +53,7 @@
 - [ ] **P1 — 会话持久化到 Supabase（可选）**
   - 当前会话历史在 Redis（`RedisSessionStore`），适合缓存但非长期归档
   - 若要长期持久化 + 跨设备，需补 `sessions` / `messages` 表写入链路
-  - 前端 `hooks/use-chat-manager.ts` 目前不直接落库，依赖后端 Redis
+  - 前端 `app/_hooks/use-chat-manager.ts` 目前不直接落库，依赖后端 Redis
 
 - [ ] **M0.7 会话标题手动重命名**
   - 会话列表支持进入编辑态
@@ -175,9 +175,9 @@
 ## Phase 1 - 核心体验完善
 
 - [x] **1.1 RAG 知识库问答**（基础链路已完成）
-  - [x] 接入 Notion API，同步笔记内容并分块（`lib/server/notion.ts` + `sync.ts` + `chunking.ts`）
-  - [x] 调用 Embedding 模型生成向量，写入 Supabase（`lib/server/embedding.ts`）
-  - [x] 用户提问时向量检索，结果通过 `search_notes` 工具注入对话（`lib/server/retriever.ts`）
+  - [x] 接入 Notion API，同步笔记内容并分块（`lib/knowledge/notion.ts` + `sync.ts` + `chunking.ts`）
+  - [x] 调用 Embedding 模型生成向量，写入 Supabase（`lib/knowledge/embedding.ts`）
+  - [x] 用户提问时向量检索，结果通过 `search_notes` 工具注入对话（`lib/knowledge/retriever.ts`）
   - [x] 混合检索策略：向量相似度 + 关键词融合排序
   - [x] 回答中标注引用来源（页面标题 + 链接）的前端展示
 

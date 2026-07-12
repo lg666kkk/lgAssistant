@@ -337,7 +337,7 @@ default_channel      text      -- 该用户默认走哪个通道
 
 - [app/api/leetcode/daily/route.ts](../../app/api/leetcode/daily/route.ts) —— 现有"伪定时任务"，最先改造的对象
 - [lib/agent/runtime/index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop` —— agent-task handler 的复用点
-- [lib/session-manager.ts](../../lib/session-manager.ts) —— 多用户会话隔离参考
+- [lib/chat/session-manager.ts](../../lib/chat/session-manager.ts) —— 多用户会话隔离参考
 - `cron-parser`（npm）—— cron 表达式解析与下次时间计算
 - Vercel Cron Jobs 官方文档 —— 心跳来源之一
 - Telegram Bot API `sendMessage` / `getUpdates` / `setWebhook` —— TG 通道接入

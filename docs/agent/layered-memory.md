@@ -157,4 +157,4 @@ SemanticMemoryStore                ← 仅语义层实现
 ## 延伸阅读
 
 - 解耦同款套路：[tool-router](../../lib/agent/tools/tool-router.ts) 解耦工具与主循环。
-- 复用的基础设施：[supabase.ts](../../lib/supabase.ts)（向量检索）、[embedding.ts](../../lib/server/embedding.ts)（1024 维向量）。
+- 复用的基础设施：[supabase.ts](../../lib/platform/supabase.ts)（向量检索）、[embedding.ts](../../lib/knowledge/embedding.ts)（1024 维向量）。

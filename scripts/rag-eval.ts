@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { ragEvalCases, type RagEvalCase } from "../lib/agent/eval/rag-cases";
-import { RAGRetriever, type RAGSearchDebug, type SearchResult } from "../lib/server/retriever";
+import { RAGRetriever, type RAGSearchDebug, type SearchResult } from "../lib/knowledge/retriever";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });

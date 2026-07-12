@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { hasSupabaseConfig } from "@/lib/supabase";
+import { hasSupabaseConfig } from "@/lib/platform/supabase";
 import { LongTermStore } from "./longterm-store";
 
 // 连真实 Supabase 的闭环测试：没配环境变量时整组跳过（CI 不挂）。

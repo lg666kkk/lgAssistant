@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/platform/supabase";
 import { defaultChatModel } from "@/lib/agent/models";
 import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
 

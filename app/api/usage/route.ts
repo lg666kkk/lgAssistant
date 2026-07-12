@@ -3,7 +3,7 @@ import {
   chatModelOptions,
   type ChatModelId,
 } from "@/lib/agent/models";
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { requireUser } from "@/lib/auth/server";
 
 type UsageSummary = {

@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import type { AgentTrace } from "./trace";
 
 export async function saveTrace(trace: AgentTrace, userId?: string): Promise<void> {

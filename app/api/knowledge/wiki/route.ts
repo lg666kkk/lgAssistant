@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/platform/supabase";
 import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";

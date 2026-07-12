@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { config } from "dotenv";
 
-// 坑2：lib/config.ts 在模块加载时就执行 validateEnv()，
+// 坑2：lib/platform/config.ts 在模块加载时就执行 validateEnv()，
 // 只要 import 链碰到它就会校验环境变量。所以测试启动前先把 .env.local 注入 process.env，
 // 否则一 import 就抛"缺少环境变量"。
 config({ path: ".env.local" });

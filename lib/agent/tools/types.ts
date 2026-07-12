@@ -62,11 +62,13 @@ export type ExecuteToolCallOptions = {
   approved?: boolean;
   scopeId?: string;
   userId?: string;
+  requestId?: string;
 };
 
 export type ToolExecutionContext = {
   userId?: string;
   scopeId?: string;
+  requestId?: string;
 };
 
 export const defaultToolRuntimePolicy: ToolRuntimePolicy = {

@@ -1,6 +1,6 @@
 import { type ToolDefinition, type ToolResult, defaultToolRuntimePolicy, type ToolExecutionContext } from "./types";
-import { ragConfig } from "@/lib/config";
-import { RAGRetriever } from "@/lib/server/retriever";
+import { ragConfig } from "@/lib/platform/config";
+import { RAGRetriever } from "@/lib/knowledge/retriever";
 type SearchNoteInput = {
   query: string;
   limit?: number;

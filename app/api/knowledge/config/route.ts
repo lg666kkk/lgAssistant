@@ -1,6 +1,6 @@
-import { CHUNKER_VERSION } from "@/lib/server/chunking";
-import { EMBEDDING_MODEL } from "@/lib/server/embedding";
-import { deepseekConfig, ragConfig } from "@/lib/config";
+import { CHUNKER_VERSION } from "@/lib/knowledge/chunking";
+import { EMBEDDING_MODEL } from "@/lib/knowledge/embedding";
+import { deepseekConfig, ragConfig } from "@/lib/platform/config";
 import { requireUser } from "@/lib/auth/server";
 
 export const runtime = "nodejs";

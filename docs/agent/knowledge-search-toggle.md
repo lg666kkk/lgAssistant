@@ -45,7 +45,7 @@ await activeSession.send(text, rerender, { webSearchEnabled, knowledgeSearchEnab
 ```
 状态放在 `page.tsx` 而不是 `ChatInput` 内部，因为 `handleSend` 也在 `page.tsx`，发请求时要读这个值——UI 组件只负责展示和回调。
 
-**请求体字段**（`lib/chat-session.ts`）
+**请求体字段**（`lib/chat/chat-session.ts`）
 ```ts
 enableKnowledgeSearch: options.knowledgeSearchEnabled !== false,
 ```
@@ -85,4 +85,4 @@ if (enableKnowledgeSearch && shouldAutoSearchKnowledge(lastUser.content)) {
 ## 延伸阅读
 - [prompt-segmentation.md](./prompt-segmentation.md) — 知识库检索结果如何作为一个段注入 system prompt
 - `lib/agent/tools/search-notes.ts` — `search_notes` 工具定义
-- `lib/server/retriever.ts` — RAG 检索实现
+- `lib/knowledge/retriever.ts` — RAG 检索实现

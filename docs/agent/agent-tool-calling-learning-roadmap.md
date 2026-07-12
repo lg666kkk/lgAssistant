@@ -54,7 +54,7 @@ LLM 返回文本
 
 推荐先看当前项目：
 
-- `lib/chat-session.ts`
+- `lib/chat/chat-session.ts`
 - `app/api/chat/route.ts`
 
 学习目标：

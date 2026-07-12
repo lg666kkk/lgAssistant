@@ -1,4 +1,4 @@
-import { syncNotionPageTree, syncNotionPages } from "@/lib/server/sync";
+import { syncNotionPageTree, syncNotionPages } from "@/lib/knowledge/sync";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 

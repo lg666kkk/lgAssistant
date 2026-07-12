@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
-import { hasSupabaseConfig } from "@/lib/supabase";
+import { hasSupabaseConfig } from "@/lib/platform/supabase";
 import { SemanticStore } from "./semantic-store";
 
 // 连真实 Supabase + 真实 embedding API：没配则整组跳过（需要 DASHSCOPE_API_KEY）

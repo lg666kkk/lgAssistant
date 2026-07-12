@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChatSession } from "@/lib/chat-session";
-import { SessionManager } from "@/lib/session-manager";
+import { ChatSession } from "@/lib/chat/chat-session";
+import { SessionManager } from "@/lib/chat/session-manager";
 import { useAuth } from "@/lib/auth/use-auth";
 
 export function useChatManager() {

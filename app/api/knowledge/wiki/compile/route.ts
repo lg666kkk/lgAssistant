@@ -1,4 +1,4 @@
-import { compileWiki } from "@/lib/server/wiki-compiler";
+import { compileWiki } from "@/lib/knowledge/wiki-compiler";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 

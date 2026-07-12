@@ -60,7 +60,7 @@
 
 **实现方案**：
 ```typescript
-// lib/server/batch-sync.ts
+// lib/knowledge/batch-sync.ts
 export async function syncNotionDatabase(databaseId: string) {
   const notion = new NotionClient();
   
@@ -86,10 +86,10 @@ export async function syncNotionDatabase(databaseId: string) {
 **使用方式**：
 ```bash
 # 同步整个数据库
-npx tsx lib/server/batch-sync.ts <database_id>
+npx tsx lib/knowledge/batch-sync.ts <database_id>
 
 # 同步多个指定页面
-npx tsx lib/server/batch-sync.ts page1_id page2_id page3_id
+npx tsx lib/knowledge/batch-sync.ts page1_id page2_id page3_id
 ```
 
 **收益**：
@@ -106,7 +106,7 @@ npx tsx lib/server/batch-sync.ts page1_id page2_id page3_id
 
 **实现方案**：
 ```typescript
-// lib/server/retriever.ts
+// lib/knowledge/retriever.ts
 import NodeCache from 'node-cache';
 
 export class RAGRetriever {
@@ -220,7 +220,7 @@ $$;
 
 **实现方案**：
 ```typescript
-// lib/server/reranker.ts
+// lib/knowledge/reranker.ts
 import Anthropic from '@anthropic-ai/sdk';
 
 export class Reranker {
@@ -286,7 +286,7 @@ const finalResults = await reranker.rerank(query, candidates, 3);
 
 **实现方案**：
 ```typescript
-// lib/server/cron-sync.ts
+// lib/knowledge/cron-sync.ts
 import cron from 'node-cron';
 
 // 每小时检查一次
@@ -316,7 +316,7 @@ cron.schedule('0 * * * *', async () => {
 **部署方式**：
 ```bash
 # 使用 PM2 保持进程运行
-pm2 start lib/server/cron-sync.ts --name rag-sync
+pm2 start lib/knowledge/cron-sync.ts --name rag-sync
 ```
 
 **收益**：

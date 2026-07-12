@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { requireUser } from "@/lib/auth/server";
 
 // GET /api/traces/:id

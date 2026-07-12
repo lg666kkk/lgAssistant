@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { compileWiki } from "../lib/server/wiki-compiler";
+import { compileWiki } from "../lib/knowledge/wiki-compiler";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });

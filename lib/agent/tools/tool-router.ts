@@ -157,6 +157,7 @@ export async function executeToolCall(
       tool.execute(toolCall.input, {
         userId: options.userId,
         scopeId: options.scopeId,
+        requestId: options.requestId,
       }),
       tool.runtime.timeoutSeconds,
       tool.name,

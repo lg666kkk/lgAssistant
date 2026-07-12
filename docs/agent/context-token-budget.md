@@ -64,7 +64,7 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 
 - **本地 tokenizer vs 真实 usage**：本地 tokenizer 只用于请求前决策，比如是否压缩、是否截断工具结果；真实费用和 usage 页面仍使用 provider 返回的 `usage`。这样能同时保证上下文控制更准、账单统计不失真。
 - **截断 vs 压缩为什么都要**：截断针对"单个大结果"，压缩针对"轮数累积"，两个膨胀来源不同，缺一层都可能爆。
-- **硬编码 24_000 / 16_000**：当前直接写在 loop 里。能跑通就够，将来值得挪进 [config.ts](../../lib/config.ts) 统一管理（已知技术债）。
+- **硬编码 24_000 / 16_000**：当前直接写在 loop 里。能跑通就够，将来值得挪进 [config.ts](../../lib/platform/config.ts) 统一管理（已知技术债）。
 
 ## 踩坑记录
 

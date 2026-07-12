@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth/server";
-import { resetKnowledgeBase } from "@/lib/server/knowledge-reset";
+import { resetKnowledgeBase } from "@/lib/knowledge/knowledge-reset";
 
 export const runtime = "nodejs";
 
