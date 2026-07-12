@@ -123,7 +123,11 @@ export class SemanticStore implements SemanticMemoryStore {
   }
 
   // ⭐ 主角：按语义相似度召回
-  async recall(query: string, limit = 5, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
+  async recall(
+    query: string,
+    limit = 5,
+    options: { userId?: string; threshold?: number } = {},
+  ): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
     const userId = requireUserId(options, "recall");
     if (!userId) return [];
@@ -133,7 +137,10 @@ export class SemanticStore implements SemanticMemoryStore {
       query_embedding: queryEmbedding,
       match_count: limit,
       filter_user_id: userId,
-      // match_threshold 不传，用 SQL 默认 0.3
+      // 长期记忆调用方传入显式阈值，避免依赖 SQL 中偏宽松的默认值。
+      ...(typeof options.threshold === "number"
+        ? { match_threshold: options.threshold }
+        : {}),
     });
     if (error) {
       console.error("[SemanticStore.recall] 召回失败:", error.message);

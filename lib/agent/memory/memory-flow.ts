@@ -21,22 +21,60 @@ const client = new Anthropic({
   baseURL: deepseekConfig.baseURL,
 });
 const EXTRACT_MODEL = deepseekConfig.model;
+const DEFAULT_RECALL_LIMIT = 3;
+const DEFAULT_RECALL_THRESHOLD = 0.68;
+
+function readRecallNumber(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+const recallLimit = readRecallNumber("MEMORY_RECALL_LIMIT", DEFAULT_RECALL_LIMIT, 1, 10);
+const recallThreshold = readRecallNumber(
+  "MEMORY_RECALL_THRESHOLD",
+  DEFAULT_RECALL_THRESHOLD,
+  0,
+  1,
+);
+const MEMORY_RECALL_QUERY_PATTERN =
+  /(?:长期记忆|历史记忆|记忆库|个人(?:资料|信息|背景|画像)|还记得|记得我|之前(?:说|聊|提|告诉|做)|上次(?:说|聊|提|做)|延续(?:上次|之前)|继续(?:上次|之前)|我的(?:偏好|习惯|资料|信息|背景|情况|计划|目标|项目|需求)|我(?:最|很|比较|特别)?喜欢(?:吃)?|我(?:最)?爱吃|我(?:的)?(?:口味|饮食)(?:偏好|习惯)|我(?:不喜欢|习惯|偏好|过敏|忌口|常用|在意)|适合我|为我推荐|根据我|\b(?:remember|memory|memories|my preferences|my profile|based on my|continue (?:our |the )?(?:previous|last))\b)/i;
+
+/**
+ * 仅在当前问题可能依赖用户画像或跨会话历史时召回长期记忆。
+ * 普通知识问答、临时任务和寒暄不需要额外 embedding / 数据库查询。
+ */
+export function shouldRecallLongTermMemory(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length < 2) return false;
+
+  return MEMORY_RECALL_QUERY_PATTERN.test(normalized);
+}
 
 // ============================================================
 // ① 召回：把和当前问题相关的记忆，拼成一段注入 system 的文本
 // ============================================================
 export async function recallForPrompt(
   query: string,
-  opts: { limit?: number; userId?: string } = {},
+  opts: { limit?: number; threshold?: number; userId?: string } = {},
 ): Promise<string> {
-  if (!opts.userId) return "";
+  if (!opts.userId || !shouldRecallLongTermMemory(query)) return "";
 
-  const hits = await semantic.recall(query, opts.limit ?? 5, { userId: opts.userId });
-  if (hits.length === 0) return ""; // 没召回到就返回空串，调用方不注入 system
+  const threshold = opts.threshold ?? recallThreshold;
+  const hits = await semantic.recall(query, opts.limit ?? recallLimit, {
+    userId: opts.userId,
+    threshold,
+  });
+  const relevantHits = hits.filter(
+    (hit) => typeof hit.score === "number" && hit.score >= threshold,
+  );
+  if (relevantHits.length === 0) return ""; // 没有足够相关的记忆就不注入 system
 
-  const lines = hits.map((h) => `- ${h.content}`).join("\n");
-  // 这段会作为 system prompt 注入，告诉模型「这些是关于用户的已知背景」
-  return `以下是关于用户的已知信息（来自历史记忆），回答时请参考：\n${lines}`;
+  const lines = relevantHits.map((h) => `- ${h.content}`).join("\n");
+  return [
+    "以下是可能相关的用户长期记忆，仅作为候选背景：",
+    lines,
+    "仅当某条记忆与当前问题直接相关时才可使用；无关时忽略。不要把记忆当作当前问题的事实，不能仅凭记忆替代对当前问题的回答。",
+  ].join("\n");
 }
 
 // ============================================================

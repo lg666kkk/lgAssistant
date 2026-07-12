@@ -18,7 +18,11 @@ export interface MemoryStore {
 }
 
 export interface SemanticMemoryStore extends MemoryStore {
-    recall(query: string, limit?: number, options?: { userId?: string }): Promise<MemoryRecord[]>;
+    recall(
+        query: string,
+        limit?: number,
+        options?: { userId?: string; threshold?: number },
+    ): Promise<MemoryRecord[]>;
 }
 
 // ── 会话记忆（Redis）────────────────────────────────────────────
