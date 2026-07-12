@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   title TEXT NOT NULL DEFAULT '新对话',
   model TEXT DEFAULT 'deepseek-v4-pro',
   system_prompt TEXT DEFAULT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- 3. 创建索引
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS sessions_user_id_updated_idx ON sessions (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS messages_user_id_session_idx ON messages (user_id, session_id, created_at);

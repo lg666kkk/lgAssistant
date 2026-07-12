@@ -74,6 +74,46 @@ export function truncateTextByTokens(
   }
 }
 
+export function sliceTextByTokens(
+  text: string,
+  offset: number,
+  limit: number,
+): {
+  content: string;
+  totalTokens: number;
+  endOffset: number;
+  nextOffset: number | null;
+  hasMore: boolean;
+} {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(1, Math.floor(limit));
+
+  try {
+    const tokens = encode(text);
+    const end = Math.min(tokens.length, safeOffset + safeLimit);
+    return {
+      content: decode(tokens.slice(safeOffset, end)),
+      totalTokens: tokens.length,
+      endOffset: end,
+      nextOffset: end < tokens.length ? end : null,
+      hasMore: end < tokens.length,
+    };
+  } catch {
+    const charsPerToken = 4;
+    const start = safeOffset * charsPerToken;
+    const end = Math.min(text.length, start + safeLimit * charsPerToken);
+    const totalTokens = fallbackEstimateTokens(text);
+    const hasMore = end < text.length;
+    return {
+      content: text.slice(start, end),
+      totalTokens,
+      endOffset: Math.ceil(end / charsPerToken),
+      nextOffset: hasMore ? Math.ceil(end / charsPerToken) : null,
+      hasMore,
+    };
+  }
+}
+
 function fallbackEstimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }

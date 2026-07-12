@@ -23,6 +23,7 @@ export type ModelTraceStep = TraceStepBase & {
     remainingBefore: number;
     remainingAfter: number;
     requested: number;
+    reservedOutputTokens?: number;
   };
   usage?: ModelUsageBreakdown; // 模型返回的真实 token 和费用估算，有就填
   // 上下文工程可观测性核心：这轮注入给模型的 system prompt（截断后）。

@@ -34,8 +34,22 @@ export interface ModelUsageEventData extends ModelUsageBreakdown {
 }
 
 export interface ModelUsageEvent {
-    type: "model_usage";
-    usage: ModelUsageEventData;
+  type: "model_usage";
+  usage: ModelUsageEventData;
+}
+
+export interface ContextUsageEventData {
+  model: ChatModelId;
+  modelCallIndex: number;
+  estimatedTokens: number;
+  workingWindowTokens: number;
+  modelWindowTokens: number;
+  remainingTokens: number;
+}
+
+export interface ContextUsageEvent {
+  type: "context_usage";
+  usage: ContextUsageEventData;
 }
 
 export interface ErrorEvent {
@@ -53,6 +67,7 @@ export type AgentEvent =
   | ToolCallEvent
   | SourcesEvent
   | ModelUsageEvent
+  | ContextUsageEvent
   | ErrorEvent
   | DoneEvent;
 

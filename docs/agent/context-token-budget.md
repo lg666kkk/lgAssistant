@@ -64,7 +64,7 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 
 - **本地 tokenizer vs 真实 usage**：本地 tokenizer 只用于请求前决策，比如是否压缩、是否截断工具结果；真实费用和 usage 页面仍使用 provider 返回的 `usage`。这样能同时保证上下文控制更准、账单统计不失真。
 - **截断 vs 压缩为什么都要**：截断针对"单个大结果"，压缩针对"轮数累积"，两个膨胀来源不同，缺一层都可能爆。
-- **硬编码 24_000 / 16_000**：当前直接写在 loop 里。能跑通就够，将来值得挪进 [config.ts](../../lib/platform/config.ts) 统一管理（已知技术债）。
+- **当前运行参数**：DeepSeek V4 的工作窗口上限为 80_000 tokens，常规压缩在 48_000 tokens 触发、目标压到约 24_000 tokens；单次 Agent Run 的累计预算为 128_000 tokens。参数当前仍直接写在 runtime 中，后续可再收口到配置层。
 
 ## 踩坑记录
 

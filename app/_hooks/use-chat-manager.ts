@@ -34,6 +34,7 @@ export function useChatManager() {
             dbSessions.map(async (dbSession) => {
               const session = new ChatSession(dbSession.id);
               session.title = dbSession.title;
+              session.contextUsage = dbSession.metadata?.contextUsage ?? null;
               await session.loadFromDatabase();
               return session;
             })
@@ -102,9 +103,14 @@ export function useChatManager() {
         await sessionManager.deleteSession(id);
       } catch (error) {
         console.error('删除会话失败:', error);
+        window.alert(error instanceof Error ? error.message : "删除会话失败，请重试");
+        return;
       }
 
-      sessionsRef.current = list.filter((s) => s.id !== id);
+      const remainingSessions = list.filter((s) => s.id !== id);
+      sessionsRef.current = remainingSessions.length > 0
+        ? remainingSessions
+        : [new ChatSession()];
       if (activeId === id) {
         setActiveId(sessionsRef.current[0].id);
       }

@@ -22,6 +22,7 @@ type ModelStep = {
     remainingBefore?: number;
     remainingAfter?: number;
     requested?: number;
+    reservedOutputTokens?: number;
   };
   usage?: {
     inputTokens?: number;
@@ -723,6 +724,9 @@ export default function TraceDetailPage({
                             {step.tokenBudget.spentAfter ?? 0}/
                             {step.tokenBudget.max ?? "?"} · 剩余{" "}
                             {step.tokenBudget.remainingAfter ?? "?"}
+                            {step.tokenBudget.reservedOutputTokens
+                              ? ` · 输出预留 ${step.tokenBudget.reservedOutputTokens}`
+                              : ""}
                           </span>
                         )}
                         {step.usage && (

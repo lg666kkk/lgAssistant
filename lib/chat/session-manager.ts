@@ -3,7 +3,8 @@
  * 负责会话和消息的数据库操作
  */
 
-import { getBrowserSupabase } from "@/lib/auth/client";
+import { authFetch, getBrowserSupabase } from "@/lib/auth/client";
+import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
 
 /**
  * 会话类型
@@ -14,6 +15,9 @@ export interface Session {
   title: string;
   model: string;
   system_prompt: string | null;
+  metadata?: {
+    contextUsage?: ContextUsageEventData;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -119,18 +123,31 @@ export class SessionManager {
     if (error) throw error;
   }
 
-  /**
-   * 删除会话（会级联删除所有消息）
-   */
-  async deleteSession(sessionId: string): Promise<void> {
+  async updateSessionContextUsage(
+    sessionId: string,
+    contextUsage: ContextUsageEventData,
+  ): Promise<void> {
     const userId = await this.getUserId();
     const { error } = await this.supabase
-      .from('sessions')
-      .delete()
-      .eq('user_id', userId)
-      .eq('id', sessionId);
+      .from("sessions")
+      .update({ metadata: { contextUsage } })
+      .eq("user_id", userId)
+      .eq("id", sessionId);
 
     if (error) throw error;
+  }
+
+  /**
+   * 删除会话（会级联删除所有消息，并清理 Redis 与本地 tool artifact）
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const response = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+    if (response.ok) return;
+
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "删除会话失败");
   }
 
   /**

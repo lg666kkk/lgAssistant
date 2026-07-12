@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -89,6 +89,81 @@ function maskEmail(email?: string | null) {
   return `${name.slice(0, 2)}***${name.slice(-1)}@${domain}`;
 }
 
+const markdownComponents = {
+  h2({ children }: { children?: React.ReactNode }) {
+    return <h2 className="mb-2 text-base font-semibold text-white">{children}</h2>;
+  },
+  p({ children }: { children?: React.ReactNode }) {
+    return <p className="mb-2 last:mb-0">{children}</p>;
+  },
+  ul({ children }: { children?: React.ReactNode }) {
+    return <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>;
+  },
+  ol({ children }: { children?: React.ReactNode }) {
+    return <ol className="my-2 list-decimal space-y-2 pl-5">{children}</ol>;
+  },
+  li({ children }: { children?: React.ReactNode }) {
+    return <li className="leading-relaxed">{children}</li>;
+  },
+  a({ href, children }: { href?: string; children?: React.ReactNode }) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="break-all text-cyan-300 underline decoration-cyan-500/60 underline-offset-2 hover:text-cyan-200"
+      >
+        {children}
+      </a>
+    );
+  },
+  table({ children }: { children?: React.ReactNode }) {
+    return (
+      <table className="my-3 w-full border-collapse overflow-hidden rounded-lg border border-slate-700 text-left text-sm">
+        {children}
+      </table>
+    );
+  },
+  thead({ children }: { children?: React.ReactNode }) {
+    return <thead className="bg-slate-900/80">{children}</thead>;
+  },
+  tbody({ children }: { children?: React.ReactNode }) {
+    return <tbody className="divide-y divide-slate-700">{children}</tbody>;
+  },
+  tr({ children }: { children?: React.ReactNode }) {
+    return <tr className="border-b border-slate-700 last:border-b-0">{children}</tr>;
+  },
+  th({ children }: { children?: React.ReactNode }) {
+    return (
+      <th className="border border-slate-700 px-3 py-2 font-semibold text-slate-300">
+        {children}
+      </th>
+    );
+  },
+  td({ children }: { children?: React.ReactNode }) {
+    return <td className="border border-slate-700 px-3 py-2 align-top text-slate-200">{children}</td>;
+  },
+  code({ className, children }: { className?: string; children?: React.ReactNode }) {
+    const language = className?.replace("language-", "");
+    if (!language) {
+      return <code className="rounded bg-slate-700 px-1.5 py-0.5 text-sm">{children}</code>;
+    }
+    return (
+      <SyntaxHighlighter language={language} style={oneDark}>
+        {String(children).replace(/\n$/, "")}
+      </SyntaxHighlighter>
+    );
+  },
+};
+
+const MessageMarkdown = memo(function MessageMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 export default function Home() {
   const { user, supabase } = useAuth();
   const {
@@ -114,7 +189,7 @@ export default function Home() {
   const inputRef = useRef<HTMLDivElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
-  const { messages, loading, streaming, error } = activeSession || {};
+  const { messages, loading, streaming, error, contextUsage } = activeSession || {};
   const lastMessageContent = messages?.length
     ? messages[messages.length - 1]?.content
     : "";
@@ -226,19 +301,20 @@ export default function Home() {
                   停止
                 </button>
               )}
-              {sessions.length > 1 && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteSession(session.id);
-                  }}
-                  className="shrink-0 text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                  title="删除会话"
-                >
-                  ✕
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!window.confirm(`确定删除会话“${session.title}”吗？相关本地工具结果也会一并删除。`)) {
+                    return;
+                  }
+                  deleteSession(session.id);
+                }}
+                className="shrink-0 text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                title="删除会话"
+              >
+                ✕
+              </button>
             </div>
           ))}
         </nav>
@@ -440,7 +516,7 @@ export default function Home() {
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </button>
-          <h1 className="text-lg font-semibold text-white">LG的个人知识助手</h1>
+          <h1 className="text-lg font-semibold text-white">个人知识助手</h1>
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-6">
@@ -468,114 +544,7 @@ export default function Home() {
                         : "w-full bg-slate-800 text-slate-200"
                     } ${isStreaming ? "streaming-msg" : ""}`}
                   >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        h2({ children }) {
-                          return (
-                            <h2 className="mb-2 text-base font-semibold text-white">
-                              {children}
-                            </h2>
-                          );
-                        },
-                        p({ children }) {
-                          return <p className="mb-2 last:mb-0">{children}</p>;
-                        },
-                        ul({ children }) {
-                          return (
-                            <ul className="my-2 list-disc space-y-1 pl-5">
-                              {children}
-                            </ul>
-                          );
-                        },
-                        ol({ children }) {
-                          return (
-                            <ol className="my-2 list-decimal space-y-2 pl-5">
-                              {children}
-                            </ol>
-                          );
-                        },
-                        li({ children }) {
-                          return (
-                            <li className="leading-relaxed">{children}</li>
-                          );
-                        },
-                        a({ href, children }) {
-                          return (
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="break-all text-cyan-300 underline decoration-cyan-500/60 underline-offset-2 hover:text-cyan-200"
-                            >
-                              {children}
-                            </a>
-                          );
-                        },
-                        table({ children }) {
-                          return (
-                            <table className="my-3 w-full border-collapse overflow-hidden rounded-lg border border-slate-700 text-left text-sm">
-                              {children}
-                            </table>
-                          );
-                        },
-                        thead({ children }) {
-                          return (
-                            <thead className="bg-slate-900/80">
-                              {children}
-                            </thead>
-                          );
-                        },
-                        tbody({ children }) {
-                          return (
-                            <tbody className="divide-y divide-slate-700">
-                              {children}
-                            </tbody>
-                          );
-                        },
-                        tr({ children }) {
-                          return (
-                            <tr className="border-b border-slate-700 last:border-b-0">
-                              {children}
-                            </tr>
-                          );
-                        },
-                        th({ children }) {
-                          return (
-                            <th className="border border-slate-700 px-3 py-2 font-semibold text-slate-300">
-                              {children}
-                            </th>
-                          );
-                        },
-                        td({ children }) {
-                          return (
-                            <td className="border border-slate-700 px-3 py-2 align-top text-slate-200">
-                              {children}
-                            </td>
-                          );
-                        },
-                        code({ className, children }) {
-                          const language = className?.replace("language-", "");
-                          if (!language) {
-                            return (
-                              <code className="bg-slate-700 px-1.5 py-0.5 rounded text-sm">
-                                {children}
-                              </code>
-                            );
-                          }
-                          return (
-                            <SyntaxHighlighter
-                              language={language}
-                              style={oneDark}
-                            >
-                              {String(children).replace(/\n$/, "")}
-                            </SyntaxHighlighter>
-                          );
-                        },
-                      }}
-                    >
-                      {msg.content || (loading ? "思考中..." : "")}
-                    </ReactMarkdown>
+                    <MessageMarkdown content={msg.content || (loading ? "思考中..." : "")} />
                     {/* 显示工具调用 */}
                     {msg.role === "assistant" &&
                       msg.toolCalls &&
@@ -730,6 +699,7 @@ export default function Home() {
           onChange={setInput}
           webSearchEnabled={webSearchEnabled}
           onWebSearchEnabledChange={setWebSearchEnabled}
+          contextUsage={contextUsage}
           selectedModel={selectedModel}
           onSelectedModelChange={setSelectedModel}
           onSend={handleSend}

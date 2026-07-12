@@ -60,7 +60,7 @@ export function getModelContextWindowTokens(model: ChatModelId): number {
   switch (model) {
     case "deepseek-v4-pro":
     case "deepseek-v4-flash":
-      return 64_000;
+      return 128_000;
     default:
       return 32_000;
   }

@@ -11,6 +11,7 @@ export type CompactLoopMessagesOptions = {
   recentMessages?: number;
   minNewMessagesSinceLastCompression?: number;
   lastCompactedMessageCount?: number;
+  force?: boolean;
   // Backward-compatible legacy options.
   maxTokens?: number;
   keepRecentMessages?: number;
@@ -75,6 +76,7 @@ function normalizeOptions(options: CompactLoopMessagesOptions) {
       options.minNewMessagesSinceLastCompression ??
       DEFAULT_POLICY.minNewMessagesSinceLastCompression,
     lastCompactedMessageCount: options.lastCompactedMessageCount,
+    force: options.force === true,
     triggerTokens: Math.floor(modelWindowTokens * triggerRatio),
     targetTokens: Math.floor(modelWindowTokens * targetRatio),
   };
@@ -226,7 +228,7 @@ export function compactLoopMessages(
   const policy = normalizeOptions(options);
   const beforeTokens = estimateTokens(messages);
 
-  if (beforeTokens <= policy.triggerTokens) {
+  if (!policy.force && beforeTokens <= policy.triggerTokens) {
     return {
       messages,
       compacted: false,
@@ -243,6 +245,7 @@ export function compactLoopMessages(
   }
 
   if (
+    !policy.force &&
     typeof policy.lastCompactedMessageCount === "number" &&
     messages.length - policy.lastCompactedMessageCount <
       policy.minNewMessagesSinceLastCompression
@@ -320,7 +323,7 @@ export async function compactLoopMessagesSemantic(
   const policy = normalizeOptions(options);
   const beforeTokens = estimateTokens(messages);
 
-  if (beforeTokens <= policy.triggerTokens) {
+  if (!policy.force && beforeTokens <= policy.triggerTokens) {
     return {
       messages,
       compacted: false,
@@ -339,6 +342,7 @@ export async function compactLoopMessagesSemantic(
   }
 
   if (
+    !policy.force &&
     typeof policy.lastCompactedMessageCount === "number" &&
     messages.length - policy.lastCompactedMessageCount <
       policy.minNewMessagesSinceLastCompression

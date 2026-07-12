@@ -16,7 +16,7 @@ export type ModelMessage = Anthropic.MessageParam;
 
 /**
  * 预留给后续 trace / eval 使用的 token 汇总结构。
- * 当前阶段先实现估算和预算控制，后面可以把真实模型返回的 usage 填进来。
+ * 预算优先使用模型实际返回的 usage；provider 没有返回 usage 时回退到本地估算。
  */
 export type TokenUsage = {
   estimatedInputTokens: number;
@@ -27,8 +27,8 @@ export type TokenUsage = {
 /**
  * 一个简单的硬预算计数器。
  *
- * max 表示本次 Agent Loop 最多允许消耗的估算 token；
- * spent 表示已经消耗的估算 token。
+ * max 表示本次 Agent Loop 最多允许消耗的累计 token；
+ * spent 表示已经记账的累计 token。
  */
 export class TokenBudget {
   constructor(

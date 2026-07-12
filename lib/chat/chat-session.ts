@@ -1,6 +1,7 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
 import { getAccessToken, authFetch } from "@/lib/auth/client";
 import type { ChatModelId } from "@/lib/agent/models";
+import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
 import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
@@ -33,6 +34,7 @@ export class ChatSession {
   loading = false;
   streaming = false;
   error: string | null = null;
+  contextUsage: ContextUsageEventData | null = null;
   private abortController: AbortController | null = null;
   private manuallyAborted = false;
   private currentModel: ChatModelId | null = null;
@@ -134,6 +136,14 @@ export class ChatSession {
             break;
           case "model_usage":
             (last().modelUsages ??= []).push(evt.usage);
+            break;
+          case "context_usage":
+            this.contextUsage = evt.usage;
+            void this.sessionManager
+              .updateSessionContextUsage(this.id, evt.usage)
+              .catch((error) =>
+                console.error("保存会话上下文用量失败:", error),
+              );
             break;
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");

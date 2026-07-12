@@ -414,10 +414,23 @@ async function maybeStoreToolArtifact(input: {
   };
 }
 
-const AGENT_LOOP_TOKEN_BUDGET = 24_000;
-const CONTEXT_COMPACTION_WINDOW_CAP = 32_000;
-const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.5;
-const CONTEXT_COMPACTION_TARGET_RATIO = 0.25;
+const AGENT_LOOP_TOKEN_BUDGET = 128_000;
+const AGENT_LOOP_OUTPUT_RESERVE = 4_096;
+const CONTEXT_COMPACTION_WINDOW_CAP = 80_000;
+const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.6;
+const CONTEXT_COMPACTION_TARGET_RATIO = 0.3;
+
+function estimateModelRequestTokens(input: {
+  messages: ModelMessage[];
+  system?: string;
+  tools: Anthropic.Tool[];
+}) {
+  return estimateTokens({
+    messages: input.messages,
+    system: input.system ?? "",
+    tools: input.tools,
+  });
+}
 
 export async function callModel(
   messages: ModelMessage[],
@@ -1027,20 +1040,81 @@ export async function runAgentLoop(
       };
       trace.steps.push(compactionStep);
     }
-    // Agent 每轮调模型前先问一句，当前上下文还塞得下吗
-    const estimatedContextTokens = estimateTokens(JSON.stringify(loopMessages));
+    // 预算不够时，先做一次不受常规频率限制的强制压缩，再决定是否停止工具循环。
+    let estimatedContextTokens = estimateModelRequestTokens({
+      messages: loopMessages,
+      system,
+      tools,
+    });
+    if (!tokenBudget.canAfford(estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE)) {
+      const forcedCompactionStartedAt = Date.now();
+      const forcedCompaction = await compactLoopMessagesSemantic(loopMessages, {
+        modelWindowTokens: runtimeContextWindowTokens,
+        triggerRatio: CONTEXT_COMPACTION_TRIGGER_RATIO,
+        targetRatio: CONTEXT_COMPACTION_TARGET_RATIO,
+        primerMessages: 3,
+        recentMessages: 6,
+        minNewMessagesSinceLastCompression: 8,
+        lastCompactedMessageCount,
+        force: true,
+        compressionModel,
+        compressor: (input) =>
+          callCompressionModel({
+            ...input,
+            model: compressionModel,
+            telemetryMetadata: {
+              operation: "context-compaction-budget-guard",
+              requestId,
+              sessionId,
+              userId,
+              messageCount: loopMessages.length,
+            },
+          }),
+      });
+      loopMessages = forcedCompaction.messages;
+      if (forcedCompaction.compacted) {
+        lastCompactedMessageCount = loopMessages.length;
+        trace.steps.push({
+          type: "context_compaction",
+          index: stepIndex++,
+          startedAt: forcedCompactionStartedAt,
+          durationMs: Date.now() - forcedCompactionStartedAt,
+          beforeTokens: forcedCompaction.beforeTokens,
+          afterTokens: forcedCompaction.afterTokens,
+          modelWindowTokens: forcedCompaction.modelWindowTokens,
+          triggerTokens: forcedCompaction.triggerTokens,
+          targetTokens: forcedCompaction.targetTokens,
+          primerMessages: forcedCompaction.primerMessages,
+          recentMessages: forcedCompaction.recentMessages,
+          middleMessageCount: forcedCompaction.middleMessageCount,
+          reason: `budget_guard:${forcedCompaction.reason ?? "compacted"}`,
+          summary: forcedCompaction.summary ?? "",
+          summaryChars: forcedCompaction.summary?.length ?? 0,
+          method: forcedCompaction.method,
+          compressionModel: forcedCompaction.compressionModel,
+          fallbackReason: forcedCompaction.fallbackReason,
+        });
+        estimatedContextTokens = estimateModelRequestTokens({
+          messages: loopMessages,
+          system,
+          tools,
+        });
+      }
+    }
+
     const tokenBudgetSnapshot = {
       max: tokenBudget.max,
       spentBefore: tokenBudget.spent,
       remainingBefore: tokenBudget.remaining(),
       requested: estimatedContextTokens,
+      reservedOutputTokens: AGENT_LOOP_OUTPUT_RESERVE,
     };
-    if (!tokenBudget.canAfford(estimatedContextTokens)) {
+    if (!tokenBudget.canAfford(estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE)) {
       enqueueEvent(
         {
           type: "text",
           content:
-            "\n\n上下文预算已用尽，我会停止继续调用工具，并基于当前已有信息回答。\n\n",
+            "\n\n本轮 Agent 的 token 预算已接近上限，且压缩后仍不足以继续调用工具。我会基于当前已有信息回答。\n\n",
         },
         enqueueText,
       );
@@ -1052,13 +1126,21 @@ export async function runAgentLoop(
         trace: finalizeTrace("token_budget_exceeded", false),
       };
     }
-    tokenBudget.spend(estimatedContextTokens);
-    const tokenBudgetAfterSpend = {
-      spentAfter: tokenBudget.spent,
-      remainingAfter: tokenBudget.remaining(),
-    };
-    metrics.estimatedTokensSpent = tokenBudget.spent;
     metrics.modelCallCount += 1;
+    enqueueEvent(
+      {
+        type: "context_usage",
+        usage: {
+          model,
+          modelCallIndex: metrics.modelCallCount,
+          estimatedTokens: estimatedContextTokens,
+          workingWindowTokens: runtimeContextWindowTokens,
+          modelWindowTokens: getModelContextWindowTokens(model),
+          remainingTokens: Math.max(0, runtimeContextWindowTokens - estimatedContextTokens),
+        },
+      },
+      enqueueText,
+    );
     const modelStartedAt = Date.now();
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
     const onTextDelta = (text: string) =>
@@ -1137,6 +1219,13 @@ export async function runAgentLoop(
         enqueueText,
       );
     }
+    const budgetChargeTokens = modelUsage?.totalTokens ?? estimatedContextTokens;
+    tokenBudget.spend(budgetChargeTokens);
+    const tokenBudgetAfterSpend = {
+      spentAfter: tokenBudget.spent,
+      remainingAfter: tokenBudget.remaining(),
+    };
+    metrics.estimatedTokensSpent = tokenBudget.spent;
     // 记录本轮注入的 system prompt（截断后），供 trace 详情页展示「喂了什么上下文」
     const systemSummary = system ? summarizeText(system) : undefined;
     const modelStep: ModelTraceStep = {
