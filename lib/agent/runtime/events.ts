@@ -52,6 +52,52 @@ export interface ContextUsageEvent {
   usage: ContextUsageEventData;
 }
 
+export interface PlanProgressEventData {
+  planId: string;
+  stepId: string;
+  goal: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  stepIndex: number;
+  stepCount: number;
+  failureReason?: string;
+  resultSummary?: string;
+}
+
+export interface PlanStepData {
+  id: string;
+  goal: string;
+  allowedTools: string[];
+  successCriteria: string[];
+}
+
+export interface ExecutionPlanData {
+  id: string;
+  objective: string;
+  steps: PlanStepData[];
+}
+
+export interface PlanStepResultData {
+  stepId: string;
+  status: "completed" | "skipped";
+  resultSummary?: string;
+}
+
+export interface PlanExecutionControlData {
+  startAtStep?: number;
+  skipStepIds?: string[];
+  priorStepResults?: PlanStepResultData[];
+}
+
+export interface PlanProposalEvent {
+  type: "plan_proposal";
+  plan: ExecutionPlanData;
+}
+
+export interface PlanProgressEvent {
+  type: "plan_progress";
+  plan: PlanProgressEventData;
+}
+
 export interface ErrorEvent {
     type: "error";
     message: string;
@@ -68,6 +114,8 @@ export type AgentEvent =
   | SourcesEvent
   | ModelUsageEvent
   | ContextUsageEvent
+  | PlanProposalEvent
+  | PlanProgressEvent
   | ErrorEvent
   | DoneEvent;
 

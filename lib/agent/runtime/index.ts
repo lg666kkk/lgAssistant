@@ -11,6 +11,7 @@ import {
 import { saveToolArtifact } from "@/lib/agent/runtime/artifact-store";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
+import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
 import {
   callModelWithProvider,
@@ -26,6 +27,7 @@ import {
   type ModelUsageBreakdown,
 } from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
+import { ragConfig } from "@/lib/platform/config";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -58,12 +60,13 @@ import type {
 
 export type AgentLoopStopReason =
   | "completed"
+  | "awaiting_user_input"
   | "max_tokens"
   | "token_budget_exceeded"
   | "repeated_tool_call"
   | "max_iterations";
 
-type AgentLoopResult = {
+export type AgentLoopResult = {
   loopMessages: ModelMessage[];
   completed: boolean;
   stopReason: AgentLoopStopReason;
@@ -289,50 +292,6 @@ function shapeWebSearchContent(toolResult: Awaited<ReturnType<typeof executeTool
   ].join("\n\n");
 }
 
-function shapeSearchNotesContent(toolResult: Awaited<ReturnType<typeof executeToolCall>>) {
-  if (
-    !toolResult.ok ||
-    !toolResult.data ||
-    typeof toolResult.data !== "object" ||
-    !("results" in toolResult.data)
-  ) {
-    return undefined;
-  }
-
-  const results = toolResult.data.results;
-  if (!Array.isArray(results) || results.length === 0) return undefined;
-
-  return [
-    "search_notes 结果（已压缩给模型使用）",
-    ...results.slice(0, 8).map((result, index) => {
-      const doc = result as DocContent;
-      const title = typeof doc.pageTitle === "string" ? doc.pageTitle : "(无标题)";
-      const url = typeof doc.pageUrl === "string" ? doc.pageUrl : "";
-      const headingPath = Array.isArray(doc.headingPath)
-        ? doc.headingPath.filter((v): v is string => typeof v === "string")
-        : [];
-      const similarity =
-        typeof doc.similarity === "number" ? `相似度：${doc.similarity.toFixed(3)}` : undefined;
-      const scores = [
-        typeof doc.vectorScore === "number" ? `向量：${doc.vectorScore.toFixed(3)}` : undefined,
-        typeof doc.keywordScore === "number" ? `关键词：${doc.keywordScore.toFixed(3)}` : undefined,
-        typeof doc.rerankScore === "number" ? `精排：${doc.rerankScore.toFixed(3)}` : undefined,
-      ].filter(Boolean).join(" / ");
-      const content = typeof doc.content === "string" ? compactTextPrefix(doc.content, 700) : "";
-      return [
-        `${index + 1}. ${title}`,
-        headingPath.length > 0 ? `位置：${headingPath.join(" / ")}` : undefined,
-        url ? `链接：${url}` : undefined,
-        similarity,
-        scores ? `分数：${scores}` : undefined,
-        content ? `摘录：${content}` : undefined,
-      ]
-        .filter((item) => item !== undefined)
-        .join("\n");
-    }),
-  ].join("\n\n");
-}
-
 function shapeToolResultContent(
   toolName: string,
   toolResult: Awaited<ReturnType<typeof executeToolCall>>,
@@ -341,14 +300,19 @@ function shapeToolResultContent(
     return truncateToolContent(toolResult.content, 4_000);
   }
 
+  if (toolName === "search_notes") {
+    return truncateToolContent(
+      toolResult.content,
+      ragConfig.maxContextTokens * 4,
+    );
+  }
+
   const shaped =
     toolName === "web_fetch"
       ? shapeWebFetchContent(toolResult)
       : toolName === "web_search"
         ? shapeWebSearchContent(toolResult)
-        : toolName === "search_notes"
-          ? shapeSearchNotesContent(toolResult)
-          : undefined;
+        : undefined;
 
   return truncateToolContent(shaped ?? toolResult.content, 1_200);
 }
@@ -511,6 +475,7 @@ export async function executeTools(
   scopeId?: string,
   userId?: string,
   requestId?: string,
+  conversationContext?: string[],
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -561,6 +526,7 @@ export async function executeTools(
       scopeId,
       userId,
       requestId,
+      conversationContext,
     )),
     ...duplicateExecutionResults,
   ].sort(
@@ -760,6 +726,7 @@ async function executeToolUsesWithScheduler(
   scopeId?: string,
   userId?: string,
   requestId?: string,
+  conversationContext?: string[],
 ) {
   type ScheduledToolUse = {
     index: number;
@@ -831,6 +798,7 @@ async function executeToolUsesWithScheduler(
               scopeId,
               userId,
               requestId,
+              conversationContext,
             ),
           })),
         )),
@@ -860,6 +828,7 @@ async function executeToolUsesWithScheduler(
         scopeId,
         userId,
         requestId,
+        conversationContext,
       ),
     });
   }
@@ -873,6 +842,7 @@ function executeSingleToolUse(
   scopeId?: string,
   userId?: string,
   requestId?: string,
+  conversationContext?: string[],
 ) {
   return executeToolCall(
     toolRegistry,
@@ -881,8 +851,33 @@ function executeSingleToolUse(
       input: toolUse.input,
       id: toolUse.id,
     },
-    { scopeId, userId, requestId },
+    { scopeId, userId, requestId, conversationContext },
   );
+}
+
+function extractMessageText(message: ModelMessage) {
+  if (typeof message.content === "string") return message.content.trim();
+  if (!Array.isArray(message.content)) return "";
+
+  return message.content
+    .filter((block): block is Anthropic.TextBlockParam => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
+
+function buildToolConversationContext(messages: ModelMessage[]) {
+  const conversationalMessages = messages
+    .map((message) => ({ role: message.role, text: extractMessageText(message) }))
+    .filter((message) => message.text.length > 0);
+  const currentUserIndex = conversationalMessages.findLastIndex(
+    (message) => message.role === "user",
+  );
+  const previousMessages = currentUserIndex >= 0
+    ? conversationalMessages.slice(0, currentUserIndex)
+    : conversationalMessages;
+
+  return previousMessages.slice(-4).map((message) => message.text);
 }
 
 function dedupeSources(sources: ToolSourceType[], limit = 8) {
@@ -1326,6 +1321,7 @@ export async function runAgentLoop(
       sessionId ?? requestId,
       userId,
       requestId,
+      buildToolConversationContext(loopMessages),
     );
     if (shouldStop()) {
       return {
@@ -1361,6 +1357,27 @@ export async function runAgentLoop(
       initialResponse,
       toolResultBlocks,
     );
+    const userQuestion = toolCalls.find(
+      (toolCall) => toolCall.metadata?.status === "awaiting_user_input",
+    );
+    if (userQuestion) {
+      const question =
+        typeof userQuestion.metadata?.question === "string"
+          ? userQuestion.metadata.question
+          : userQuestion.content;
+      enqueueEvent({ type: "text", content: `${question}\n` }, enqueueText);
+      loopMessages = [
+        ...loopMessages,
+        { role: "assistant" as const, content: question },
+      ];
+      return {
+        loopMessages,
+        completed: true,
+        stopReason: "awaiting_user_input",
+        metrics,
+        trace: finalizeTrace("awaiting_user_input", true),
+      };
+    }
   }
   return {
     loopMessages,
@@ -1395,7 +1412,8 @@ export async function forwardTextStream(
       break;
     }
 
-    if (text && !enqueueText(text)) {
+    const sanitizedText = sanitizeModelText(text);
+    if (sanitizedText && !enqueueText(sanitizedText)) {
       break;
     }
   }

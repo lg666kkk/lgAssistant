@@ -63,12 +63,14 @@ export type ExecuteToolCallOptions = {
   scopeId?: string;
   userId?: string;
   requestId?: string;
+  conversationContext?: string[];
 };
 
 export type ToolExecutionContext = {
   userId?: string;
   scopeId?: string;
   requestId?: string;
+  conversationContext?: string[];
 };
 
 export const defaultToolRuntimePolicy: ToolRuntimePolicy = {

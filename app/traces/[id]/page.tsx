@@ -84,7 +84,22 @@ type ContextCompactionStep = {
   fallbackReason?: string;
 };
 
-type Step = ModelStep | ToolStep | ContextCompactionStep;
+type PlanStep = {
+  type: "plan";
+  index: number;
+  durationMs?: number;
+  planId: string;
+  stepId?: string;
+  phase: "created" | "executed" | "verified";
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  goal: string;
+  successCriteria: string[];
+  allowedTools: string[];
+  resultSummary?: string;
+  failureReason?: string;
+};
+
+type Step = ModelStep | ToolStep | ContextCompactionStep | PlanStep;
 
 type Trace = {
   id: string;
@@ -206,6 +221,13 @@ function RagMetadataView({ metadata }: { metadata: Record<string, unknown> }) {
   }
 
   if (isRecord(metadata.rag)) {
+    const attempts = asRecordArray(metadata.ragAttempts);
+    const hasContextStats = [
+      metadata.ragContextTokens,
+      metadata.ragContextSourceCount,
+      metadata.ragContextTruncated,
+      metadata.ragParentContextsDeduped,
+    ].some((value) => value !== undefined);
     return (
       <div className="mt-2 space-y-2 rounded-lg border border-cyan-900/60 bg-cyan-950/20 px-3 py-2 text-xs">
         <div className="flex flex-wrap items-center gap-2 text-cyan-200">
@@ -216,8 +238,25 @@ function RagMetadataView({ metadata }: { metadata: Record<string, unknown> }) {
           <span className="text-cyan-300/70">
             返回 {asNumber(metadata.ragReturnedCount) ?? asNumber(metadata.rag.returnedCount) ?? 0} 条
           </span>
+          <span className={metadata.ragUsedFallback ? "text-amber-300" : "text-emerald-300"}>
+            {metadata.ragUsedFallback ? "受控二级召回" : "正常检索"}
+          </span>
         </div>
         <RagDebugSummary debug={metadata.rag} />
+        {hasContextStats && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+            <span>上下文 {asNumber(metadata.ragContextTokens) ?? 0} tokens</span>
+            <span>父段落 {asNumber(metadata.ragContextSourceCount) ?? 0} 个</span>
+            <span>父段落去重 {asNumber(metadata.ragParentContextsDeduped) ?? 0} 个</span>
+            <span>截断 {formatEnabled(metadata.ragContextTruncated)}</span>
+          </div>
+        )}
+        {attempts.map((attempt, attemptIndex) => (
+          <RagAttemptView
+            key={`${asString(attempt.label) ?? "attempt"}-${attemptIndex}`}
+            attempt={attempt}
+          />
+        ))}
         <Collapsible label="Raw tool metadata" body={toText(metadata)} />
       </div>
     );
@@ -236,6 +275,10 @@ function RagAttemptView({ attempt }: { attempt: Record<string, unknown> }) {
         <span className="font-medium">{asString(attempt.label) ?? "attempt"}</span>
         <span className="text-slate-500">阈值 {formatScore(attempt.threshold)}</span>
         <span className="text-slate-500">返回 {asNumber(debug.returnedCount) ?? 0} 条</span>
+        <span className="text-emerald-400">接受 {asNumber(attempt.acceptedCount) ?? 0} 条</span>
+        {(asNumber(attempt.rejectedCount) ?? 0) > 0 && (
+          <span className="text-amber-400">拒绝 {asNumber(attempt.rejectedCount)} 条弱证据</span>
+        )}
       </div>
       <RagDebugSummary debug={debug} />
       {topResults.length > 0 && (
@@ -248,6 +291,14 @@ function RagAttemptView({ attempt }: { attempt: Record<string, unknown> }) {
                 <span className="text-slate-500">分数 {formatScore(result.rerankScore)}</span>
                 <span className="text-slate-500">向量 {formatScore(result.vectorScore)}</span>
                 <span className="text-slate-500">关键词 {formatScore(result.keywordScore)}</span>
+                {asNumber(result.rrfScore) !== undefined && (
+                  <span className="text-slate-500">RRF {formatScore(result.rrfScore)}</span>
+                )}
+                {asNumber(result.crossEncoderScore) !== undefined && (
+                  <span className="text-slate-500">
+                    Cross-Encoder {formatScore(result.crossEncoderScore)}
+                  </span>
+                )}
                 {Array.isArray(result.retrievalSources) && (
                   <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-cyan-300">
                     {result.retrievalSources.join("+")}
@@ -274,9 +325,21 @@ function RagDebugSummary({ debug }: { debug: Record<string, unknown> }) {
   const rewrittenQueries = Array.isArray(debug.rewrittenQueries)
     ? debug.rewrittenQueries.filter((query): query is string => typeof query === "string")
     : [];
+  const timings = isRecord(debug.timings) ? debug.timings : {};
+  const originalQuery = asString(debug.originalQuery);
+  const standaloneQuery = asString(debug.standaloneQuery);
+  const crossEncoderStatus = debug.crossEncoderUsed === true
+    ? "已执行"
+    : asString(debug.crossEncoderReason) ?? formatEnabled(debug.crossEncoderEnabled);
 
   return (
     <div className="mt-1 space-y-1 text-slate-400">
+      {standaloneQuery && standaloneQuery !== originalQuery && (
+        <div>
+          独立查询：
+          <span className="text-slate-300">{standaloneQuery}</span>
+        </div>
+      )}
       {rewrittenQueries.length > 0 && (
         <div>
           改写：
@@ -284,19 +347,51 @@ function RagDebugSummary({ debug }: { debug: Record<string, unknown> }) {
         </div>
       )}
       <div className="flex flex-wrap gap-x-3 gap-y-1">
+        <span>类型 {asString(debug.queryType) ?? "-"}</span>
+        <span>融合 {asString(debug.fusionStrategy) ?? "-"}</span>
+        {debug.fusionStrategy === "rrf" && <span>RRF k={asNumber(debug.rrfK) ?? "-"}</span>}
+        <span>
+          向量 Query {asNumber(debug.vectorQueryCount) ?? "-"}
+          {debug.multiQueryVectorEnabled === false ? "（单 Query）" : "（Multi-query）"}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
         <span>候选 {asNumber(debug.candidateCount) ?? "-"}</span>
+        <span>候选上限 {asNumber(debug.candidateLimit) ?? "-"}</span>
         <span>向量 {asNumber(debug.vectorCandidateCount) ?? "-"}</span>
         <span>关键词 {asNumber(debug.keywordCandidateCount) ?? "-"}</span>
-        <span>合并 {asNumber(debug.mergedCandidateCount) ?? "-"}</span>
+        <span>融合去重后 {asNumber(debug.mergedCandidateCount) ?? "-"}</span>
         <span>返回 {asNumber(debug.returnedCount) ?? "-"} 条</span>
+        <span>
+          TopK {asNumber(debug.effectiveMatchCount) ?? "-"}/请求 {asNumber(debug.requestedMatchCount) ?? "-"}
+        </span>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
         <span>向量权重 {formatScore(debug.vectorWeight)}</span>
         <span>关键词权重 {formatScore(debug.keywordWeight)}</span>
-        <span>MMR {formatEnabled(debug.mmrEnabled)}</span>
-        <span>重排 {formatEnabled(debug.rerankEnabled)}</span>
+        <span>
+          MMR {formatEnabled(debug.mmrEnabled)}（{asString(debug.mmrSimilarityMode) ?? "-"}）
+        </span>
+        <span>规则重排 {formatEnabled(debug.rerankEnabled)}</span>
+        <span>Cross-Encoder {crossEncoderStatus}</span>
+        {asNumber(debug.topScoreGap) !== undefined && (
+          <span>Top gap {formatScore(debug.topScoreGap)}</span>
+        )}
         <span>关键词检索 {formatEnabled(debug.keywordSearchEnabled)}</span>
       </div>
+      {asNumber(timings.totalMs) !== undefined && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+          <span>并行召回 {asNumber(timings.parallelRecallMs) ?? 0}ms</span>
+          <span>Embedding {asNumber(timings.embeddingMs) ?? 0}ms</span>
+          <span>向量 {asNumber(timings.vectorSearchMs) ?? 0}ms</span>
+          <span>关键词 {asNumber(timings.keywordSearchMs) ?? 0}ms</span>
+          <span>Cross-Encoder {asNumber(timings.crossEncoderMs) ?? 0}ms</span>
+          <span>总计 {asNumber(timings.totalMs) ?? 0}ms</span>
+        </div>
+      )}
+      {asString(debug.crossEncoderError) && (
+        <div className="text-rose-300">Cross-Encoder 降级：{asString(debug.crossEncoderError)}</div>
+      )}
     </div>
   );
 }
@@ -350,6 +445,7 @@ function collectRagObservations(trace: Trace): RagObservation[] {
           (isRecord(step.metadata.rag) ? asNumber(step.metadata.rag.returnedCount) : undefined) ??
           0,
         durationMs: step.durationMs,
+        usedFallback: step.metadata.ragUsedFallback === true,
         error: step.ok ? undefined : step.error,
         debug: isRecord(step.metadata.rag) ? step.metadata.rag : {},
         topResults: asRecordArray(step.metadata.ragTopResults),
@@ -679,9 +775,13 @@ export default function TraceDetailPage({
                       >
                         🔧 {step.name} {step.ok ? "" : "(失败)"}
                       </span>
-                    ) : (
+                    ) : step.type === "context_compaction" ? (
                       <span className="font-medium text-amber-300">
                         上下文压缩
+                      </span>
+                    ) : (
+                      <span className="font-medium text-indigo-300">
+                        执行计划 · {step.phase}
                       </span>
                     )}
                     <span className="ml-auto text-xs text-slate-600">
@@ -796,7 +896,7 @@ export default function TraceDetailPage({
                         </div>
                       )}
                     </div>
-                  ) : (
+                  ) : step.type === "context_compaction" ? (
                     <div className="mt-2">
                       <div className="flex flex-wrap gap-2 text-xs text-slate-500">
                         <span>before ~{step.beforeTokens} tok</span>
@@ -827,6 +927,29 @@ export default function TraceDetailPage({
                         body={step.summary}
                         meta={`${step.summaryChars} 字符`}
                       />
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-xs">
+                      <div className="text-slate-300">{step.goal}</div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-slate-500">
+                        <span>状态 {step.status}</span>
+                        {step.allowedTools.length > 0 && (
+                          <span>工具 {step.allowedTools.join(", ")}</span>
+                        )}
+                      </div>
+                      {step.successCriteria.length > 0 && (
+                        <div className="mt-1 text-slate-500">
+                          验收：{step.successCriteria.join("；")}
+                        </div>
+                      )}
+                      {step.resultSummary && (
+                        <Collapsible label="步骤结果" body={step.resultSummary} />
+                      )}
+                      {step.failureReason && (
+                        <div className="mt-2 rounded-lg bg-rose-950/40 px-3 py-2 text-rose-300">
+                          {step.failureReason}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

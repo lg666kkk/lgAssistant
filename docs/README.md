@@ -52,5 +52,10 @@
 | 09 | Prompt 段化注入（Prompt Pipe 最小内核） | [prompt-segmentation.md](./agent/prompt-segmentation.md) | 已完成 |
 | 10 | 定时任务能力（Scheduler 设计） | [scheduled-tasks.md](./agent/scheduled-tasks.md) | 设计（待实现） |
 | 11 | 知识库搜索开关（优先从知识库查找） | [knowledge-search-toggle.md](./agent/knowledge-search-toggle.md) | 已完成 |
+| 12 | 企业级 Agent 平台路线图（独立评估版） | [enterprise-agent-platform-roadmap.md](./agent/enterprise-agent-platform-roadmap.md) | 规划 |
+| 13 | Agent 上下文管理现状评估 | [context-management-review.md](./agent/context-management-review.md) | 评估 / 规划 |
+| 14 | Agent 可观测性完善方案 | [agent-observability-improvement-plan.md](./agent/agent-observability-improvement-plan.md) | 评估 / 规划 |
+| 15 | RAG 项目面试题库 | [rag-interview-questions.md](./rag/rag-interview-questions.md) | 已完善 |
+| 16 | RAG 检索质量升级 | [rag-retrieval-quality.md](./rag/rag-retrieval-quality.md) | 已实现 / 待部署迁移 |
 
 > 后续每实现一个功能，在此表格追加一行。

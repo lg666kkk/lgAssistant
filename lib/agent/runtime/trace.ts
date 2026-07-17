@@ -77,10 +77,24 @@ export type ContextCompactionTraceStep = TraceStepBase & {
   fallbackReason?: string;
 };
 
+export type PlanTraceStep = TraceStepBase & {
+  type: "plan";
+  planId: string;
+  stepId?: string;
+  phase: "created" | "executed" | "verified";
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  goal: string;
+  successCriteria: string[];
+  allowedTools: string[];
+  resultSummary?: string;
+  failureReason?: string;
+};
+
 export type TraceStep =
   | ModelTraceStep
   | ToolTraceStep
-  | ContextCompactionTraceStep; // 判别联合
+  | ContextCompactionTraceStep
+  | PlanTraceStep; // 判别联合
 
 export type AgentTrace = {
   requestId: string;
@@ -151,10 +165,11 @@ export function formatTraceTree(trace: AgentTrace): string {
         ? `${step.contentOriginalChars}→截断`
         : `${step.contentOriginalChars}chars`;
       return `${branch} #${step.index} tool  ${step.name} ok=${step.ok} ${dur} content(${chars})`;
-    } else {
+    } else if (step.type === "context_compaction") {
       const method = step.method ? ` method=${step.method}` : "";
       return `${branch} #${step.index} compact (${dur}) ${step.beforeTokens}→${step.afterTokens} tok middle=${step.middleMessageCount}${method}`;
     }
+    return `${branch} #${step.index} plan ${step.phase} ${step.status} goal="${step.goal.slice(0, 100)}"`;
   });
 
   return [header, ...lines].join("\n");

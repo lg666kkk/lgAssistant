@@ -3,8 +3,12 @@ import { getAccessToken, authFetch } from "@/lib/auth/client";
 import type { ChatModelId } from "@/lib/agent/models";
 import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
 import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
+import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
+import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
+import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
 import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
+import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 export interface Message {
   id?: string;
   role: "user" | "assistant";
@@ -25,6 +29,8 @@ export interface Message {
     metadata?: Record<string, unknown>;
   }>;
   modelUsages?: ModelUsageEventData[];
+  planSteps?: PlanProgressEventData[];
+  plan?: ExecutionPlanData;
 }
 
 export class ChatSession {
@@ -58,6 +64,8 @@ export class ChatSession {
         sources: msg.sources,
         toolCalls: msg.metadata?.toolCalls,
         modelUsages: msg.metadata?.modelUsages,
+        planSteps: msg.metadata?.planSteps,
+        plan: msg.metadata?.plan,
       }));
       this.isNewSession = false;
     } catch (error) {
@@ -72,6 +80,8 @@ export class ChatSession {
     options: {
       webSearchEnabled?: boolean;
       model?: ChatModelId;
+      approvedPlan?: ExecutionPlanData;
+      planExecution?: PlanExecutionControlData;
     } = {},
   ) {
     if (!input.trim() || this.loading) return;
@@ -111,7 +121,11 @@ export class ChatSession {
       }
     }
 
-    this.messages.push({ role: "assistant", content: "" });
+    this.messages.push({
+      role: "assistant",
+      content: "",
+      plan: options.approvedPlan,
+    });
     onUpdate();
 
     try {
@@ -145,9 +159,20 @@ export class ChatSession {
                 console.error("保存会话上下文用量失败:", error),
               );
             break;
+          case "plan_progress": {
+            const planSteps = (last().planSteps ??= []);
+            const existingIndex = planSteps.findIndex((step) => step.stepId === evt.plan.stepId);
+            if (existingIndex >= 0) planSteps[existingIndex] = evt.plan;
+            else planSteps.push(evt.plan);
+            break;
+          }
+          case "plan_proposal":
+            last().plan = evt.plan;
+            break;
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");
           case "done":
+            last().content = sanitizeModelText(last().content);
             break;
         }
       };
@@ -165,6 +190,8 @@ export class ChatSession {
           sessionId: this.id,
           enableWebSearch: options.webSearchEnabled !== false,
           model: options.model,
+          approvedPlan: options.approvedPlan,
+          planExecution: options.planExecution,
         }),
         signal: this.abortController.signal,
         onopen: async (response) => {
@@ -259,6 +286,8 @@ export class ChatSession {
             ...metadata,
             toolCalls: lastMessage.toolCalls,
             modelUsages: lastMessage.modelUsages,
+            planSteps: lastMessage.planSteps,
+            plan: lastMessage.plan,
           },
         },
       );

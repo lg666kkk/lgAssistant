@@ -11,11 +11,15 @@ npm run test:rag
 常用参数：
 
 ```bash
-npm run test:rag -- --limit 8 --threshold 0.3
+npm run test:rag -- --limit 5 --threshold 0.4
 npm run test:rag -- --case rag-concepts,notion-sync
 npm run test:rag -- --out reports/rag-eval/latest.json
 npm run test:rag -- --no-keyword
 npm run test:rag -- --no-rerank
+npm run test:rag -- --no-multi-query-vector
+npm run test:rag -- --fusion rrf
+npm run test:rag -- --fusion weighted
+npm run test:rag -- --cross-encoder
 ```
 
 如果需要限定用户知识库：
@@ -95,7 +99,10 @@ npm run test:rag -- --out reports/rag-eval/baseline.json
 ```bash
 npm run test:rag -- --no-keyword --out reports/rag-eval/no-keyword.json
 npm run test:rag -- --no-rerank --out reports/rag-eval/no-rerank.json
-npm run test:rag -- --threshold 0.3 --out reports/rag-eval/threshold-03.json
+npm run test:rag -- --fusion rrf --out reports/rag-eval/rrf.json
+npm run test:rag -- --fusion weighted --out reports/rag-eval/weighted.json
+npm run test:rag -- --no-multi-query-vector --out reports/rag-eval/single-vector-query.json
+npm run test:rag -- --threshold 0.4 --out reports/rag-eval/threshold-04.json
 ```
 
 看差异：
@@ -104,6 +111,9 @@ npm run test:rag -- --threshold 0.3 --out reports/rag-eval/threshold-03.json
 keyword search 是否提高 keywordCoverage
 rerank 是否提高 mrr
 threshold 是否降低误召回，但不要把 recall 打没
+RRF 是否比校准加权提高 MRR/no-result accuracy
+multi-query vector 是否提高语义召回，以及增加多少延迟
+Cross-Encoder 是否只在困难 case 上带来净收益
 ```
 
 ## 初期建议
@@ -148,11 +158,15 @@ search_notes 工具调用
 建议线上重点看：
 
 ```text
-query / rewrittenQueries
+originalQuery / standaloneQuery / rewrittenQueries / queryType
+fusionStrategy / rrfK / vectorWeight / keywordWeight
+vectorQueryCount / multiQueryVectorEnabled
 vectorCandidateCount / keywordCandidateCount
-mergedCandidateCount / returnedCount
+mergedCandidateCount / candidateCount / candidateLimit / returnedCount
+mmrSimilarityMode
+crossEncoderUsed / crossEncoderReason / crossEncoderError
+timings.embeddingMs / vectorSearchMs / keywordSearchMs / parallelRecallMs
 topResults
-durationMs
 usedFallback
 error
 ```
@@ -162,7 +176,7 @@ error
 ```text
 是不是没搜到
 是不是只走了 vector 没走 keyword
-是不是 fallback threshold=0 才有结果
+是不是只有受控二级召回才有结果，以及弱证据是否被门槛拒绝
 是不是 top results 明显跑偏
 是不是检索耗时过高
 ```

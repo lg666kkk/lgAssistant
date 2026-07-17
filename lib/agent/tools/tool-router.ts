@@ -158,6 +158,7 @@ export async function executeToolCall(
         userId: options.userId,
         scopeId: options.scopeId,
         requestId: options.requestId,
+        conversationContext: options.conversationContext,
       }),
       tool.runtime.timeoutSeconds,
       tool.name,

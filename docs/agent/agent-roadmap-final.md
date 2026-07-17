@@ -1,5 +1,8 @@
 # Agent 成熟化路线图（最终整合版）
 
+> ⚠️ **2026-07 更新**：本文部分条目已落地（C1 语义压缩、C4 Prompt Pipe、H4 工具并发、Planning 已实现为 Plan-and-Execute + 审批等）。
+> 最新路线图见 [enterprise-agent-roadmap.md](./enterprise-agent-roadmap.md)，其第 0 节含逐条现状校准；本文保留作为对标分析的原始依据。
+
 > 本文是两份前置文档的整合最终版，**原文保留以便追溯**：
 > - [maturity-benchmark-roadmap.md](./maturity-benchmark-roadmap.md) —— 对标差距分析（对标表 + 真实行号 + 成本/面试杀伤力评分 + 面试话术）
 > - [agent-engineering-roadmap.md](./agent-engineering-roadmap.md) —— 架构蓝图（目标架构 + 类型设计 + 模块树 + 里程碑/Ops/风险）

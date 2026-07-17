@@ -17,6 +17,11 @@ async function main() {
     return true;
   });
 
+  if (!userId) {
+    console.error("缺少用户 ID：请传 --user-id <uuid> 或配置 DEFAULT_USER_ID");
+    process.exit(1);
+  }
+
   if (pageIds.length === 0) {
     console.error("用法: npm run rag:sync [--tree] [--force] [--user-id <uuid>] <notion_page_id> [...more_page_ids]");
     console.error("示例: npm run rag:sync -- --tree --force bfddfbc3bf344913a2aa92bbccc72524");

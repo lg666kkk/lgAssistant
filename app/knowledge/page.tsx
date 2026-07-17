@@ -78,14 +78,20 @@ function pickSyncMetadata(event: SyncEvent): Array<[string, unknown]> {
     tree_page_failed: ["parentPageId", "depth", "name", "message", "code", "status", "cause"],
     page_retry: ["attempt", "maxRetries", "nextDelayMs", "error"],
     page_version_checked: ["existingChunkCount", "contentHash", "embeddingModel", "chunkerVersion", "force", "reason"],
-    chunking_start: ["contentLength", "chunkSize", "overlap", "minChunkSize", "chunkerVersion"],
-    page_chunked: ["chunkSize", "overlap", "minChunkSize"],
-    chunk_sample: ["index", "startChar", "endChar", "headingPath", "preview"],
-    embedding_start: ["embeddingModel", "expectedDimensions"],
-    page_embedded: ["embeddingModel", "vectorCount", "dimensions"],
+    chunking_start: ["contentLength", "chunkSize", "overlap", "minChunkSize", "maxTokens", "overlapTokens", "chunkerVersion"],
+    page_chunked: ["chunkSize", "overlap", "minChunkSize", "maxTokens", "overlapTokens"],
+    chunk_sample: ["index", "tokenCount", "kind", "startChar", "endChar", "headingPath", "preview"],
+    embedding_start: ["embeddingModel", "expectedDimensions", "batchSize", "totalBatches", "maxRetriesPerBatch"],
+    embedding_batch_start: ["batchIndex", "totalBatches", "inputStart", "inputCount", "attempt", "maxAttempts", "idempotencyKey"],
+    embedding_batch_retry: ["batchIndex", "totalBatches", "attempt", "maxAttempts", "nextDelayMs", "retryable", "error", "idempotencyKey"],
+    embedding_batch_done: ["batchIndex", "totalBatches", "attempt", "providerIndexes", "reordered", "idempotencyKey"],
+    embedding_batch_failed: ["batchIndex", "totalBatches", "attempt", "maxAttempts", "retryable", "error", "idempotencyKey"],
+    page_embedded: ["embeddingModel", "vectorCount", "dimensions", "totalBatches", "batchSize"],
     db_page_upserted: ["table", "pageUrl", "lastEditedTime"],
     db_old_chunks_deleted: ["table"],
     db_chunks_inserted: ["table", "firstChunkHash"],
+    db_atomic_replace_start: ["rpc", "tables", "chunkCount", "firstChunkHash"],
+    db_atomic_replace_committed: ["rpc", "pageRowId", "insertedCount", "transaction"],
     batch_done: ["successCount", "failCount", "skippedCount", "createdCount", "updatedCount"],
   };
   const keys = keysByType[event.type] ?? Object.keys(metadata).slice(0, 4);
@@ -95,7 +101,7 @@ function pickSyncMetadata(event: SyncEvent): Array<[string, unknown]> {
 }
 
 function eventTone(event: SyncEvent) {
-  const isError = event.type === "error" || event.type === "page_failed" || event.type === "compile_failed" || event.type === "tree_page_failed";
+  const isError = event.type === "error" || event.type === "page_failed" || event.type === "compile_failed" || event.type === "tree_page_failed" || event.type === "embedding_batch_failed";
   const isDone = event.type === "done" || event.type === "page_done" || event.type === "batch_done" || event.type === "compile_done";
   if (isError) return "text-rose-300";
   if (isDone) return "text-emerald-300";

@@ -1,11 +1,7 @@
 import dotenv from "dotenv";
-import { RAGRetriever } from "../lib/knowledge/retriever";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
-
-const DEFAULT_LIMIT = 5;
-const DEFAULT_THRESHOLD = 0.5;
 
 type CliOptions = {
   query: string;
@@ -14,22 +10,27 @@ type CliOptions = {
   userId?: string;
 };
 
-function printUsage() {
+type RagCliConfig = {
+  maxResults: number;
+  similarityThreshold: number;
+};
+
+function printUsage(config: RagCliConfig) {
   console.error(
     [
       '用法: npm run rag:search "query" [--limit 5] [--threshold 0.5] [--user-id <uuid>]',
       "",
       "示例:",
       '  npm run rag:search "怎么做 RAG 检索优化"',
-      '  npm run rag:search "Notion 同步流程" -- --limit 10 --threshold 0.3',
+      `  npm run rag:search "Notion 同步流程" -- --limit ${config.maxResults} --threshold 0.4`,
     ].join("\n"),
   );
 }
 
-function parseArgs(argv: string[]): CliOptions | null {
+function parseArgs(argv: string[], config: RagCliConfig): CliOptions | null {
   const queryParts: string[] = [];
-  let limit = DEFAULT_LIMIT;
-  let threshold = DEFAULT_THRESHOLD;
+  let limit = config.maxResults;
+  let threshold = config.similarityThreshold;
   let userId = process.env.DEFAULT_USER_ID;
 
   for (let i = 0; i < argv.length; i++) {
@@ -37,8 +38,8 @@ function parseArgs(argv: string[]): CliOptions | null {
 
     if (arg === "--limit") {
       const value = Number(argv[++i]);
-      if (!Number.isFinite(value) || value <= 0) {
-        throw new Error("--limit 必须是大于 0 的数字");
+      if (!Number.isFinite(value) || value <= 0 || value > config.maxResults) {
+        throw new Error(`--limit 必须是 1 到 ${config.maxResults} 之间的数字`);
       }
       limit = Math.floor(value);
       continue;
@@ -74,10 +75,14 @@ function compactExcerpt(text: string, maxChars = 220) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const [{ RAGRetriever }, { ragConfig }] = await Promise.all([
+    import("../lib/knowledge/retriever"),
+    import("../lib/platform/config"),
+  ]);
+  const options = parseArgs(process.argv.slice(2), ragConfig);
 
   if (!options) {
-    printUsage();
+    printUsage(ragConfig);
     process.exit(1);
   }
 
@@ -97,8 +102,15 @@ async function main() {
     console.log(`改写: ${debug.rewrittenQueries.join(" | ")}`);
   }
   console.log(`阈值: ${options.threshold}`);
-  console.log(`候选: ${debug.candidateCount}`);
-  console.log(`数量: ${debug.returnedCount}/${options.limit}`);
+  console.log(`融合: ${debug.fusionStrategy} (${debug.queryType})`);
+  console.log(`向量 Query: ${debug.vectorQueryCount}`);
+  console.log(`候选: ${debug.candidateCount}/${debug.candidateLimit}（合并前 ${debug.mergedCandidateCount}）`);
+  console.log(`MMR: ${debug.mmrSimilarityMode}`);
+  console.log(`Cross-Encoder: ${debug.crossEncoderUsed ? "已执行" : debug.crossEncoderReason}`);
+  console.log(`数量: ${debug.returnedCount}/${debug.effectiveMatchCount}`);
+  console.log(
+    `耗时: parallel=${debug.timings.parallelRecallMs}ms embedding=${debug.timings.embeddingMs}ms vector=${debug.timings.vectorSearchMs}ms keyword=${debug.timings.keywordSearchMs}ms total=${debug.timings.totalMs}ms`,
+  );
   console.log("");
 
   if (results.length === 0) {

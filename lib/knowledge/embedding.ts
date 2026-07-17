@@ -3,33 +3,104 @@
  * 用于将文本转换为向量，支持语义检索
  */
 
+import { createHash } from 'node:crypto';
 import OpenAI from 'openai';
 
 export const EMBEDDING_MODEL = 'text-embedding-v4';
+export const EMBEDDING_DIMENSIONS = 1024;
+export const EMBEDDING_BATCH_SIZE = 10;
+export const EMBEDDING_MAX_RETRIES = 2;
+
+const EMBEDDING_RETRY_BASE_DELAY_MS = 500;
+
+export type EmbeddingProviderRequest = {
+  model: string;
+  input: string[];
+};
+
+export type EmbeddingProviderRequestOptions = {
+  headers: Record<string, string>;
+  maxRetries: number;
+};
+
+export type EmbeddingProviderResponse = {
+  data: Array<{
+    index: number;
+    embedding: unknown;
+  }>;
+};
+
+export type EmbeddingProvider = {
+  create(
+    request: EmbeddingProviderRequest,
+    options: EmbeddingProviderRequestOptions,
+  ): Promise<EmbeddingProviderResponse>;
+};
+
+export type EmbeddingBatchEvent = {
+  type: 'batch_start' | 'batch_retry' | 'batch_done' | 'batch_failed';
+  batchIndex: number;
+  totalBatches: number;
+  inputStart: number;
+  inputCount: number;
+  attempt: number;
+  maxAttempts: number;
+  idempotencyKey: string;
+  providerIndexes?: number[];
+  reordered?: boolean;
+  nextDelayMs?: number;
+  retryable?: boolean;
+  error?: string;
+};
+
+export type EmbedBatchOptions = {
+  idempotencyScope?: string;
+  onEvent?: (event: EmbeddingBatchEvent) => void;
+};
+
+export type EmbeddingClientOptions = {
+  provider?: EmbeddingProvider;
+  model?: string;
+  batchSize?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+export class EmbeddingIntegrityError extends Error {
+  readonly code = 'EMBEDDING_INTEGRITY_ERROR';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmbeddingIntegrityError';
+  }
+}
 
 /**
  * Embedding 客户端类
  * 封装了向量生成的所有操作
  */
 export class EmbeddingClient {
-  private client: OpenAI;
+  private provider: EmbeddingProvider;
   private model: string;
+  private batchSize: number;
+  private maxRetries: number;
+  private retryBaseDelayMs: number;
+  private sleep: (ms: number) => Promise<void>;
 
-  constructor() {
-    // 从环境变量读取配置
-    const apiKey = process.env.DASHSCOPE_API_KEY;
-    const baseURL = process.env.DASHSCOPE_BASE_URL;
-
-    if (!apiKey) {
-      throw new Error('缺少环境变量 DASHSCOPE_API_KEY');
-    }
-
-    this.client = new OpenAI({
-      apiKey,
-      baseURL: baseURL || 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-    });
-
-    this.model = EMBEDDING_MODEL;
+  constructor(options: EmbeddingClientOptions = {}) {
+    this.provider = options.provider ?? createOpenAICompatibleProvider();
+    this.model = options.model ?? EMBEDDING_MODEL;
+    this.batchSize = positiveInteger(options.batchSize ?? EMBEDDING_BATCH_SIZE, 'batchSize');
+    this.maxRetries = nonNegativeInteger(
+      options.maxRetries ?? EMBEDDING_MAX_RETRIES,
+      'maxRetries',
+    );
+    this.retryBaseDelayMs = nonNegativeInteger(
+      options.retryBaseDelayMs ?? EMBEDDING_RETRY_BASE_DELAY_MS,
+      'retryBaseDelayMs',
+    );
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   /**
@@ -38,31 +109,341 @@ export class EmbeddingClient {
    * @returns 1024 维向量数组
    */
   async embedSingle(text: string): Promise<number[]> {
-    const response = await this.client.embeddings.create({
-      model: this.model,
-      input: text
-    });
-
-    return response.data[0].embedding;
+    const embeddings = await this.embedBatch([text]);
+    return embeddings[0];
   }
 
   /**
-   * 为多条文本批量生成向量
+   * 为多条文本分批生成向量。每批按 provider index 重排并完整校验。
    * @param texts 文本数组
-   * @returns 向量数组
+   * @returns 与输入顺序严格一致的向量数组
    */
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  async embedBatch(
+    texts: string[],
+    options: EmbedBatchOptions = {},
+  ): Promise<number[][]> {
     if (texts.length === 0) {
       return [];
     }
 
-    const response = await this.client.embeddings.create({
-      model: this.model,
-      input: texts
+    validateEmbeddingInputs(texts);
+
+    const totalBatches = Math.ceil(texts.length / this.batchSize);
+    const embeddings: number[][] = [];
+
+    for (let inputStart = 0; inputStart < texts.length; inputStart += this.batchSize) {
+      const batchTexts = texts.slice(inputStart, inputStart + this.batchSize);
+      const batchIndex = Math.floor(inputStart / this.batchSize) + 1;
+      const idempotencyKey = buildEmbeddingIdempotencyKey({
+        model: this.model,
+        scope: options.idempotencyScope,
+        texts: batchTexts,
+      });
+      const batchEmbeddings = await this.embedBatchWithRetry({
+        batchTexts,
+        batchIndex,
+        totalBatches,
+        inputStart,
+        idempotencyKey,
+        onEvent: options.onEvent,
+      });
+      embeddings.push(...batchEmbeddings);
+    }
+
+    if (embeddings.length !== texts.length) {
+      throw new EmbeddingIntegrityError(
+        `批量向量数量不一致: ${embeddings.length}/${texts.length}`,
+      );
+    }
+
+    return embeddings;
+  }
+
+  private async embedBatchWithRetry(input: {
+    batchTexts: string[];
+    batchIndex: number;
+    totalBatches: number;
+    inputStart: number;
+    idempotencyKey: string;
+    onEvent?: (event: EmbeddingBatchEvent) => void;
+  }): Promise<number[][]> {
+    const maxAttempts = this.maxRetries + 1;
+
+    input.onEvent?.({
+      type: 'batch_start',
+      batchIndex: input.batchIndex,
+      totalBatches: input.totalBatches,
+      inputStart: input.inputStart,
+      inputCount: input.batchTexts.length,
+      attempt: 1,
+      maxAttempts,
+      idempotencyKey: input.idempotencyKey,
     });
 
-    return response.data.map(d => d.embedding);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let normalized: ReturnType<typeof normalizeEmbeddingResponse>;
+      try {
+        const response = await this.provider.create(
+          {
+            model: this.model,
+            input: input.batchTexts,
+          },
+          {
+            headers: {
+              'Idempotency-Key': input.idempotencyKey,
+            },
+            maxRetries: 0,
+          },
+        );
+        normalized = normalizeEmbeddingResponse(
+          response,
+          input.batchTexts.length,
+        );
+      } catch (error) {
+        const retryable = isRetryableEmbeddingError(error);
+        if (!retryable || attempt >= maxAttempts) {
+          input.onEvent?.({
+            type: 'batch_failed',
+            batchIndex: input.batchIndex,
+            totalBatches: input.totalBatches,
+            inputStart: input.inputStart,
+            inputCount: input.batchTexts.length,
+            attempt,
+            maxAttempts,
+            idempotencyKey: input.idempotencyKey,
+            retryable,
+            error: errorMessage(error),
+          });
+          throw batchError(input, attempt, error);
+        }
+
+        const nextDelayMs = this.retryBaseDelayMs * 2 ** (attempt - 1);
+        input.onEvent?.({
+          type: 'batch_retry',
+          batchIndex: input.batchIndex,
+          totalBatches: input.totalBatches,
+          inputStart: input.inputStart,
+          inputCount: input.batchTexts.length,
+          attempt,
+          maxAttempts,
+          idempotencyKey: input.idempotencyKey,
+          nextDelayMs,
+          retryable,
+          error: errorMessage(error),
+        });
+        await this.sleep(nextDelayMs);
+        continue;
+      }
+
+      input.onEvent?.({
+        type: 'batch_done',
+        batchIndex: input.batchIndex,
+        totalBatches: input.totalBatches,
+        inputStart: input.inputStart,
+        inputCount: input.batchTexts.length,
+        attempt,
+        maxAttempts,
+        idempotencyKey: input.idempotencyKey,
+        providerIndexes: normalized.providerIndexes,
+        reordered: normalized.reordered,
+      });
+
+      return normalized.embeddings;
+    }
+
+    throw new Error('Embedding 批次重试状态异常');
   }
+}
+
+export function validateEmbeddingVector(
+  embedding: unknown,
+  label = 'Embedding',
+): asserts embedding is number[] {
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    throw new EmbeddingIntegrityError(`${label} 为空向量`);
+  }
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new EmbeddingIntegrityError(
+      `${label} 向量维度错误: ${embedding.length}/${EMBEDDING_DIMENSIONS}`,
+    );
+  }
+
+  let hasNonZeroValue = false;
+  for (const value of embedding) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new EmbeddingIntegrityError(`${label} 向量包含非有限数`);
+    }
+    if (value !== 0) {
+      hasNonZeroValue = true;
+    }
+  }
+
+  if (!hasNonZeroValue) {
+    throw new EmbeddingIntegrityError(`${label} 为零向量`);
+  }
+}
+
+function createOpenAICompatibleProvider(): EmbeddingProvider {
+  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const baseURL = process.env.DASHSCOPE_BASE_URL;
+
+  if (!apiKey) {
+    throw new Error('缺少环境变量 DASHSCOPE_API_KEY');
+  }
+
+  const client = new OpenAI({
+    apiKey,
+    baseURL: baseURL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    maxRetries: 0,
+  });
+
+  return {
+    async create(request, options) {
+      const response = await client.embeddings.create(request, {
+        headers: options.headers,
+        maxRetries: options.maxRetries,
+      });
+      return {
+        data: response.data.map((item) => ({
+          index: item.index,
+          embedding: item.embedding,
+        })),
+      };
+    },
+  };
+}
+
+function normalizeEmbeddingResponse(
+  response: EmbeddingProviderResponse,
+  expectedCount: number,
+): {
+  embeddings: number[][];
+  providerIndexes: number[];
+  reordered: boolean;
+} {
+  if (!response || !Array.isArray(response.data)) {
+    throw new EmbeddingIntegrityError('provider 未返回 embedding data 数组');
+  }
+  if (response.data.length !== expectedCount) {
+    throw new EmbeddingIntegrityError(
+      `provider 返回数量不一致: ${response.data.length}/${expectedCount}`,
+    );
+  }
+
+  const ordered = new Array<number[] | undefined>(expectedCount);
+  const providerIndexes: number[] = [];
+
+  for (const item of response.data) {
+    const providerIndex = item?.index;
+    if (!Number.isInteger(providerIndex)) {
+      throw new EmbeddingIntegrityError('provider index 缺失或不是整数');
+    }
+    if (providerIndex < 0 || providerIndex >= expectedCount) {
+      throw new EmbeddingIntegrityError(
+        `provider index 越界: ${providerIndex}/${expectedCount}`,
+      );
+    }
+    if (ordered[providerIndex]) {
+      throw new EmbeddingIntegrityError(`provider index 重复: ${providerIndex}`);
+    }
+
+    validateEmbeddingVector(item.embedding, `provider index ${providerIndex}`);
+    ordered[providerIndex] = item.embedding;
+    providerIndexes.push(providerIndex);
+  }
+
+  const embeddings = ordered.map((embedding, index) => {
+    if (!embedding) {
+      throw new EmbeddingIntegrityError(`provider index 缺失: ${index}`);
+    }
+    return embedding;
+  });
+
+  return {
+    embeddings,
+    providerIndexes,
+    reordered: providerIndexes.some((providerIndex, index) => providerIndex !== index),
+  };
+}
+
+function validateEmbeddingInputs(texts: string[]) {
+  for (let index = 0; index < texts.length; index++) {
+    if (typeof texts[index] !== 'string' || texts[index].trim().length === 0) {
+      throw new Error(`Embedding 输入 #${index} 为空`);
+    }
+  }
+}
+
+function buildEmbeddingIdempotencyKey(input: {
+  model: string;
+  scope?: string;
+  texts: string[];
+}) {
+  const hash = createHash('sha256');
+  hash.update(input.model);
+  hash.update('\0');
+  hash.update(input.scope ?? '');
+  for (const text of input.texts) {
+    hash.update('\0');
+    hash.update(text);
+  }
+  return `embedding-${hash.digest('hex')}`;
+}
+
+function isRetryableEmbeddingError(error: unknown) {
+  if (error instanceof EmbeddingIntegrityError) {
+    return true;
+  }
+
+  const status = errorStatus(error);
+  if (status !== undefined) {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+
+  return true;
+}
+
+function errorStatus(error: unknown) {
+  if (!error || typeof error !== 'object') return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function batchError(
+  input: {
+    batchIndex: number;
+    totalBatches: number;
+    idempotencyKey: string;
+  },
+  attempt: number,
+  cause: unknown,
+) {
+  const error = new Error(
+    `Embedding 批次 ${input.batchIndex}/${input.totalBatches} 失败（attempt=${attempt}, key=${input.idempotencyKey}）: ${errorMessage(cause)}`,
+  ) as Error & { cause?: unknown; code?: string; status?: number };
+  error.name = 'EmbeddingBatchError';
+  error.code = 'EMBEDDING_BATCH_FAILED';
+  error.cause = cause;
+  error.status = errorStatus(cause);
+  return error;
+}
+
+function positiveInteger(value: number, label: string) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} 必须是正整数`);
+  }
+  return value;
+}
+
+function nonNegativeInteger(value: number, label: string) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} 必须是非负整数`);
+  }
+  return value;
 }
 
 /**

@@ -8,6 +8,9 @@ import { useChatManager } from "./_hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
 import { ChatInput } from "./_components/chat/chat-input";
 import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
+import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
+import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
+import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
 import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -77,6 +80,156 @@ function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) {
       <span title="按模型价格估算的本次费用">
         约 ¥{usage.estimatedCostCny.toFixed(4)}
       </span>
+    </div>
+  );
+}
+
+function PlanProgress({
+  plan,
+  steps,
+  disabled,
+  onRecover,
+}: {
+  plan?: ExecutionPlanData;
+  steps?: PlanProgressEventData[];
+  disabled: boolean;
+  onRecover: (control: PlanExecutionControlData) => void;
+}) {
+  if (!steps?.length) return null;
+  const statusClass = {
+    pending: "text-slate-400",
+    running: "text-cyan-300",
+    completed: "text-emerald-300",
+    failed: "text-rose-300",
+    skipped: "text-slate-500",
+  } as const;
+  const statusLabel = {
+    pending: "等待",
+    running: "执行中",
+    completed: "已完成",
+    failed: "未完成",
+    skipped: "已跳过",
+  } as const;
+
+  return (
+    <div className="mt-3 rounded-lg border border-indigo-800/70 bg-indigo-950/20 px-3 py-2 text-xs">
+      <div className="mb-1.5 font-medium text-indigo-200">执行计划</div>
+      <div className="space-y-1.5">
+        {[...steps].sort((left, right) => left.stepIndex - right.stepIndex).map((step) => (
+          <div key={step.stepId} className="flex items-start gap-2">
+            <span className="text-slate-500">{step.stepIndex + 1}.</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-slate-300">{step.goal}</div>
+              {step.failureReason && <div className="mt-1 text-rose-300">{step.failureReason}</div>}
+              {step.status === "failed" && plan && (
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onRecover({ startAtStep: step.stepIndex })}
+                    className="rounded bg-amber-700 px-2 py-1 text-slate-100 hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-700"
+                  >
+                    重试此步
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onRecover({
+                      startAtStep: Math.min(step.stepIndex + 1, plan.steps.length - 1),
+                      skipStepIds: [step.stepId],
+                    })}
+                    className="rounded bg-slate-700 px-2 py-1 text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:text-slate-500"
+                  >
+                    跳过此步
+                  </button>
+                </div>
+              )}
+            </div>
+            <span className={statusClass[step.status]}>{statusLabel[step.status]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlanReview({
+  plan,
+  disabled,
+  onExecute,
+}: {
+  plan: ExecutionPlanData;
+  disabled: boolean;
+  onExecute: (plan: ExecutionPlanData) => void;
+}) {
+  const [draft, setDraft] = useState<ExecutionPlanData>(() => structuredClone(plan));
+
+  useEffect(() => {
+    setDraft(structuredClone(plan));
+  }, [plan]);
+
+  const updateStep = (index: number, patch: Partial<ExecutionPlanData["steps"][number]>) => {
+    setDraft((current) => ({
+      ...current,
+      steps: current.steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step),
+    }));
+  };
+
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-indigo-800/70 bg-indigo-950/20 p-3 text-xs">
+      <div className="font-medium text-indigo-200">执行计划</div>
+      <label className="block text-slate-400">
+        目标
+        <input
+          value={draft.objective}
+          disabled={disabled}
+          onChange={(event) => setDraft((current) => ({ ...current, objective: event.target.value }))}
+          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200 disabled:opacity-60"
+        />
+      </label>
+      {draft.steps.map((step, index) => (
+        <div key={step.id} className="space-y-2 border-t border-indigo-900/70 pt-3">
+          <div className="text-slate-400">步骤 {index + 1}</div>
+          <textarea
+            value={step.goal}
+            disabled={disabled}
+            onChange={(event) => updateStep(index, { goal: event.target.value })}
+            rows={2}
+            className="w-full resize-y rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200 disabled:opacity-60"
+          />
+          <label className="block text-slate-500">
+            工具（逗号分隔）
+            <input
+              value={step.allowedTools.join(", ")}
+              disabled={disabled}
+              onChange={(event) => updateStep(index, {
+                allowedTools: event.target.value.split(",").map((tool) => tool.trim()).filter(Boolean),
+              })}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-slate-200 disabled:opacity-60"
+            />
+          </label>
+          <label className="block text-slate-500">
+            验收标准（每行一项）
+            <textarea
+              value={step.successCriteria.join("\n")}
+              disabled={disabled}
+              onChange={(event) => updateStep(index, {
+                successCriteria: event.target.value.split("\n").map((criterion) => criterion.trim()).filter(Boolean),
+              })}
+              rows={2}
+              className="mt-1 w-full resize-y rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200 disabled:opacity-60"
+            />
+          </label>
+        </div>
+      ))}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onExecute(draft)}
+        className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+      >
+        确认并执行
+      </button>
     </div>
   );
 }
@@ -225,6 +378,50 @@ export default function Home() {
       model: selectedModel,
     });
     requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleExecutePlan = async (plan: ExecutionPlanData) => {
+    if (!activeSession || loading) return;
+    moveSessionToTop(activeSession.id);
+    await activeSession.send("执行已确认的计划", rerender, {
+      webSearchEnabled,
+      model: selectedModel,
+      approvedPlan: plan,
+    });
+  };
+
+  const handlePlanRecovery = async (
+    plan: ExecutionPlanData,
+    steps: PlanProgressEventData[],
+    control: PlanExecutionControlData,
+  ) => {
+    if (!activeSession || loading) return;
+    const stepIndex = control.startAtStep ?? 0;
+    const priorStepResults = steps
+      .filter((step) => step.stepIndex < stepIndex && (step.status === "completed" || step.status === "skipped"))
+      .map((step) => ({
+        stepId: step.stepId,
+        status: step.status as "completed" | "skipped",
+        resultSummary: step.resultSummary,
+      }));
+    if (control.skipStepIds?.length) {
+      priorStepResults.push(...control.skipStepIds.map((stepId) => ({
+        stepId,
+        status: "skipped" as const,
+        resultSummary: "用户选择跳过此步骤",
+      })));
+    }
+    moveSessionToTop(activeSession.id);
+    await activeSession.send(
+      control.skipStepIds?.length ? "跳过失败步骤并继续执行计划" : "重试失败步骤",
+      rerender,
+      {
+        webSearchEnabled,
+        model: selectedModel,
+        approvedPlan: plan,
+        planExecution: { ...control, priorStepResults },
+      },
+    );
   };
 
   const handleStop = () => {
@@ -545,6 +742,25 @@ export default function Home() {
                     } ${isStreaming ? "streaming-msg" : ""}`}
                   >
                     <MessageMarkdown content={msg.content || (loading ? "思考中..." : "")} />
+                    {msg.role === "assistant" && msg.plan && !msg.planSteps?.length && (
+                      <PlanReview
+                        plan={msg.plan}
+                        disabled={Boolean(loading)}
+                        onExecute={handleExecutePlan}
+                      />
+                    )}
+                    {msg.role === "assistant" && (
+                      <PlanProgress
+                        plan={msg.plan}
+                        steps={msg.planSteps}
+                        disabled={Boolean(loading)}
+                        onRecover={(control) => {
+                          if (msg.plan && msg.planSteps) {
+                            void handlePlanRecovery(msg.plan, msg.planSteps, control);
+                          }
+                        }}
+                      />
+                    )}
                     {/* 显示工具调用 */}
                     {msg.role === "assistant" &&
                       msg.toolCalls &&
@@ -576,7 +792,9 @@ export default function Home() {
                                   <span className="text-slate-400">状态：</span>
                                   <span
                                     className={
-                                      String(toolCall.metadata?.status) ===
+                                      String(toolCall.metadata?.status) === "awaiting_user_input"
+                                        ? "font-medium text-amber-300"
+                                        : String(toolCall.metadata?.status) ===
                                       "pending_confirmation"
                                         ? "font-medium text-amber-300"
                                         : String(toolCall.metadata?.status) ===
@@ -588,6 +806,9 @@ export default function Home() {
                                     }
                                   >
                                     {String(toolCall.metadata?.status) ===
+                                    "awaiting_user_input"
+                                      ? "等待用户回答"
+                                      : String(toolCall.metadata?.status) ===
                                     "pending_confirmation"
                                       ? "待确认"
                                       : String(toolCall.metadata?.status) ===
@@ -598,6 +819,35 @@ export default function Home() {
                                           : "失败"}
                                   </span>
                                 </div>
+                                {String(toolCall.metadata?.status) === "awaiting_user_input" && (
+                                  <div className="mt-2 space-y-1.5">
+                                    <div className="text-slate-400">
+                                      {String(toolCall.metadata?.question ?? toolCall.content)}
+                                    </div>
+                                    {String(toolCall.metadata?.mode) === "single_choice" && (
+                                      <div className="text-slate-500">请选择一项，也可以在输入框中补充说明。</div>
+                                    )}
+                                    {String(toolCall.metadata?.mode) === "confirmation" && (
+                                      <div className="text-slate-500">请选择是否继续。</div>
+                                    )}
+                                    {Array.isArray(toolCall.metadata?.choices) &&
+                                      toolCall.metadata.choices
+                                        .filter((choice): choice is string => typeof choice === "string")
+                                        .map((choice) => (
+                                          <button
+                                            key={choice}
+                                            type="button"
+                                            onClick={() => {
+                                              setInput(choice);
+                                              requestAnimationFrame(() => inputRef.current?.focus());
+                                            }}
+                                            className="mr-1.5 rounded-md border border-slate-600 bg-slate-700/70 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600"
+                                          >
+                                            {choice}
+                                          </button>
+                                        ))}
+                                  </div>
+                                )}
                                 <div>
                                   {String(toolCall.metadata?.status) ===
                                     "pending_confirmation" && (

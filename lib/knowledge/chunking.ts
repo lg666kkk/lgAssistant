@@ -1,14 +1,19 @@
 /**
  * 文本切块模块
- * 用于将长文本切分成适合向量化的小块。
  *
  * 设计目标：
- * 1. 优先保留标题/段落/列表结构，而不是从任意字符处硬切。
- * 2. 每个 chunk 携带 headingPath，后续可用于引用、过滤、重排。
- * 3. 对超长段落保留字符级兜底，避免异常长文本撑爆 embedding 输入。
+ * 1. 标题、段落、代码围栏和 Markdown 表格优先保持完整。
+ * 2. 字符和 token 双上限，避免中文或代码在字符数正常时 token 超限。
+ * 3. 超长结构按句子/换行边界递归切分，并保留 headingPath。
  */
 
-export const CHUNKER_VERSION = 'recursive-heading-v1';
+import { countTokens, decode, encode } from 'gpt-tokenizer';
+
+export const CHUNKER_VERSION = 'structure-token-v2';
+export const DEFAULT_CHUNK_MAX_TOKENS = 450;
+export const DEFAULT_CHUNK_OVERLAP_TOKENS = 50;
+
+export type ChunkKind = 'text' | 'code' | 'table';
 
 /**
  * 文本块
@@ -19,51 +24,69 @@ export interface TextChunk {
   startChar: number;
   endChar: number;
   headingPath: string[];
+  tokenCount?: number;
+  kind?: ChunkKind;
 }
 
 /**
  * 切块配置
  */
 export interface ChunkOptions {
-  chunkSize?: number;      // 每块的目标字符数（默认 700）
-  overlap?: number;         // 重叠字符数（默认 50）
-  minChunkSize?: number;    // 最小块大小（默认 100）
+  chunkSize?: number;
+  overlap?: number;
+  minChunkSize?: number;
+  maxTokens?: number;
+  overlapTokens?: number;
+  minTokens?: number;
 }
+
+type NormalizedChunkOptions = Required<ChunkOptions>;
+
+type StructuredBlock = {
+  text: string;
+  startChar: number;
+  endChar: number;
+  headingPath: string[];
+  kind: ChunkKind | 'heading';
+};
+
+type SourceLine = {
+  raw: string;
+  text: string;
+  startChar: number;
+  endChar: number;
+};
 
 /**
  * 将文本切分成多个块
- * @param text 原始文本
- * @param options 切块配置
- * @returns 文本块数组
  */
 export function chunkText(
   text: string,
-  options: ChunkOptions = {}
+  options: ChunkOptions = {},
 ): TextChunk[] {
-  const {
-    chunkSize = 700,
-    overlap = 50,
-    minChunkSize = 100,
-  } = options;
-
-  // 清理文本：去除多余空白
+  const normalizedOptions: NormalizedChunkOptions = {
+    chunkSize: options.chunkSize ?? 700,
+    overlap: options.overlap ?? 50,
+    minChunkSize: options.minChunkSize ?? 100,
+    maxTokens: options.maxTokens ?? DEFAULT_CHUNK_MAX_TOKENS,
+    overlapTokens: options.overlapTokens ?? DEFAULT_CHUNK_OVERLAP_TOKENS,
+    minTokens: options.minTokens ?? 24,
+  };
   const cleanText = text.trim().replace(/\n{3,}/g, '\n\n');
 
   if (cleanText.length === 0) {
     return [];
   }
 
-  // 如果文本本身就很短，直接返回
-  if (cleanText.length <= chunkSize) {
-    return [
-      {
-        text: cleanText,
-        index: 0,
-        startChar: 0,
-        endChar: cleanText.length,
-        headingPath: inferHeadingPath(cleanText),
-      },
-    ];
+  if (fitsBudget(cleanText, normalizedOptions)) {
+    return [createChunk({
+      text: cleanText,
+      index: 0,
+      startChar: 0,
+      endChar: cleanText.length,
+      headingPath: inferHeadingPath(cleanText),
+      kind: inferChunkKind(cleanText),
+    })];
   }
 
   const chunks: TextChunk[] = [];
@@ -74,37 +97,47 @@ export function chunkText(
   let currentHeadingPath: string[] = [];
 
   const pushCurrent = () => {
-    const text = currentText.trim();
-    if (text.length >= minChunkSize) {
-      chunks.push({
-        text,
+    const normalized = currentText.trim();
+    if (shouldKeepChunk(normalized, normalizedOptions)) {
+      chunks.push(createChunk({
+        text: normalized,
         index: chunks.length,
         startChar: currentStart,
         endChar: currentEnd,
         headingPath: currentHeadingPath,
-      });
+        kind: 'text',
+      }));
     }
     currentText = '';
   };
 
   for (const block of blocks) {
-    if (block.text.length > chunkSize * 1.5) {
+    if (block.kind === 'code' || block.kind === 'table') {
       pushCurrent();
-      const fallbackChunks = chunkByCharacters(block.text, {
-        chunkSize,
-        overlap,
-        minChunkSize,
-        offset: block.startChar,
-        headingPath: block.headingPath,
-        startIndex: chunks.length,
-      });
-      chunks.push(...fallbackChunks);
+      if (fitsBudget(block.text, normalizedOptions)) {
+        chunks.push(createChunk({
+          text: block.text,
+          index: chunks.length,
+          startChar: block.startChar,
+          endChar: block.endChar,
+          headingPath: block.headingPath,
+          kind: block.kind,
+        }));
+      } else {
+        chunks.push(...chunkOversizedBlock(block, normalizedOptions, chunks.length));
+      }
+      continue;
+    }
+
+    if (!fitsBudget(block.text, normalizedOptions)) {
+      pushCurrent();
+      chunks.push(...chunkOversizedBlock(block, normalizedOptions, chunks.length));
       continue;
     }
 
     const separator = currentText ? '\n\n' : '';
     const nextText = `${currentText}${separator}${block.text}`;
-    if (currentText && nextText.length > chunkSize) {
+    if (currentText && !fitsBudget(nextText, normalizedOptions)) {
       pushCurrent();
     }
 
@@ -121,84 +154,242 @@ export function chunkText(
   return chunks.map((chunk, index) => ({ ...chunk, index }));
 }
 
-type StructuredBlock = {
-  text: string;
-  startChar: number;
-  endChar: number;
-  headingPath: string[];
-};
-
 function splitStructuredBlocks(text: string): StructuredBlock[] {
+  const lines = readSourceLines(text);
   const blocks: StructuredBlock[] = [];
   const headings: string[] = [];
-  const pattern = /[^\n]+(?:\n(?!\n)[^\n]+)*/g;
-  let match: RegExpExecArray | null;
+  let lineIndex = 0;
 
-  while ((match = pattern.exec(text)) !== null) {
-    const raw = match[0].trim();
-    if (!raw) continue;
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex];
+    if (!line.text.trim()) {
+      lineIndex++;
+      continue;
+    }
 
-    const heading = /^(#{1,3})\s+(.+)$/.exec(raw.split('\n')[0].trim());
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line.text.trim());
     if (heading) {
       const level = heading[1].length;
       headings.length = level - 1;
       headings[level - 1] = heading[2].trim();
+      blocks.push(blockFromLines([line], headings, 'heading'));
+      lineIndex++;
+      continue;
     }
 
-    blocks.push({
-      text: raw,
-      startChar: match.index,
-      endChar: match.index + match[0].length,
-      headingPath: headings.filter(Boolean),
-    });
+    if (/^\s*```/.test(line.text)) {
+      const codeLines = [line];
+      lineIndex++;
+      while (lineIndex < lines.length) {
+        const codeLine = lines[lineIndex];
+        codeLines.push(codeLine);
+        lineIndex++;
+        if (/^\s*```\s*$/.test(codeLine.text)) break;
+      }
+      blocks.push(blockFromLines(codeLines, headings, 'code'));
+      continue;
+    }
+
+    if (isTableStart(lines, lineIndex)) {
+      const tableLines = [line, lines[lineIndex + 1]];
+      lineIndex += 2;
+      while (lineIndex < lines.length && looksLikeTableRow(lines[lineIndex].text)) {
+        tableLines.push(lines[lineIndex]);
+        lineIndex++;
+      }
+      blocks.push(blockFromLines(tableLines, headings, 'table'));
+      continue;
+    }
+
+    const paragraphLines = [line];
+    lineIndex++;
+    while (lineIndex < lines.length) {
+      const nextLine = lines[lineIndex];
+      if (
+        !nextLine.text.trim()
+        || /^(#{1,6})\s+/.test(nextLine.text.trim())
+        || /^\s*```/.test(nextLine.text)
+        || isTableStart(lines, lineIndex)
+      ) {
+        break;
+      }
+      paragraphLines.push(nextLine);
+      lineIndex++;
+    }
+    blocks.push(blockFromLines(paragraphLines, headings, 'text'));
   }
 
   return blocks;
 }
 
-function chunkByCharacters(
-  text: string,
-  options: Required<ChunkOptions> & {
-    offset: number;
-    headingPath: string[];
-    startIndex: number;
-  },
-): TextChunk[] {
+function readSourceLines(text: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  const pattern = /.*(?:\n|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (!match[0]) break;
+    const raw = match[0];
+    const lineText = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+    lines.push({
+      raw,
+      text: lineText,
+      startChar: match.index,
+      endChar: match.index + raw.length,
+    });
+  }
+  return lines;
+}
+
+function blockFromLines(
+  lines: SourceLine[],
+  headings: string[],
+  kind: StructuredBlock['kind'],
+): StructuredBlock {
+  const text = lines.map((line) => line.raw).join('').trim();
+  return {
+    text,
+    startChar: lines[0].startChar,
+    endChar: lines[lines.length - 1].endChar,
+    headingPath: headings.filter(Boolean),
+    kind,
+  };
+}
+
+function isTableStart(lines: SourceLine[], index: number) {
+  return Boolean(
+    lines[index + 1]
+    && looksLikeTableRow(lines[index].text)
+    && /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(
+      lines[index + 1].text,
+    ),
+  );
+}
+
+function looksLikeTableRow(line: string) {
+  return line.includes('|') && line.trim().length > 2;
+}
+
+function chunkOversizedBlock(
+  block: StructuredBlock,
+  options: NormalizedChunkOptions,
+  startIndex: number,
+) {
   const chunks: TextChunk[] = [];
-  let startChar = 0;
+  let localStart = 0;
 
-  while (startChar < text.length) {
-    let endChar = Math.min(startChar + options.chunkSize, text.length);
-    if (endChar < text.length) {
-      endChar = findBestSplitPoint(text, startChar, endChar);
+  while (localStart < block.text.length) {
+    let localEnd = findTokenLimitedEnd(
+      block.text,
+      localStart,
+      options.maxTokens,
+      options.chunkSize,
+    );
+    if (localEnd < block.text.length) {
+      localEnd = findBestSplitPoint(block.text, localStart, localEnd);
+    }
+    if (localEnd <= localStart) {
+      localEnd = Math.min(block.text.length, localStart + options.chunkSize);
     }
 
-    const chunkText = text.substring(startChar, endChar).trim();
-    if (chunkText.length >= options.minChunkSize) {
-      chunks.push({
-        text: chunkText,
-        index: options.startIndex + chunks.length,
-        startChar: options.offset + startChar,
-        endChar: options.offset + endChar,
-        headingPath: options.headingPath,
-      });
+    const chunkContent = block.text.slice(localStart, localEnd).trim();
+    if (chunkContent) {
+      chunks.push(createChunk({
+        text: chunkContent,
+        index: startIndex + chunks.length,
+        startChar: block.startChar + localStart,
+        endChar: block.startChar + localEnd,
+        headingPath: block.headingPath,
+        kind: block.kind === 'heading' ? 'text' : block.kind,
+      }));
     }
 
-    const nextStart = endChar - options.overlap;
-    if (nextStart <= startChar) {
-      startChar = endChar;
-    } else {
-      startChar = nextStart;
-    }
+    if (localEnd >= block.text.length) break;
+    const overlapChars = tokenOverlapChars(
+      block.text.slice(localStart, localEnd),
+      options.overlapTokens,
+      options.overlap,
+    );
+    localStart = Math.max(localStart + 1, localEnd - overlapChars);
   }
 
   return chunks;
 }
 
+function findTokenLimitedEnd(
+  text: string,
+  start: number,
+  maxTokens: number,
+  maxChars: number,
+) {
+  let low = start + 1;
+  let high = Math.min(text.length, start + Math.max(maxChars, 1));
+  let best = low;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = text.slice(start, middle);
+    if (tokenLength(candidate) <= maxTokens) {
+      best = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return best;
+}
+
+function tokenOverlapChars(text: string, overlapTokens: number, fallbackChars: number) {
+  try {
+    const tokens = encode(text);
+    if (tokens.length === 0) return 0;
+    return decode(tokens.slice(-Math.min(overlapTokens, tokens.length))).length;
+  } catch {
+    return Math.min(fallbackChars, text.length);
+  }
+}
+
+function fitsBudget(text: string, options: NormalizedChunkOptions) {
+  return text.length <= options.chunkSize && tokenLength(text) <= options.maxTokens;
+}
+
+function shouldKeepChunk(text: string, options: NormalizedChunkOptions) {
+  if (!text) return false;
+  return text.length >= options.minChunkSize || tokenLength(text) >= options.minTokens;
+}
+
+function createChunk(input: Omit<TextChunk, 'tokenCount'>): TextChunk {
+  return {
+    ...input,
+    tokenCount: tokenLength(input.text),
+  };
+}
+
+function tokenLength(text: string) {
+  try {
+    return countTokens(text);
+  } catch {
+    return Math.ceil(text.length / 4);
+  }
+}
+
+function inferChunkKind(text: string): ChunkKind {
+  if (/^\s*```/.test(text)) return 'code';
+  const lines = text.split('\n');
+  if (lines.length >= 2 && isTableStart(
+    lines.map((line) => ({ raw: line, text: line, startChar: 0, endChar: 0 })),
+    0,
+  )) {
+    return 'table';
+  }
+  return 'text';
+}
+
 function inferHeadingPath(text: string): string[] {
   const headings: string[] = [];
   for (const line of text.split('\n')) {
-    const match = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    const match = /^(#{1,6})\s+(.+)$/.exec(line.trim());
     if (!match) continue;
     const level = match[1].length;
     headings.length = level - 1;
@@ -207,74 +398,63 @@ function inferHeadingPath(text: string): string[] {
   return headings.filter(Boolean);
 }
 
-/**
- * 寻找最佳切分点（尽量在句子边界）
- * @param text 文本
- * @param start 起始位置
- * @param end 期望的结束位置
- * @returns 实际的结束位置
- */
 function findBestSplitPoint(text: string, start: number, end: number): number {
-  // 在期望结束位置附近寻找句子边界
-  const searchRange = 100; // 向前搜索 100 个字符
+  const searchRange = Math.min(200, end - start);
   const searchStart = Math.max(start, end - searchRange);
-
-  // 句子结束标记（优先级从高到低）
   const sentenceEnders = [
-    '\n\n',  // 段落分隔
-    '。',    // 中文句号
-    '！',    // 中文感叹号
-    '？',    // 中文问号
-    '.',     // 英文句号
-    '!',     // 英文感叹号
-    '?',     // 英文问号
-    '\n',    // 换行
-    '；',    // 中文分号
-    ';',     // 英文分号
+    '\n\n',
+    '\n',
+    '。',
+    '！',
+    '？',
+    '.',
+    '!',
+    '?',
+    '；',
+    ';',
   ];
 
-  // 从后往前查找最近的句子边界
   for (const ender of sentenceEnders) {
     const lastIndex = text.lastIndexOf(ender, end);
     if (lastIndex > searchStart) {
-      // 返回标点符号之后的位置
       return lastIndex + ender.length;
     }
   }
 
-  // 如果找不到句子边界，尝试在空格处切分
   const lastSpace = text.lastIndexOf(' ', end);
   if (lastSpace > searchStart) {
     return lastSpace + 1;
   }
-
-  // 实在找不到合适的切分点，就在原位置切分
   return end;
 }
 
 /**
  * 统计切块信息
- * @param chunks 文本块数组
- * @returns 统计信息
  */
 export function getChunkStats(chunks: TextChunk[]) {
   if (chunks.length === 0) {
     return {
       totalChunks: 0,
       totalChars: 0,
+      totalTokens: 0,
       avgChunkSize: 0,
+      avgChunkTokens: 0,
       minChunkSize: 0,
       maxChunkSize: 0,
     };
   }
 
-  const sizes = chunks.map((c) => c.text.length);
+  const sizes = chunks.map((chunk) => chunk.text.length);
+  const tokenSizes = chunks.map((chunk) => chunk.tokenCount ?? tokenLength(chunk.text));
   const totalChars = sizes.reduce((sum, size) => sum + size, 0);
+  const totalTokens = tokenSizes.reduce((sum, size) => sum + size, 0);
 
   return {
     totalChunks: chunks.length,
     totalChars,
+    totalTokens,
     avgChunkSize: Math.round(totalChars / chunks.length),
+    avgChunkTokens: Math.round(totalTokens / chunks.length),
     minChunkSize: Math.min(...sizes),
     maxChunkSize: Math.max(...sizes),
   };

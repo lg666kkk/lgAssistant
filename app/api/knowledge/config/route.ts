@@ -1,4 +1,8 @@
-import { CHUNKER_VERSION } from "@/lib/knowledge/chunking";
+import {
+  CHUNKER_VERSION,
+  DEFAULT_CHUNK_MAX_TOKENS,
+  DEFAULT_CHUNK_OVERLAP_TOKENS,
+} from "@/lib/knowledge/chunking";
 import { EMBEDDING_MODEL } from "@/lib/knowledge/embedding";
 import { deepseekConfig, ragConfig } from "@/lib/platform/config";
 import { requireUser } from "@/lib/auth/server";
@@ -110,7 +114,7 @@ export async function GET(req: Request) {
             {
               key: "CHUNK_OPTIONS",
               label: "切分参数",
-              value: "chunkSize=700, overlap=50, minChunkSize=100",
+              value: `chars<=700, tokens<=${DEFAULT_CHUNK_MAX_TOKENS}, charOverlap=50, tokenOverlap=${DEFAULT_CHUNK_OVERLAP_TOKENS}, minChars=100`,
               configured: true,
               sensitive: false,
             },
@@ -128,8 +132,49 @@ export async function GET(req: Request) {
             },
             {
               key: "RAG_MAX_RESULTS",
-              label: "默认返回数量",
+              label: "最终 TopK 硬上限",
               value: String(ragConfig.maxResults),
+              configured: true,
+              sensitive: false,
+            },
+            {
+              key: "RAG_CANDIDATE_POOL",
+              label: "候选池",
+              value: `topK*${ragConfig.candidateMultiplier}, max=${ragConfig.maxCandidates}`,
+              configured: true,
+              sensitive: false,
+            },
+            {
+              key: "RAG_FUSION_STRATEGY",
+              label: "融合策略",
+              value: `${ragConfig.fusionStrategy}, rrfK=${ragConfig.rrfK}, dynamicWeights=${ragConfig.dynamicFusionWeights}`,
+              configured: true,
+              sensitive: false,
+            },
+            {
+              key: "RAG_MULTI_QUERY_VECTOR",
+              label: "Multi-query Vector",
+              value: "enabled, maxQueries=3, parallel=true",
+              configured: true,
+              sensitive: false,
+            },
+            {
+              key: "RAG_CROSS_ENCODER",
+              label: "条件式 Cross-Encoder",
+              value: ragConfig.crossEncoderEnabled
+                ? `${ragConfig.crossEncoderMode}, model=${process.env.RAG_RERANK_MODEL || "-"}, candidates=${ragConfig.crossEncoderCandidateCount}`
+                : "disabled (rule rerank fallback)",
+              configured: !ragConfig.crossEncoderEnabled || (
+                has(process.env.RAG_RERANK_URL)
+                && has(process.env.RAG_RERANK_MODEL)
+                && has(process.env.RAG_RERANK_API_KEY || process.env.DASHSCOPE_API_KEY)
+              ),
+              sensitive: false,
+            },
+            {
+              key: "RAG_CONTEXT_BUDGET",
+              label: "上下文预算",
+              value: `maxTokens=${ragConfig.maxContextTokens}, parentMaxChars=${ragConfig.parentContextMaxChars}`,
               configured: true,
               sensitive: false,
             },

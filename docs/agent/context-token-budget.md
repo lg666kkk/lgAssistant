@@ -70,7 +70,7 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 
 - **顺序错会失效**：如果先估算预算、后压缩，预算看到的是压缩前的膨胀大小，会误判"超预算"提前兜底。必须压缩在前。
 - **重复工具调用 ≠ 用户输入重复**：loop 里的 `seenToolCalls` 防的是模型自己卡在循环里反复调同一工具，不是防用户问重复问题——这两个概念早期容易混。
-- **RAG 召回为 0 的连带改动**：本次顺带把 `similarityThreshold` 从 0.7 降到 0.5，并在 [search-notes.ts](../../lib/agent/tools/search-notes.ts) 加了"阈值无结果时降级到 threshold:0 再查一次"的兜底，避免阈值过高导致明明有相关笔记却空手而归。
+- **RAG 召回为 0 的策略演进**：最初把 `similarityThreshold` 从 0.7 降到 0.5，并使用 threshold=0 兜底；该做法会引入误召回，现已改为受控二级召回：0.5 无结果时最多降到 0.4、最多保留 3 条，并要求综合证据分不低于 0.28，否则返回无结果。
 
 ## 延伸阅读
 

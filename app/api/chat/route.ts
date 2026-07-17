@@ -6,7 +6,14 @@ import {
   streamModelResponse,
   forwardTextStream,
 } from "@/lib/agent/runtime";
-import { enqueueEvent } from "@/lib/agent/runtime/events";
+import { enqueueEvent, type PlanProgressEventData } from "@/lib/agent/runtime/events";
+import {
+  createPlanProposal,
+  executePlan,
+  normalizeExecutionPlan,
+  normalizePlanExecutionControl,
+  shouldUsePlanAndExecute,
+} from "@/lib/agent/runtime/plan-execution";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
@@ -15,6 +22,7 @@ import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/platform/supabase";
+import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
@@ -206,6 +214,18 @@ export async function POST(req: Request) {
   const tools = toolRegistry
     .listForModel()
     .filter((tool) => enableWebSearch || tool.name !== "web_search");
+  const approvedPlan = body.approvedPlan === undefined
+    ? undefined
+    : normalizeExecutionPlan(body.approvedPlan, new Set(tools.map((tool) => tool.name)));
+  if (body.approvedPlan !== undefined && !approvedPlan) {
+    return new Response(
+      JSON.stringify({ error: "确认的计划格式无效，或不包含至少两个有效步骤" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  const planExecution = approvedPlan
+    ? normalizePlanExecutionControl(body.planExecution, approvedPlan)
+    : undefined;
   // 最大工具调用次数
   const maxToolIterations = 8;
 
@@ -357,7 +377,62 @@ export async function POST(req: Request) {
           );
         }
 
-        const agentLoopResult = await runAgentLoop(
+        const planInput = {
+          messages: loopMessages,
+          tools,
+          toolRegistry,
+          maxToolIterations,
+          allToolSources,
+          requestId,
+          sessionId,
+          systemPrompt,
+          systemSegments,
+          userId: user.id,
+          model: selectedModel,
+          shouldStop: () => req.signal.aborted || closed,
+          onProgress: (plan: PlanProgressEventData) => enqueueEvent({ type: "plan_progress", plan }, enqueueText),
+        };
+        const requiresPlanReview = shouldUsePlanAndExecute(lastUser?.content ?? "");
+        if (!approvedPlan && requiresPlanReview) {
+          const proposal = await createPlanProposal(planInput).catch((error: any) => {
+            console.error("[plan] 规划失败，停止执行:", error.message);
+            return null;
+          });
+          if (proposal) {
+            const proposalText = "我已生成执行计划。请审核、修改后确认执行。";
+            enqueueEvent({ type: "plan_proposal", plan: proposal }, enqueueText);
+            enqueueEvent({ type: "text", content: proposalText }, enqueueText);
+            void persistSessionTurn({
+              userId: user.id,
+              sessionId,
+              userMessage: lastUser?.content,
+              assistantMessage: proposalText,
+            }).catch((e: any) =>
+              console.error("[session] 保存计划提案失败:", e.message),
+            );
+            langfuseTrace.update({
+              output: { completed: true, status: "awaiting_plan_approval", plan: proposal },
+            });
+            langfuseTrace.setTraceIO({ input: traceDisplayInput, output: proposal });
+            enqueueEvent({ type: "done" }, enqueueText);
+            closeStream();
+            return;
+          }
+          const failureText = "未能生成可审核的执行计划，因此没有执行任何工具。请调整任务后重试。";
+          enqueueEvent({ type: "text", content: failureText }, enqueueText);
+          langfuseTrace.update({
+            output: { completed: false, status: "plan_generation_failed" },
+            level: "WARNING",
+            statusMessage: failureText,
+          });
+          langfuseTrace.setTraceIO({ input: traceDisplayInput, output: { error: failureText } });
+          enqueueEvent({ type: "done" }, enqueueText);
+          closeStream();
+          return;
+        }
+        const agentLoopResult = approvedPlan
+          ? await executePlan(planInput, approvedPlan, planExecution)
+          : await runAgentLoop(
           loopMessages,
           tools,
           toolRegistry,
@@ -440,6 +515,7 @@ export async function POST(req: Request) {
           },
           () => req.signal.aborted || closed,
         );
+        finalAssistantText = sanitizeModelText(finalAssistantText);
 
         if (req.signal.aborted || closed) {
           langfuseTrace.update({

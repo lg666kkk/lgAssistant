@@ -6,9 +6,24 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import ws from 'ws';
+import { ragConfig } from '@/lib/platform/config';
 import { NotionClient } from './notion';
-import { CHUNKER_VERSION, chunkText } from './chunking';
-import { EMBEDDING_MODEL, EmbeddingClient } from './embedding';
+import {
+  CHUNKER_VERSION,
+  DEFAULT_CHUNK_MAX_TOKENS,
+  DEFAULT_CHUNK_OVERLAP_TOKENS,
+  chunkText,
+  type TextChunk,
+} from './chunking';
+import {
+  EMBEDDING_BATCH_SIZE,
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_MAX_RETRIES,
+  EMBEDDING_MODEL,
+  EmbeddingClient,
+  type EmbeddingBatchEvent,
+  validateEmbeddingVector,
+} from './embedding';
 
 function hashText(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -16,6 +31,123 @@ function hashText(text: string): string {
 
 const SYNC_MAX_RETRIES = 3;
 const SYNC_RETRY_BASE_DELAY_MS = 800;
+
+export type AtomicDocumentPayload = {
+  chunk_index: number;
+  content: string;
+  embedding: number[];
+  metadata: Record<string, unknown>;
+};
+
+export function buildParentContext(
+  chunks: TextChunk[],
+  index: number,
+  pageId: string,
+  maxChars: number = ragConfig.parentContextMaxChars,
+) {
+  const current = chunks[index];
+  if (!current) {
+    throw new Error(`Chunk index 越界: ${index}/${chunks.length}`);
+  }
+
+  const headingKey = current.headingPath.join('\u0000');
+  let start = index;
+  let end = index;
+  let totalChars = current.text.length;
+  let left = index - 1;
+  let right = index + 1;
+
+  while (left >= 0 || right < chunks.length) {
+    let expanded = false;
+    const leftChunk = chunks[left];
+    if (
+      leftChunk
+      && leftChunk.headingPath.join('\u0000') === headingKey
+      && totalChars + 2 + leftChunk.text.length <= maxChars
+    ) {
+      start = left;
+      totalChars += 2 + leftChunk.text.length;
+      left--;
+      expanded = true;
+    } else {
+      left = -1;
+    }
+
+    const rightChunk = chunks[right];
+    if (
+      rightChunk
+      && rightChunk.headingPath.join('\u0000') === headingKey
+      && totalChars + 2 + rightChunk.text.length <= maxChars
+    ) {
+      end = right;
+      totalChars += 2 + rightChunk.text.length;
+      right++;
+      expanded = true;
+    } else {
+      right = chunks.length;
+    }
+
+    if (!expanded) break;
+  }
+
+  const parentChunks = chunks.slice(start, end + 1);
+  const startChar = parentChunks[0].startChar;
+  const endChar = parentChunks[parentChunks.length - 1].endChar;
+  return {
+    content: parentChunks.map((chunk) => chunk.text).join('\n\n'),
+    key: `${pageId}:${startChar}:${endChar}`,
+    startChar,
+    endChar,
+    childCount: parentChunks.length,
+  };
+}
+
+export function buildAtomicDocumentPayload(input: {
+  chunks: TextChunk[];
+  embeddings: number[][];
+  pageId: string;
+  pageTitle: string;
+  pageUrl: string;
+  lastEditedTime: string;
+}): AtomicDocumentPayload[] {
+  if (input.embeddings.length !== input.chunks.length) {
+    throw new Error(
+      `向量数量与 chunk 数量不一致: ${input.embeddings.length}/${input.chunks.length}`,
+    );
+  }
+
+  return input.chunks.map((chunk, index) => {
+    const embedding = input.embeddings[index];
+    validateEmbeddingVector(embedding, `Chunk #${chunk.index}`);
+    const parentContext = buildParentContext(input.chunks, index, input.pageId);
+
+    return {
+      chunk_index: chunk.index,
+      content: chunk.text,
+      embedding,
+      metadata: {
+        page_id: input.pageId,
+        page_title: input.pageTitle,
+        page_url: input.pageUrl,
+        chunk_index: chunk.index,
+        start_char: chunk.startChar,
+        end_char: chunk.endChar,
+        heading_path: chunk.headingPath,
+        chunk_kind: chunk.kind ?? 'text',
+        chunk_token_count: chunk.tokenCount,
+        parent_content: parentContext.content,
+        parent_key: parentContext.key,
+        parent_start_char: parentContext.startChar,
+        parent_end_char: parentContext.endChar,
+        parent_child_count: parentContext.childCount,
+        content_hash: hashText(chunk.text),
+        embedding_model: EMBEDDING_MODEL,
+        chunker_version: CHUNKER_VERSION,
+        last_edited_time: input.lastEditedTime,
+      },
+    };
+  });
+}
 
 /**
  * 同步结果
@@ -48,10 +180,16 @@ export type SyncProgressEvent = {
     | 'page_skipped'
     | 'page_chunked'
     | 'embedding_start'
+    | 'embedding_batch_start'
+    | 'embedding_batch_retry'
+    | 'embedding_batch_done'
+    | 'embedding_batch_failed'
     | 'page_embedded'
     | 'db_page_upserted'
     | 'db_old_chunks_deleted'
     | 'db_chunks_inserted'
+    | 'db_atomic_replace_start'
+    | 'db_atomic_replace_committed'
     | 'page_written'
     | 'page_done'
     | 'page_failed'
@@ -66,13 +204,43 @@ export type SyncProgressEvent = {
 };
 
 export type SyncOptions = {
-  userId?: string;
+  userId: string;
   force?: boolean;
   onEvent?: (event: SyncProgressEvent) => void;
 };
 
 function emitSyncEvent(options: SyncOptions | undefined, event: SyncProgressEvent) {
   options?.onEvent?.(event);
+}
+
+function emitEmbeddingBatchEvent(
+  options: SyncOptions,
+  page: { id: string; title: string },
+  event: EmbeddingBatchEvent,
+) {
+  const { type: batchEventType, ...metadata } = event;
+  const type = `embedding_${batchEventType}` as SyncProgressEvent['type'];
+  let message = `Embedding 批次 ${event.batchIndex}/${event.totalBatches}`;
+
+  if (batchEventType === 'batch_start') {
+    message += ` 开始：${event.inputCount} 条输入`;
+  } else if (batchEventType === 'batch_retry') {
+    message += ` 失败，${event.nextDelayMs}ms 后重试 ${event.attempt + 1}/${event.maxAttempts}`;
+  } else if (batchEventType === 'batch_done') {
+    message += event.reordered ? ' 完成，已按 provider index 重排' : ' 完成';
+  } else {
+    message += ` 最终失败：${event.error}`;
+  }
+
+  emitSyncEvent(options, {
+    type,
+    pageId: page.id,
+    pageTitle: page.title,
+    chunksCount: event.inputCount,
+    status: batchEventType === 'batch_failed' ? 'failed' : undefined,
+    message,
+    metadata,
+  });
 }
 
 function compactText(text: string, maxChars = 180): string {
@@ -144,7 +312,7 @@ function createSupabaseClient() {
  */
 export async function syncNotionPage(
   pageId: string,
-  options: SyncOptions = {},
+  options: SyncOptions,
 ): Promise<SyncResult> {
   for (let attempt = 0; attempt <= SYNC_MAX_RETRIES; attempt++) {
     const result = await syncNotionPageOnce(pageId, options, attempt + 1);
@@ -180,7 +348,7 @@ export async function syncNotionPage(
 
 async function syncNotionPageOnce(
   pageId: string,
-  options: SyncOptions = {},
+  options: SyncOptions,
   attempt = 1,
 ): Promise<SyncResult> {
   console.log(`\n开始同步页面: ${pageId}`);
@@ -214,14 +382,11 @@ async function syncNotionPageOnce(
     });
 
     const supabase = createSupabaseClient();
-    let existingPageQuery = supabase
+    const existingPageQuery = supabase
       .from('notion_pages')
       .select('id, page_id, chunk_count, metadata')
-      .eq('page_id', pageId);
-
-    if (options.userId) {
-      existingPageQuery = existingPageQuery.eq('user_id', options.userId);
-    }
+      .eq('page_id', pageId)
+      .eq('user_id', options.userId);
 
     const { data: existingPage, error: existingPageError } =
       await existingPageQuery.maybeSingle();
@@ -287,6 +452,8 @@ async function syncNotionPageOnce(
         chunkSize: 700,
         overlap: 50,
         minChunkSize: 100,
+        maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
+        overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
         chunkerVersion: CHUNKER_VERSION,
       },
     });
@@ -306,9 +473,13 @@ async function syncNotionPageOnce(
         chunkSize: 700,
         overlap: 50,
         minChunkSize: 100,
+        maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
+        overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
         samples: chunks.slice(0, 5).map((chunk) => ({
           index: chunk.index,
           chars: chunk.text.length,
+          tokens: chunk.tokenCount,
+          kind: chunk.kind,
           range: [chunk.startChar, chunk.endChar],
           headingPath: chunk.headingPath,
           preview: compactText(chunk.text),
@@ -324,6 +495,8 @@ async function syncNotionPageOnce(
         message: `Chunk #${chunk.index} · ${chunk.text.length} 字符`,
         metadata: {
           index: chunk.index,
+          tokenCount: chunk.tokenCount,
+          kind: chunk.kind,
           startChar: chunk.startChar,
           endChar: chunk.endChar,
           headingPath: chunk.headingPath,
@@ -353,12 +526,29 @@ async function syncNotionPageOnce(
       message: `开始为 ${chunks.length} 个 chunk 生成向量`,
       metadata: {
         embeddingModel: EMBEDDING_MODEL,
-        expectedDimensions: 1024,
+        expectedDimensions: EMBEDDING_DIMENSIONS,
+        batchSize: EMBEDDING_BATCH_SIZE,
+        totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
+        maxRetriesPerBatch: EMBEDDING_MAX_RETRIES,
       },
     });
     const embeddingClient = new EmbeddingClient();
     const embeddings = await embeddingClient.embedBatch(
-      chunks.map((c) => c.text)
+      chunks.map((c) => c.text),
+      {
+        idempotencyScope: [
+          options.userId,
+          pageId,
+          pageContentHash,
+          EMBEDDING_MODEL,
+          CHUNKER_VERSION,
+        ].join(':'),
+        onEvent: (event) => emitEmbeddingBatchEvent(
+          options,
+          { id: pageId, title: page.title },
+          event,
+        ),
+      },
     );
     console.log(`  ✓ 生成 ${embeddings.length} 个向量`);
     emitSyncEvent(options, {
@@ -371,120 +561,80 @@ async function syncNotionPageOnce(
         embeddingModel: EMBEDDING_MODEL,
         vectorCount: embeddings.length,
         dimensions: embeddings[0]?.length ?? 0,
+        totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
+        batchSize: EMBEDDING_BATCH_SIZE,
       },
     });
 
-    // 4. 写入数据库
-    console.log('  [4/5] 写入数据库...');
+    // 4. 原子替换数据库索引
+    console.log('  [4/5] 原子替换数据库索引...');
     const syncStatus = existingPage ? 'updated' : 'created';
-
-    // 4.1 插入或更新页面元数据
-    const { data: savedPage, error: pageError } = await supabase
-      .from('notion_pages')
-      .upsert(
-        {
-          page_id: pageId,
-          user_id: options.userId,
-          page_title: page.title,
-          page_url: page.url,
-          last_edited_time: page.lastEditedTime,
-          last_synced_at: new Date().toISOString(),
-          chunk_count: chunks.length,
-          metadata: {
-            content_hash: pageContentHash,
-            embedding_model: EMBEDDING_MODEL,
-            chunker_version: CHUNKER_VERSION,
-          },
-        },
-        options.userId ? { onConflict: 'user_id,page_id' } : undefined,
-      )
-      .select('id')
-      .single();
-
-    if (pageError) {
-      throw new Error(`插入页面元数据失败: ${pageError.message}`);
-    }
-    if (!savedPage?.id) {
-      throw new Error('插入页面元数据失败: 未返回 notion_pages.id');
-    }
+    const documents = buildAtomicDocumentPayload({
+      chunks,
+      embeddings,
+      pageId,
+      pageTitle: page.title,
+      pageUrl: page.url,
+      lastEditedTime: page.lastEditedTime,
+    });
     emitSyncEvent(options, {
-      type: 'db_page_upserted',
+      type: 'db_atomic_replace_start',
       pageId,
       pageTitle: page.title,
       chunksCount: chunks.length,
       status: syncStatus,
-      message: `已更新页面元数据：${syncStatus}`,
+      message: `开始原子替换页面元数据和 ${documents.length} 个 chunk`,
       metadata: {
-        table: 'notion_pages',
-        pageUrl: page.url,
-        lastEditedTime: page.lastEditedTime,
+        rpc: 'sync_notion_page_documents_atomic',
+        tables: ['notion_pages', 'documents'],
+        chunkCount: documents.length,
+        firstChunkHash: documents[0]?.metadata.content_hash?.toString().slice(0, 12),
       },
     });
 
-    // 4.2 删除旧的 chunks（如果存在）
-    let deleteQuery = supabase
-      .from('documents')
-      .delete()
-      .eq('notion_page_id', savedPage.id);
+    const { data: atomicWriteRows, error: atomicWriteError } = await supabase.rpc(
+      'sync_notion_page_documents_atomic',
+      {
+        p_user_id: options.userId,
+        p_page_id: pageId,
+        p_page_title: page.title,
+        p_page_url: page.url,
+        p_last_edited_time: page.lastEditedTime,
+        p_page_metadata: {
+          content_hash: pageContentHash,
+          embedding_model: EMBEDDING_MODEL,
+          chunker_version: CHUNKER_VERSION,
+        },
+        p_documents: documents,
+      },
+    );
 
-    if (options.userId) {
-      deleteQuery = deleteQuery.eq('user_id', options.userId);
+    if (atomicWriteError) {
+      throw new Error(`原子替换页面索引失败: ${atomicWriteError.message}`);
     }
 
-    const { error: deleteError } = await deleteQuery;
-
-    if (deleteError) {
-      throw new Error(`删除旧 chunks 失败: ${deleteError.message}`);
+    const atomicWrite = Array.isArray(atomicWriteRows)
+      ? atomicWriteRows[0]
+      : atomicWriteRows;
+    const insertedCount = Number(atomicWrite?.inserted_count);
+    if (!atomicWrite?.page_row_id || insertedCount !== documents.length) {
+      throw new Error(
+        `原子替换返回异常: inserted=${Number.isFinite(insertedCount) ? insertedCount : 'unknown'}, expected=${documents.length}`,
+      );
     }
+
     emitSyncEvent(options, {
-      type: 'db_old_chunks_deleted',
+      type: 'db_atomic_replace_committed',
       pageId,
       pageTitle: page.title,
-      message: '已删除旧 chunks',
+      chunksCount: insertedCount,
+      status: syncStatus,
+      message: `原子替换已提交：${insertedCount} 个 chunk`,
       metadata: {
-        table: 'documents',
-      },
-    });
-
-    // 4.3 插入新的 chunks
-    const documents = chunks.map((chunk, i) => ({
-      user_id: options.userId,
-      notion_page_id: savedPage.id,
-      page_id: pageId,
-      chunk_index: chunk.index,
-      content: chunk.text,
-      embedding: embeddings[i],
-      metadata: {
-        page_id: pageId,
-        page_title: page.title,
-        page_url: page.url,
-        chunk_index: chunk.index,
-        start_char: chunk.startChar,
-        end_char: chunk.endChar,
-        heading_path: chunk.headingPath,
-        content_hash: hashText(chunk.text),
-        embedding_model: EMBEDDING_MODEL,
-        chunker_version: CHUNKER_VERSION,
-        last_edited_time: page.lastEditedTime,
-      },
-    }));
-
-    const { error: insertError } = await supabase
-      .from('documents')
-      .insert(documents);
-
-    if (insertError) {
-      throw new Error(`插入 chunks 失败: ${insertError.message}`);
-    }
-    emitSyncEvent(options, {
-      type: 'db_chunks_inserted',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: documents.length,
-      message: `已插入 ${documents.length} 条 documents 记录`,
-      metadata: {
-        table: 'documents',
-        firstChunkHash: documents[0]?.metadata.content_hash?.slice(0, 12),
+        rpc: 'sync_notion_page_documents_atomic',
+        pageRowId: atomicWrite.page_row_id,
+        insertedCount,
+        transaction: 'committed',
       },
     });
 
@@ -545,7 +695,7 @@ async function syncNotionPageOnce(
  */
 export async function syncNotionPages(
   pageIds: string[],
-  options: SyncOptions = {},
+  options: SyncOptions,
 ): Promise<SyncResult[]> {
   console.log(`\n=== 批量同步 ${pageIds.length} 个页面 ===`);
   emitSyncEvent(options, {
@@ -609,7 +759,7 @@ export async function syncNotionPages(
  */
 export async function syncNotionPageTree(
   pageId: string,
-  options: SyncOptions = {},
+  options: SyncOptions,
 ): Promise<SyncResult[]> {
   emitSyncEvent(options, {
     type: 'tree_scan_start',

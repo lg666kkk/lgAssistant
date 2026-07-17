@@ -9,6 +9,7 @@ import {
   type LanguageModelUsage,
 } from "ai";
 import type Anthropic from "@anthropic-ai/sdk";
+import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 
 type ModelMessage = Anthropic.MessageParam;
 type ModelContentBlock = Anthropic.Messages.ContentBlock;
@@ -206,10 +207,11 @@ export async function callModelWithProvider(input: {
   }
 
   const content: ModelContentBlock[] = [];
-  if (text) {
+  const sanitizedText = sanitizeModelText(text);
+  if (sanitizedText) {
     content.push({
       type: "text",
-      text,
+      text: sanitizedText,
       citations: [],
     } as Anthropic.Messages.TextBlock);
   }

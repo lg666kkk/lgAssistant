@@ -57,10 +57,29 @@ export const supabaseConfig = {
 export const ragConfig = {
   // 向量检索配置
   similarityThreshold: 0.5,  // 相似度阈值
+  fallbackSimilarityThreshold: 0.4, // 首次无结果时允许的最低二级阈值，禁止降到 0
+  fallbackMinEvidenceScore: 0.28, // 二级召回结果必须达到的综合证据分
+  fallbackMaxResults: 3,      // 低置信召回只保留少量最相关结果
   maxResults: 5,              // 最多返回结果数
+  candidateMultiplier: 4,     // 粗召回候选倍数
+  maxCandidates: 50,          // 融合后进入 rerank/MMR 的候选池硬上限
+  fusionStrategy: process.env.RAG_FUSION_STRATEGY === 'weighted' ? 'weighted' : 'rrf',
+  rrfK: 60,
+  vectorWeight: 0.7,
+  keywordWeight: 0.3,
+  dynamicFusionWeights: true,
+
+  // 条件式 Cross-Encoder。未配置 endpoint/model 时保持规则重排。
+  crossEncoderEnabled: process.env.RAG_CROSS_ENCODER_ENABLED === 'true',
+  crossEncoderMode: process.env.RAG_CROSS_ENCODER_MODE === 'always' ? 'always' : 'conditional',
+  crossEncoderCandidateCount: 12,
+  crossEncoderScoreGapThreshold: 0.08,
+  crossEncoderLowScoreThreshold: 0.45,
 
   // 上下文配置
   maxContextLength: 2000,     // 最大上下文长度（字符）
+  maxContextTokens: 2400,     // 工具最终投喂给模型的 token 硬预算
+  parentContextMaxChars: 1800,
 } as const;
 
 /**
