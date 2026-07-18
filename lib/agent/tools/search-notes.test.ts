@@ -125,6 +125,8 @@ describe("search_notes bounded evidence loop", () => {
     );
     const tool = createTestTool(searchWithDebug);
 
+    expect(tool.runtime.timeoutSeconds).toBe(45);
+
     const result = await tool.execute(
       { query: "RAG 是什么" },
       {
@@ -330,5 +332,31 @@ describe("search_notes bounded evidence loop", () => {
       titleContains: "Planner 标题",
       sourceTypes: ["document"],
     });
+  });
+
+  it("returns a retrieval timeout before the outer tool timeout can hide the cause", async () => {
+    vi.useFakeTimers();
+    try {
+      const searchWithDebug = vi.fn(() => new Promise<RAGSearchResponse>(() => {}));
+      const tool = createTestTool(searchWithDebug);
+
+      const resultPromise = tool.execute({ query: "RAG 是什么" }, { userId: "user-1" });
+      await vi.advanceTimersByTimeAsync(25_000);
+      const result = await resultPromise;
+
+      expect(result).toMatchObject({
+        ok: false,
+        content: "知识库检索响应超时，请稍后重试",
+        error: "知识库第 1 次检索在 25 秒内未完成",
+        metadata: {
+          status: "retrieval_timeout",
+          ragTimedOut: true,
+          ragTimeoutAttempt: 1,
+          ragTimeoutMs: 25_000,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

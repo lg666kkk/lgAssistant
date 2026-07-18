@@ -39,6 +39,7 @@ import {
   type RetrievalPlan,
 } from "@/lib/agent/rag/types";
 import type { ContextPlan } from "@/lib/agent/context/types";
+import { getActiveTraceId, startActiveObservation } from "@langfuse/tracing";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -72,6 +73,8 @@ import type {
 
 export type AgentLoopStopReason =
   | "completed"
+  | "aborted"
+  | "error"
   | "awaiting_user_input"
   | "awaiting_tool_confirmation"
   | "max_tokens"
@@ -1016,6 +1019,53 @@ export async function runAgentLoop(
     trace.metrics = metrics;
     return trace;
   };
+  const compactWithObservation = async (force = false) => {
+    const messageCount = loopMessages.length;
+    const runCompaction = () => compactLoopMessagesSemantic(loopMessages, {
+      modelWindowTokens: Math.min(
+        getModelContextWindowTokens(model),
+        CONTEXT_COMPACTION_WINDOW_CAP,
+      ),
+      triggerRatio: CONTEXT_COMPACTION_TRIGGER_RATIO,
+      targetRatio: CONTEXT_COMPACTION_TARGET_RATIO,
+      primerMessages: 3,
+      recentMessages: 6,
+      minNewMessagesSinceLastCompression: 8,
+      lastCompactedMessageCount,
+      force,
+      compressionModel: "deepseek-v4-flash",
+      compressor: (input) =>
+        callCompressionModel({
+          ...input,
+          model: "deepseek-v4-flash",
+          telemetryMetadata: {
+            operation: force ? "context-compaction-budget-guard" : "context-compaction",
+            requestId,
+            sessionId,
+            userId,
+            messageCount,
+          },
+        }),
+    });
+    if (!getActiveTraceId()) return runCompaction();
+
+    return startActiveObservation("context.compaction", async (observation) => {
+      const result = await runCompaction();
+      observation.update({
+        input: { messageCount, force },
+        output: {
+          compacted: result.compacted,
+          skippedReason: result.skippedReason,
+          beforeTokens: result.beforeTokens,
+          afterTokens: result.afterTokens,
+          tokenReduction: result.beforeTokens - result.afterTokens,
+          method: result.method,
+          fallbackReason: result.fallbackReason,
+        },
+      });
+      return result;
+    });
+  };
 
   for (let i = 0; i < maxToolIterations; i++) {
     if (shouldStop()) {
@@ -1033,28 +1083,7 @@ export async function runAgentLoop(
       CONTEXT_COMPACTION_WINDOW_CAP,
     );
     const compressionModel: ChatModelId = "deepseek-v4-flash";
-    const compacted = await compactLoopMessagesSemantic(loopMessages, {
-      modelWindowTokens: runtimeContextWindowTokens,
-      triggerRatio: CONTEXT_COMPACTION_TRIGGER_RATIO,
-      targetRatio: CONTEXT_COMPACTION_TARGET_RATIO,
-      primerMessages: 3,
-      recentMessages: 6,
-      minNewMessagesSinceLastCompression: 8,
-      lastCompactedMessageCount,
-      compressionModel,
-      compressor: (input) =>
-        callCompressionModel({
-          ...input,
-          model: compressionModel,
-          telemetryMetadata: {
-            operation: "context-compaction",
-            requestId,
-            sessionId,
-            userId,
-            messageCount: loopMessages.length,
-          },
-        }),
-    });
+    const compacted = await compactWithObservation();
     loopMessages = compacted.messages;
     if (!compacted.compacted) {
       console.log("[AgentLoopCompactionSkipped]", {
@@ -1102,29 +1131,7 @@ export async function runAgentLoop(
     });
     if (!tokenBudget.canAfford(estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE)) {
       const forcedCompactionStartedAt = Date.now();
-      const forcedCompaction = await compactLoopMessagesSemantic(loopMessages, {
-        modelWindowTokens: runtimeContextWindowTokens,
-        triggerRatio: CONTEXT_COMPACTION_TRIGGER_RATIO,
-        targetRatio: CONTEXT_COMPACTION_TARGET_RATIO,
-        primerMessages: 3,
-        recentMessages: 6,
-        minNewMessagesSinceLastCompression: 8,
-        lastCompactedMessageCount,
-        force: true,
-        compressionModel,
-        compressor: (input) =>
-          callCompressionModel({
-            ...input,
-            model: compressionModel,
-            telemetryMetadata: {
-              operation: "context-compaction-budget-guard",
-              requestId,
-              sessionId,
-              userId,
-              messageCount: loopMessages.length,
-            },
-          }),
-      });
+      const forcedCompaction = await compactWithObservation(true);
       loopMessages = forcedCompaction.messages;
       if (forcedCompaction.compacted) {
         lastCompactedMessageCount = loopMessages.length;

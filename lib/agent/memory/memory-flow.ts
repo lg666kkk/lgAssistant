@@ -116,11 +116,38 @@ export function renderMemoryContext(hits: MemoryRecord[]) {
   ].join("\n");
 }
 
-export async function recallForPrompt(
+export type MemoryRecallResult = {
+  context: string;
+  eligible: boolean;
+  candidateCount: number;
+  selectedCount: number;
+  selectedTypes: Record<string, number>;
+  selectedSources: Record<string, number>;
+};
+
+function countBy<T>(items: T[], select: (item: T) => string) {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    const key = select(item);
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+export async function recallForPromptWithStats(
   query: string,
   opts: { limit?: number; threshold?: number; userId?: string } = {},
-): Promise<string> {
-  if (!opts.userId || !shouldRecallLongTermMemory(query)) return "";
+): Promise<MemoryRecallResult> {
+  const eligible = Boolean(opts.userId) && shouldRecallLongTermMemory(query);
+  if (!eligible) {
+    return {
+      context: "",
+      eligible: false,
+      candidateCount: 0,
+      selectedCount: 0,
+      selectedTypes: {},
+      selectedSources: {},
+    };
+  }
 
   const limit = opts.limit ?? recallLimit;
   const threshold = opts.threshold ?? recallThreshold;
@@ -131,13 +158,36 @@ export async function recallForPrompt(
   const relevantHits = rankMemoryHits(hits)
     .filter((hit) => (hit.score ?? 0) >= threshold)
     .slice(0, limit);
-  if (relevantHits.length === 0) return "";
+  if (relevantHits.length === 0) {
+    return {
+      context: "",
+      eligible: true,
+      candidateCount: hits.length,
+      selectedCount: 0,
+      selectedTypes: {},
+      selectedSources: {},
+    };
+  }
 
   await semantic.touch(
     relevantHits.map((hit) => hit.key),
     { userId: opts.userId },
   );
-  return renderMemoryContext(relevantHits);
+  return {
+    context: renderMemoryContext(relevantHits),
+    eligible: true,
+    candidateCount: hits.length,
+    selectedCount: relevantHits.length,
+    selectedTypes: countBy(relevantHits, (hit) => hit.type),
+    selectedSources: countBy(relevantHits, (hit) => hit.source),
+  };
+}
+
+export async function recallForPrompt(
+  query: string,
+  opts: { limit?: number; threshold?: number; userId?: string } = {},
+): Promise<string> {
+  return (await recallForPromptWithStats(query, opts)).context;
 }
 
 export interface ExtractedFact {
@@ -150,6 +200,17 @@ export interface ExtractedFact {
   evidenceExcerpt: string;
   intent: "upsert" | "forget";
 }
+
+export type MemoryConsolidationOutcome = {
+  status: "completed" | "skipped" | "extraction_failed";
+  skipReason?: "empty_conversation" | "no_user_messages" | "explicit_forget_handled";
+  extractedFactCount: number;
+  persistedCount: number;
+  invalidatedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  decisions: Record<string, number>;
+};
 
 export type MemoryWriteDecision =
   | { action: "ADD"; targetKey: string; reason: string }
@@ -496,15 +557,37 @@ function buildSavedRecord(
 
 export async function consolidate(
   conversation: { role: string; content: unknown }[],
-  opts: { sessionId?: string; userId?: string; requestId?: string } = {},
+  opts: {
+    sessionId?: string;
+    userId?: string;
+    requestId?: string;
+    onOutcome?: (outcome: MemoryConsolidationOutcome) => void;
+  } = {},
 ): Promise<MemoryRecord[]> {
-  if (conversation.length === 0 || !opts.userId) return [];
+  const report = (outcome: MemoryConsolidationOutcome) => opts.onOutcome?.(outcome);
+  const emptyOutcome = (skipReason: MemoryConsolidationOutcome["skipReason"]) => ({
+    status: "skipped" as const,
+    skipReason,
+    extractedFactCount: 0,
+    persistedCount: 0,
+    invalidatedCount: 0,
+    skippedCount: 0,
+    failedCount: 0,
+    decisions: {},
+  });
+  if (conversation.length === 0 || !opts.userId) {
+    report(emptyOutcome("empty_conversation"));
+    return [];
+  }
   const userMessages = conversation
     .filter((message) => message.role === "user")
     .map((message) => textFromUserContent(message.content))
     .filter(Boolean)
     .slice(-12);
-  if (userMessages.length === 0) return [];
+  if (userMessages.length === 0) {
+    report(emptyOutcome("no_user_messages"));
+    return [];
+  }
   const latestUserMessage = userMessages[userMessages.length - 1];
   if (
     (await handleExplicitForgetRequest({
@@ -514,6 +597,7 @@ export async function consolidate(
       requestId: opts.requestId,
     })).handled
   ) {
+    report(emptyOutcome("explicit_forget_handled"));
     return [];
   }
   const executionContext = conversation.slice(-20).flatMap((message) => {
@@ -538,10 +622,23 @@ export async function consolidate(
     );
   } catch (error: any) {
     console.error("[consolidate] 抽取失败:", error.message);
+    report({
+      status: "extraction_failed",
+      extractedFactCount: 0,
+      persistedCount: 0,
+      invalidatedCount: 0,
+      skippedCount: 0,
+      failedCount: 1,
+      decisions: {},
+    });
     return [];
   }
 
   const saved: MemoryRecord[] = [];
+  let invalidatedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+  const decisions: Record<string, number> = {};
   for (const fact of facts) {
     try {
       const exact = await longTerm.get(fact.key, { userId: opts.userId });
@@ -554,6 +651,7 @@ export async function consolidate(
         ...recalled.filter((candidate) => candidate.key !== exact?.key),
       ];
       const decision = await decideMemoryWrite(fact, candidates);
+      decisions[decision.action] = (decisions[decision.action] ?? 0) + 1;
       console.info("[memory] write decision", {
         requestId: opts.requestId,
         key: fact.key,
@@ -562,12 +660,16 @@ export async function consolidate(
         reason: decision.reason,
       });
 
-      if (decision.action === "NOOP") continue;
+      if (decision.action === "NOOP") {
+        skippedCount += 1;
+        continue;
+      }
       if (decision.action === "INVALIDATE") {
         await writer.invalidate(decision.targetKey, {
           userId: opts.userId,
           reason: decision.reason,
         });
+        invalidatedCount += 1;
         continue;
       }
 
@@ -593,7 +695,17 @@ export async function consolidate(
       saved.push(buildSavedRecord(fact, decision.targetKey, metadata));
     } catch (error: any) {
       console.error(`[consolidate] 处理记忆 ${fact.key} 失败:`, error.message);
+      failedCount += 1;
     }
   }
+  report({
+    status: "completed",
+    extractedFactCount: facts.length,
+    persistedCount: saved.length,
+    invalidatedCount,
+    skippedCount,
+    failedCount,
+    decisions,
+  });
   return saved;
 }

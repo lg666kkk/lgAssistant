@@ -16,12 +16,13 @@ import {
 } from "@/lib/agent/runtime/plan-execution";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
 import {
-  recallForPrompt,
+  recallForPromptWithStats,
   consolidate,
   handleExplicitForgetRequest,
   renderMemoryOperationContext,
   type ExplicitForgetResult,
 } from "@/lib/agent/memory/memory-flow";
+import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
@@ -42,7 +43,17 @@ import {
 } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import type { AgentTrace } from "@/lib/agent/runtime/trace";
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { reportOnlineScores } from "@/lib/agent/eval/online-scores";
+import {
+  summarizeAnswerValidation,
+  summarizeRagRoute,
+  summarizeRetrieval,
+} from "@/lib/agent/observability/agent-trace-summary";
+import {
+  getActiveTraceId,
+  propagateAttributes,
+  startActiveObservation,
+} from "@langfuse/tracing";
 import { buildContextPlan } from "@/lib/agent/context/plan";
 import {
   createContextSnapshot,
@@ -394,6 +405,8 @@ export async function POST(req: Request) {
     async start(controller) {
       let closed = false;
       let pendingTrace: AgentTrace | undefined;
+      // OTel/Langfuse 根 observation 的 ID，用来把本地 AgentTrace 的评分写回同一条线上 Trace。
+      let langfuseTraceId: string | undefined;
       const enqueueText = (text: string) => {
         if (closed || req.signal.aborted) return false;
         try {
@@ -425,9 +438,19 @@ export async function POST(req: Request) {
         if (!trace) return;
         await saveTrace(trace, user.id).catch((error: any) =>
           console.error("[trace] 保存失败，跳过:", error.message));
+        if (langfuseTraceId) {
+          // 先落本地审计 trace，再上报 Langfuse Score；评分故障绝不能影响聊天主链路。
+          await reportOnlineScores({
+            traceId: langfuseTraceId,
+            trace,
+          }).catch((error: any) =>
+            console.error("[langfuse] 在线评分失败，跳过:", error.message));
+        }
       };
 
       await startActiveObservation("agent-chat", async (langfuseTrace) => {
+        // 必须在 active observation 内读取，才能拿到本次请求对应的 Langfuse trace ID。
+        langfuseTraceId = getActiveTraceId();
         const traceInput = buildLangfuseTraceInput({
           requestId,
           sessionId,
@@ -450,6 +473,23 @@ export async function POST(req: Request) {
           },
         });
         langfuseTrace.setTraceIO({ input: traceDisplayInput });
+        const projectTraceObservations = (trace: AgentTrace) => {
+          for (const step of trace.steps) {
+            if (step.type === "retrieval" && step.phase === "graded") {
+              const observation = langfuseTrace.startObservation("rag.retrieve", {
+                metadata: { requestId, planId: step.planId },
+              }, { asType: "retriever" });
+              observation.update({ output: summarizeRetrieval(step) });
+              observation.end();
+            } else if (step.type === "answer_validation") {
+              const observation = langfuseTrace.startObservation("rag.evidence_validation", {
+                metadata: { requestId },
+              }, { asType: "evaluator" });
+              observation.update({ output: summarizeAnswerValidation(step) });
+              observation.end();
+            }
+          }
+        };
 
         await propagateAttributes({
           userId: user.id,
@@ -462,6 +502,11 @@ export async function POST(req: Request) {
           },
         }, async () => {
       try {
+        const routeObservation = langfuseTrace.startObservation("rag.route", {
+          metadata: { requestId, planId: retrievalPlan.id },
+        }, { asType: "retriever" });
+        routeObservation.update({ output: summarizeRagRoute(retrievalPlan) });
+        routeObservation.end();
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖
         let loopMessages = [...hydratedLoopMessages];
@@ -476,25 +521,102 @@ export async function POST(req: Request) {
           .find((m: any) => m.role === "user");
         let explicitForgetResult: ExplicitForgetResult = { handled: false };
         if (lastUser) {
-          explicitForgetResult = await handleExplicitForgetRequest({
-            message: lastUser.content,
-            userId: user.id,
-            sessionId,
-            requestId,
-          }).catch((error: any) => {
-            console.error("[memory] 显式忘记处理失败:", error.message);
-            return { handled: false } as const;
+          const observation = langfuseTrace.startObservation("memory.explicit_forget", {
+            input: { messageChars: lastUser.content.length },
+            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
           });
+          try {
+            explicitForgetResult = await handleExplicitForgetRequest({
+              message: lastUser.content,
+              userId: user.id,
+              sessionId,
+              requestId,
+            });
+            observation.update({
+              output: {
+                handled: explicitForgetResult.handled,
+                status: explicitForgetResult.handled ? explicitForgetResult.status : "not_requested",
+                invalidatedCount: explicitForgetResult.handled
+                  ? explicitForgetResult.targetKeys.length
+                  : 0,
+              },
+            });
+          } catch (error: any) {
+            console.error("[memory] 显式忘记处理失败:", error.message);
+            observation.update({
+              level: "ERROR",
+              output: { errorClass: error.name ?? "Error" },
+            });
+          } finally {
+            observation.end();
+          }
         }
         const explicitForgetHandled = explicitForgetResult.handled;
         let memorySystem = "";
         if (lastUser) {
+          const observation = langfuseTrace.startObservation("memory.recall", {
+            input: { queryChars: lastUser.content.length },
+            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
+          }, { asType: "retriever" });
           try {
-            memorySystem = await recallForPrompt(lastUser.content, { userId: user.id });
+            const recall = await recallForPromptWithStats(lastUser.content, { userId: user.id });
+            memorySystem = recall.context;
+            observation.update({
+              output: {
+                eligible: recall.eligible,
+                candidateCount: recall.candidateCount,
+                selectedCount: recall.selectedCount,
+                injected: Boolean(recall.context),
+                injectedChars: recall.context.length,
+                selectedTypes: recall.selectedTypes,
+                selectedSources: recall.selectedSources,
+              },
+            });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
+            observation.update({
+              level: "ERROR",
+              output: { errorClass: e.name ?? "Error" },
+            });
+          } finally {
+            observation.end();
           }
         }
+        const consolidateWithObservation = (
+          conversation: Array<{ role: string; content: unknown }>,
+        ) => {
+          // Consolidation stays asynchronous, but its span is created while the root trace is active.
+          const observation = langfuseTrace.startObservation("memory.consolidate", {
+            input: {
+              messageCount: conversation.length,
+              userMessageCount: conversation.filter((message) => message.role === "user").length,
+            },
+            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
+          });
+          let outcome: Record<string, unknown> | undefined;
+          void consolidate(conversation, {
+            sessionId,
+            userId: user.id,
+            requestId,
+            onOutcome: (result) => {
+              outcome = result;
+            },
+          })
+            .then((records) => observation.update({
+              output: {
+                ...(outcome ?? {}),
+                persistedRecords: summarizeMemoryConsolidation(records),
+              },
+            }))
+            .catch((error: any) => {
+              console.error("[consolidate] 失败:", error.message);
+              observation.update({
+                level: "ERROR",
+                output: { errorClass: error.name ?? "Error" },
+              });
+            })
+            .finally(() => observation.end());
+        };
         // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
         const prompt = buildPromptPipe({
@@ -659,9 +781,9 @@ export async function POST(req: Request) {
           await persistSnapshot(loopMessages).catch((error: any) =>
             console.error("[context-snapshot] 保存失败:", error.message));
           if (!explicitForgetHandled) {
-            void consolidate(loopMessages, { sessionId, userId: user.id, requestId }).catch((e: any) =>
-              console.error("[consolidate] 失败:", e.message));
+            consolidateWithObservation(loopMessages);
           }
+          projectTraceObservations(agentLoopResult.trace);
           await savePendingTrace();
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
@@ -704,6 +826,12 @@ export async function POST(req: Request) {
         finalAssistantText = sanitizeModelText(finalAssistantText);
 
         if (req.signal.aborted || closed) {
+          // Agent Loop 已有部分执行记录，但用户中止不应被统计为成功完成。
+          agentLoopResult.trace.completed = false;
+          agentLoopResult.trace.stopReason = "aborted";
+          agentLoopResult.trace.endedAt = Date.now();
+          agentLoopResult.trace.totalDurationMs =
+            agentLoopResult.trace.endedAt - agentLoopResult.trace.startedAt;
           langfuseTrace.update({
             output: {
               completed: false,
@@ -715,6 +843,7 @@ export async function POST(req: Request) {
             input: traceDisplayInput,
             output: redactSensitiveValue(finalAssistantText),
           });
+          projectTraceObservations(agentLoopResult.trace);
           await savePendingTrace();
           closeStream();
           return;
@@ -761,8 +890,7 @@ export async function POST(req: Request) {
         await persistSnapshot(completedMessages).catch((error: any) =>
           console.error("[context-snapshot] 保存失败:", error.message));
         if (!explicitForgetHandled) {
-          void consolidate(completedMessages, { sessionId, userId: user.id, requestId }).catch((e: any) =>
-            console.error("[consolidate] 失败:", e.message));
+          consolidateWithObservation(completedMessages);
         }
         langfuseTrace.update({
           output: {
@@ -778,11 +906,24 @@ export async function POST(req: Request) {
         agentLoopResult.trace.endedAt = Date.now();
         agentLoopResult.trace.totalDurationMs =
           agentLoopResult.trace.endedAt - agentLoopResult.trace.startedAt;
+        // 工具循环虽可能因上限退出，但最终回答流成功结束后，整次请求才算完成。
+        agentLoopResult.trace.completed = true;
+        agentLoopResult.trace.stopReason =
+          finalStopReason === "max_tokens" ? "max_tokens" : "completed";
+        projectTraceObservations(agentLoopResult.trace);
         await savePendingTrace();
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();
       } catch (error: any) {
+        if (pendingTrace) {
+          // 保留已完成的步骤，并用终态覆盖循环中的临时 stopReason，供线上评分正确归类。
+          pendingTrace.completed = false;
+          pendingTrace.stopReason = req.signal.aborted || closed ? "aborted" : "error";
+          pendingTrace.endedAt = Date.now();
+          pendingTrace.totalDurationMs = pendingTrace.endedAt - pendingTrace.startedAt;
+          projectTraceObservations(pendingTrace);
+        }
         await savePendingTrace();
         if (req.signal.aborted || closed) {
           langfuseTrace.update({

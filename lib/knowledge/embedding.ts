@@ -293,7 +293,7 @@ function createOpenAICompatibleProvider(): EmbeddingProvider {
 
   const client = new OpenAI({
     apiKey,
-    baseURL: baseURL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    baseURL: baseURL || 'https://ws-8c39csiude3axq14.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
     maxRetries: 0,
   });
 

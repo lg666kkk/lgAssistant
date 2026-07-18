@@ -19,6 +19,7 @@ import {
 } from "@/lib/agent/runtime/tokenizer";
 import {
   RAGRetriever,
+  RAGRetrievalTimeoutError,
   type RAGSearchResponse,
   type SearchResult,
 } from "@/lib/knowledge/retriever";
@@ -38,6 +39,23 @@ type SearchNoteInput = {
 };
 
 type SearchNotesRetriever = Pick<RAGRetriever, "searchWithDebug">;
+
+// 一次 search_notes 可能包含两次完整 RAG 召回，不能沿用轻量工具的 30 秒默认值。
+const SEARCH_NOTES_TIMEOUT_SECONDS = 45;
+const SEARCH_NOTES_INTERNAL_BUDGET_MS = 40_000;
+const SEARCH_NOTES_MAX_ATTEMPT_MS = 25_000;
+const SEARCH_NOTES_RETRY_RESERVE_MS = 12_000;
+const SEARCH_NOTES_COMPLETION_RESERVE_MS = 3_000;
+
+class SearchNotesTimeoutError extends Error {
+  constructor(
+    readonly attempt: number,
+    readonly timeoutMs: number,
+  ) {
+    super(`知识库第 ${attempt} 次检索在 ${Math.ceil(timeoutMs / 1000)} 秒内未完成`);
+    this.name = "SearchNotesTimeoutError";
+  }
+}
 
 type RagSearchAttempt = RetrievalAttempt & {
   threshold: number;
@@ -286,6 +304,26 @@ function evidenceScore(result: SearchResult) {
   );
 }
 
+async function withSearchAttemptTimeout<T>(input: {
+  promise: Promise<T>;
+  attempt: number;
+  timeoutMs: number;
+}): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      input.promise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new SearchNotesTimeoutError(input.attempt, input.timeoutMs));
+        }, input.timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 const BASE_SEARCH_NOTES_DESCRIPTION =
   "在用户个人知识库中检索内容。调用受显式 Retrieval Router、Query Planner 和 Evidence Grader 约束；最多执行两次同阈值 query。会回传通过最低接受线的证据并标记整体充分性，回答时使用 [evidenceId] 引用。公开实时信息请使用 web_search。";
 
@@ -342,6 +380,8 @@ export function createSearchNotesTool(options: {
     runtime: {
       ...defaultToolRuntimePolicy,
       rateLimit: 20,
+      // 检索可包含 embedding、双路召回和条件重排，允许内部预算返回可诊断错误。
+      timeoutSeconds: SEARCH_NOTES_TIMEOUT_SECONDS,
       sideEffect: "read",
       concurrencyGroup: "knowledge",
       maxConcurrency: 4,
@@ -373,6 +413,7 @@ export function createSearchNotesTool(options: {
         let lastResponse: RAGSearchResponse | undefined;
         let finalGrade = gradeKnowledgeEvidence(parsed.query, [], []);
         const maxAttempts = options.retrievalPlan?.maxAttempts ?? 2;
+        const searchStartedAt = Date.now();
 
         for (let index = 0; index < maxAttempts; index++) {
           const planned = queries[index];
@@ -394,17 +435,37 @@ export function createSearchNotesTool(options: {
           };
           let response = cache.get(cacheKey);
           const cacheHit = Boolean(response);
-          response ??= await retriever.searchWithDebug(query, {
-            matchThreshold: ragConfig.similarityThreshold,
-            matchCount: parsed.limit,
-            userId: context?.userId,
-            conversationContext: context?.conversationContext,
-            enableMmr: true,
-            enableQueryRewrite: true,
-            enableRerank: true,
-            filters,
-            indexVersion: options.retrievalPlan?.indexVersion,
-          });
+          if (!response) {
+            const elapsedMs = Date.now() - searchStartedAt;
+            const remainingBudgetMs = SEARCH_NOTES_INTERNAL_BUDGET_MS - elapsedMs;
+            const canRetry = Boolean(options.retrievalPlan) && index + 1 < maxAttempts;
+            const reserveMs = canRetry
+              ? SEARCH_NOTES_RETRY_RESERVE_MS
+              : SEARCH_NOTES_COMPLETION_RESERVE_MS;
+            const timeoutMs = Math.min(
+              SEARCH_NOTES_MAX_ATTEMPT_MS,
+              remainingBudgetMs - reserveMs,
+            );
+            if (timeoutMs <= 0) {
+              throw new SearchNotesTimeoutError(index + 1, Math.max(0, remainingBudgetMs));
+            }
+            response = await withSearchAttemptTimeout({
+              attempt: index + 1,
+              timeoutMs,
+              promise: retriever.searchWithDebug(query, {
+                matchThreshold: ragConfig.similarityThreshold,
+                matchCount: parsed.limit,
+                userId: context?.userId,
+                conversationContext: context?.conversationContext,
+                enableMmr: true,
+                enableQueryRewrite: true,
+                enableRerank: true,
+                filters,
+                indexVersion: options.retrievalPlan?.indexVersion,
+                timeoutMs,
+              }),
+            });
+          }
           if (!cacheHit) cache.set(cacheKey, response);
           lastResponse = response;
           mergedResults = mergeSearchResults(mergedResults, response.results);
@@ -508,6 +569,32 @@ export function createSearchNotesTool(options: {
           },
         };
       } catch (error) {
+        if (error instanceof RAGRetrievalTimeoutError) {
+          return {
+            ok: false,
+            content: "知识库检索响应超时，请稍后重试",
+            error: error.message,
+            metadata: {
+              status: "retrieval_timeout",
+              ragTimedOut: true,
+              ragTimeoutPhase: error.phase,
+              ragTimeoutMs: error.timeoutMs,
+            },
+          };
+        }
+        if (error instanceof SearchNotesTimeoutError) {
+          return {
+            ok: false,
+            content: "知识库检索响应超时，请稍后重试",
+            error: error.message,
+            metadata: {
+              status: "retrieval_timeout",
+              ragTimedOut: true,
+              ragTimeoutAttempt: error.attempt,
+              ragTimeoutMs: error.timeoutMs,
+            },
+          };
+        }
         return {
           ok: false,
           content: "搜索笔记失败",

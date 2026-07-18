@@ -68,6 +68,30 @@ describe('RAGRetriever advanced retrieval', () => {
     expect(response.debug.keywordSearchEnabled).toBe(true);
   });
 
+  it('reports a bounded parallel recall timeout instead of waiting indefinitely', async () => {
+    vi.useFakeTimers();
+    try {
+      const retriever = new RAGRetriever({
+        embeddingClient: { embedBatch: vi.fn(() => new Promise<number[][]>(() => {})) },
+        keywordSearch: vi.fn(() => new Promise<SearchResult[]>(() => {})),
+      });
+
+      const searchPromise = retriever.searchWithDebug('RAG 超时诊断', {
+        timeoutMs: 1_000,
+      });
+      const rejection = expect(searchPromise).rejects.toMatchObject({
+        name: 'RAGRetrievalTimeoutError',
+        phase: 'parallel_recall',
+        timeoutMs: 1_000,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uses RRF consensus across vector rewrites and enforces the global TopK cap', async () => {
     const embedBatch = vi.fn(async (queries: string[]) =>
       queries.map((_, index) => [index + 1, 0]));

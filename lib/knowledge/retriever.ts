@@ -131,6 +131,18 @@ export interface RAGSearchOptions {
   conversationContext?: string[];
   filters?: RetrievalFilters;
   indexVersion?: string;
+  /** 调用方的端到端检索预算；超时后抛出可区分阶段的错误。 */
+  timeoutMs?: number;
+}
+
+export class RAGRetrievalTimeoutError extends Error {
+  constructor(
+    readonly phase: 'parallel_recall' | 'cross_encoder',
+    readonly timeoutMs: number,
+  ) {
+    super(`RAG ${phase} 在 ${Math.ceil(timeoutMs / 1000)} 秒内未完成`);
+    this.name = 'RAGRetrievalTimeoutError';
+  }
 }
 
 export type VectorSearchRequest = {
@@ -171,6 +183,26 @@ type FusionWeights = {
 
 const queryEmbeddingCache = new QueryResultCache<number[]>(10 * 60_000, 500);
 const QUERY_EMBEDDING_CACHE_VERSION = 'rag-query-embedding-v1';
+
+async function withRetrievalTimeout<T>(input: {
+  promise: Promise<T>;
+  phase: RAGRetrievalTimeoutError['phase'];
+  timeoutMs: number;
+}): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      input.promise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new RAGRetrievalTimeoutError(input.phase, input.timeoutMs));
+        }, input.timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 /**
  * 创建 Supabase 客户端
@@ -226,6 +258,12 @@ export class RAGRetriever {
     options: RAGSearchOptions = {},
   ): Promise<RAGSearchResponse> {
     const startedAt = Date.now();
+    const deadlineAt = options.timeoutMs === undefined
+      ? undefined
+      : startedAt + Math.max(1, options.timeoutMs);
+    const remainingBudgetMs = () => deadlineAt === undefined
+      ? undefined
+      : Math.max(1, deadlineAt - Date.now());
     const normalizedQuery = query.trim();
     if (!normalizedQuery) {
       throw new Error('RAG 查询不能为空');
@@ -286,10 +324,14 @@ export class RAGRetriever {
         : Promise.resolve([]),
     );
 
-    const [vectorPath, keywordPath] = await Promise.all([
-      vectorPathPromise,
-      keywordPathPromise,
-    ]);
+    const recallPromise = Promise.all([vectorPathPromise, keywordPathPromise]);
+    const [vectorPath, keywordPath] = await (remainingBudgetMs() === undefined
+      ? recallPromise
+      : withRetrievalTimeout({
+          promise: recallPromise,
+          phase: 'parallel_recall',
+          timeoutMs: remainingBudgetMs()!,
+        }));
     const parallelRecallMs = Date.now() - recallStartedAt;
 
     const fusionStartedAt = Date.now();
@@ -356,12 +398,19 @@ export class RAGRetriever {
     if (crossDecision.shouldRun && this.crossEncoderReranker) {
       const crossStartedAt = Date.now();
       try {
-        sorted = await applyCrossEncoderRerank({
+        const crossEncoderPromise = applyCrossEncoderRerank({
           query: standaloneQuery,
           candidates: sorted,
           limit: ragConfig.crossEncoderCandidateCount,
           reranker: this.crossEncoderReranker,
         });
+        sorted = await (remainingBudgetMs() === undefined
+          ? crossEncoderPromise
+          : withRetrievalTimeout({
+              promise: crossEncoderPromise,
+              phase: 'cross_encoder',
+              timeoutMs: remainingBudgetMs()!,
+            }));
         crossEncoderUsed = true;
       } catch (error) {
         crossEncoderError = error instanceof Error ? error.message : String(error);
