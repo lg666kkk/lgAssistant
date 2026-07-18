@@ -8,7 +8,9 @@
     "rag:sync": "tsx scripts/rag-sync.ts",
     "rag:search": "tsx scripts/rag-search.ts",
     "rag:reset": "tsx scripts/rag-reset.ts",
+    "rag:ingestion:work": "tsx scripts/rag-ingestion-worker.ts",
     "artifacts:cleanup": "tsx scripts/artifacts-cleanup.ts",
+    "traces:cleanup": "tsx scripts/traces-cleanup.ts",
     "wiki:compile": "tsx scripts/wiki-compile.ts",
     "scheduler:dev": "tsx scripts/scheduler-dev.ts",
     "start": "next start",
@@ -16,7 +18,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:eval": "vitest run lib/agent/eval",
-    "test:rag": "tsx scripts/rag-eval.ts"
+    "test:rag": "tsx scripts/rag-eval.ts",
+    "test:rag-ablation": "tsx scripts/rag-ablation.ts",
+    "test:rag-groundedness": "tsx scripts/rag-groundedness-eval.ts",
+    "test:rag-routing": "tsx scripts/rag-routing-eval.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.73",

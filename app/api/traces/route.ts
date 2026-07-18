@@ -42,3 +42,25 @@ export async function GET(req: Request) {
 
   return Response.json({ traces });
 }
+
+export async function DELETE(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
+  let body: { confirm?: boolean };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "请求体格式错误，需要 JSON" }, { status: 400 });
+  }
+  if (body.confirm !== true) {
+    return Response.json({ error: "删除全部 Trace 需要 confirm=true" }, { status: 400 });
+  }
+
+  const { error } = await getSupabase()
+    .from("agent_traces")
+    .delete()
+    .eq("user_id", user.id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ deleted: true });
+}

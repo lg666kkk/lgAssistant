@@ -3,6 +3,16 @@ import {
   type ToolResult,
   defaultToolRuntimePolicy,
 } from "./types";
+import {
+  createEvidenceBundle,
+  createWebEvidenceItems,
+  summarizeEvidenceBundle,
+} from "@/lib/agent/rag/evidence";
+import { gradeEvidenceItems } from "@/lib/agent/rag/evidence-grader";
+import {
+  WEB_RETRIEVAL_INDEX_VERSION,
+  type RetrievalPlan,
+} from "@/lib/agent/rag/types";
 
 export type WebFetchInput = {
   url?: string;
@@ -300,6 +310,7 @@ function extractTitle(html: string) {
 
 function htmlToText(html: string) {
   const cleaned = html
+    .replace(/<head[\s\S]*?<\/head>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
@@ -559,7 +570,77 @@ function buildWebFetchResult(input: {
   };
 }
 
-export const webFetchTool: ToolDefinition = {
+function attachEvidenceBundle(
+  result: ToolResult,
+  plan: RetrievalPlan | undefined,
+  durationMs: number,
+): ToolResult {
+  if (!result.ok || !result.data || typeof result.data !== "object") return result;
+  const data = result.data as Record<string, unknown>;
+  const url = typeof data.finalUrl === "string"
+    ? data.finalUrl
+    : typeof data.url === "string"
+      ? data.url
+      : "";
+  const title = typeof data.title === "string" ? data.title : url;
+  const text = typeof data.text === "string" ? data.text : "";
+  if (!url || !text) return result;
+
+  const query = plan?.standaloneQuery ?? title;
+  const allEvidence = createWebEvidenceItems([{
+    title,
+    url,
+    content: text,
+    score: 0.5,
+  }]);
+  const grade = gradeEvidenceItems(
+    query,
+    allEvidence,
+  );
+  const evidences = allEvidence;
+  const bundle = createEvidenceBundle({
+    plan,
+    route: plan?.route ?? "web",
+    query,
+    indexVersion: WEB_RETRIEVAL_INDEX_VERSION,
+    evidences,
+    grade,
+    attempts: [{
+      attempt: 1,
+      source: "web",
+      query,
+      resultCount: allEvidence.length,
+      cacheHit: false,
+      grade,
+      timings: { totalMs: durationMs },
+    }],
+  });
+  return {
+    ...result,
+    content: [
+      `[${evidences[0].evidenceId}]`,
+      grade.sufficient
+        ? undefined
+        : "证据提示：页面已成功读取，但与当前问题的整体相关性评分不足；请结合正文谨慎判断。",
+      result.content,
+    ].filter(Boolean).join("\n"),
+    data: {
+      ...data,
+      evidenceBundle: bundle,
+    },
+    metadata: {
+      ...result.metadata,
+      retrievalPlanId: plan?.id,
+      evidenceBundle: summarizeEvidenceBundle(bundle),
+      evidenceSufficient: grade.sufficient,
+    },
+  };
+}
+
+export function createWebFetchTool(options: {
+  retrievalPlan?: RetrievalPlan;
+} = {}): ToolDefinition {
+  return {
   name: "web_fetch",
   description:
     "读取一个公开网页 URL 的正文内容。适合在 web_search 找到候选结果后，对最相关网页进行精读；GitHub 文件页会自动改读 raw 原始文件。不要用于本地文件、内网地址、PDF、图片或非网页资源。",
@@ -589,6 +670,9 @@ export const webFetchTool: ToolDefinition = {
   },
   riskLevel: "safe",
   execute: async (input: unknown): Promise<ToolResult> => {
+    const startedAt = Date.now();
+    const finalize = (result: ToolResult) =>
+      attachEvidenceBundle(result, options.retrievalPlan, Date.now() - startedAt);
     const { url, maxChars } = parseInput(input);
     if (!url?.trim()) {
       return {
@@ -611,25 +695,25 @@ export const webFetchTool: ToolDefinition = {
 
       if (!result.ok && shouldTryReaderFallback(result.error)) {
         const fallbackPage = await fetchPageWithReader(url);
-        return buildWebFetchResult({
+        return finalize(buildWebFetchResult({
           requestedUrl: url,
           fetchedUrl: toReaderProxyUrl(url),
           page: fallbackPage,
           maxChars,
-        });
+        }));
       }
 
-      return result;
+      return finalize(result);
     } catch (error) {
       if (shouldTryReaderFallback(undefined, error)) {
         try {
           const fallbackPage = await fetchPageWithReader(url);
-          return buildWebFetchResult({
+          return finalize(buildWebFetchResult({
             requestedUrl: url,
             fetchedUrl: toReaderProxyUrl(url),
             page: fallbackPage,
             maxChars,
-          });
+          }));
         } catch {
           // Fall through and return the original error below.
         }
@@ -642,4 +726,7 @@ export const webFetchTool: ToolDefinition = {
       };
     }
   },
-};
+  };
+}
+
+export const webFetchTool: ToolDefinition = createWebFetchTool();

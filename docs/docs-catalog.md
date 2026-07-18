@@ -44,6 +44,7 @@
 |---|---|---|
 | [rag-implementation.md](./rag/rag-implementation.md) | 实现文档 | 记录 RAG 个人知识库的系统概述、核心概念、技术栈、数据库设计和核心模块。 |
 | [rag-retrieval-quality.md](./rag/rag-retrieval-quality.md) | 检索质量设计 | 说明 RRF、Multi-query、并行召回、条件精排、向量 MMR、Parent-Child、TopK 与迁移验证。 |
+| [agentic-rag-production.md](./rag/agentic-rag-production.md) | 当前实现 / 运维手册 | 记录 Retrieval Router、Query Planner、EvidenceBundle、groundedness、缓存、Trace、评测门禁、ingestion worker、DLQ、索引快照和回滚的真实边界与运行方式。 |
 | [rag-optimization-roadmap.md](./rag/rag-optimization-roadmap.md) | 优化路线图 | 记录 RAG 系统短期、中期、长期优化方向，例如引用来源、批量同步、缓存、混合检索等。 |
 | [rag-interview-questions.md](./rag/rag-interview-questions.md) | 面试题库 | 结合当前代码的 RAG 分层题库，覆盖摄取、混合检索、Agentic RAG、上下文、安全、评测、前沿知识与线上故障；每题包含回答思路、项目落点和追问。 |
 

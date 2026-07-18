@@ -9,8 +9,12 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { ragConfig } from '@/lib/platform/config';
+import type { RetrievalFilters } from '@/lib/agent/rag/types';
+import { QueryResultCache } from '@/lib/agent/rag/query-cache';
+import { extractNotionPageId } from './notion-page-id';
 import {
   cosineSimilarity,
+  EMBEDDING_MODEL,
   EmbeddingClient,
   validateEmbeddingVector,
 } from './embedding';
@@ -69,6 +73,7 @@ export interface RAGSearchDebug {
   vectorCandidateCount: number;
   keywordCandidateCount: number;
   mergedCandidateCount: number;
+  filteredCandidateCount: number;
   returnedCount: number;
   matchThreshold: number;
   fusionStrategy: FusionStrategy;
@@ -84,12 +89,18 @@ export interface RAGSearchDebug {
   crossEncoderReason: string;
   crossEncoderError?: string;
   topScoreGap: number | null;
+  filters?: RetrievalFilters;
   timings: {
     embeddingMs: number;
     vectorSearchMs: number;
     keywordSearchMs: number;
     parallelRecallMs: number;
+    fusionMs: number;
+    ruleRerankMs: number;
     crossEncoderMs: number;
+    mmrMs: number;
+    embeddingCacheHits: number;
+    embeddingCacheMisses: number;
     totalMs: number;
   };
 }
@@ -118,6 +129,8 @@ export interface RAGSearchOptions {
   crossEncoderMode?: CrossEncoderMode;
   enableKeywordSearch?: boolean;
   conversationContext?: string[];
+  filters?: RetrievalFilters;
+  indexVersion?: string;
 }
 
 export type VectorSearchRequest = {
@@ -137,6 +150,8 @@ export type KeywordSearchRequest = {
 
 export type RAGRetrieverDependencies = {
   embeddingClient?: Pick<EmbeddingClient, 'embedBatch'>;
+  embeddingCache?: QueryResultCache<number[]>;
+  embeddingCacheVersion?: string;
   vectorSearch?: (request: VectorSearchRequest) => Promise<SearchResult[]>;
   keywordSearch?: (request: KeywordSearchRequest) => Promise<SearchResult[]>;
   crossEncoderReranker?: CrossEncoderReranker;
@@ -153,6 +168,9 @@ type FusionWeights = {
   vector: number;
   keyword: number;
 };
+
+const queryEmbeddingCache = new QueryResultCache<number[]>(10 * 60_000, 500);
+const QUERY_EMBEDDING_CACHE_VERSION = 'rag-query-embedding-v1';
 
 /**
  * 创建 Supabase 客户端
@@ -177,6 +195,8 @@ function createSupabaseClient() {
  */
 export class RAGRetriever {
   private embeddingClient: Pick<EmbeddingClient, 'embedBatch'>;
+  private embeddingCache?: QueryResultCache<number[]>;
+  private embeddingCacheVersion: string;
   private vectorSearchOverride?: RAGRetrieverDependencies['vectorSearch'];
   private keywordSearchOverride?: RAGRetrieverDependencies['keywordSearch'];
   private crossEncoderReranker?: CrossEncoderReranker;
@@ -184,6 +204,9 @@ export class RAGRetriever {
 
   constructor(dependencies: RAGRetrieverDependencies = {}) {
     this.embeddingClient = dependencies.embeddingClient ?? new EmbeddingClient();
+    this.embeddingCache = dependencies.embeddingCache
+      ?? (dependencies.embeddingClient ? undefined : queryEmbeddingCache);
+    this.embeddingCacheVersion = dependencies.embeddingCacheVersion ?? EMBEDDING_MODEL;
     this.vectorSearchOverride = dependencies.vectorSearch;
     this.keywordSearchOverride = dependencies.keywordSearch;
     this.crossEncoderReranker = dependencies.crossEncoderReranker
@@ -218,7 +241,11 @@ export class RAGRetriever {
       Math.max(
         matchCount,
         positiveInteger(
-          options.candidateCount ?? matchCount * ragConfig.candidateMultiplier,
+          options.candidateCount ?? (
+            options.filters
+              ? ragConfig.maxCandidates
+              : matchCount * ragConfig.candidateMultiplier
+          ),
           matchCount,
         ),
       ),
@@ -247,6 +274,7 @@ export class RAGRetriever {
       matchThreshold,
       matchCount: candidateLimit,
       userId: options.userId,
+      indexVersion: options.indexVersion,
     });
     const keywordPathPromise = measureAsync(
       enableKeywordSearch
@@ -264,6 +292,7 @@ export class RAGRetriever {
     ]);
     const parallelRecallMs = Date.now() - recallStartedAt;
 
+    const fusionStartedAt = Date.now();
     const nonEmptyVectorLists = vectorPath.lists.filter((results) => results.length > 0);
     const vectorListWeight = nonEmptyVectorLists.length > 0
       ? fusionWeights.vector / nonEmptyVectorLists.length
@@ -281,15 +310,19 @@ export class RAGRetriever {
         results: keywordPath.value,
       },
     ];
-    const fusedCandidates = fuseRankedLists({
+    const mergedCandidates = fuseRankedLists({
       lists: rankedLists,
       strategy: fusionStrategy,
       queries: rewrittenQueries,
       weights: fusionWeights,
       rrfK,
     }).sort((left, right) => right.combinedScore - left.combinedScore);
+    const fusedCandidates = mergedCandidates.filter((candidate) =>
+      matchesRetrievalFilters(candidate, options.filters));
     const candidates = fusedCandidates.slice(0, candidateLimit);
+    const fusionMs = Date.now() - fusionStartedAt;
     const enableRuleRerank = options.enableRerank ?? true;
+    const ruleRerankStartedAt = Date.now();
     let sorted: SearchResult[] = candidates
       .map((candidate) => {
         const ruleRerankScore = enableRuleRerank
@@ -304,6 +337,7 @@ export class RAGRetriever {
       .sort(compareByRerankScore);
 
     const topScoreGap = calculateTopScoreGap(sorted);
+    const ruleRerankMs = Date.now() - ruleRerankStartedAt;
     const crossEncoderEnabled = enableRuleRerank
       && (options.enableCrossEncoder ?? ragConfig.crossEncoderEnabled);
     const crossEncoderMode = options.crossEncoderMode ?? ragConfig.crossEncoderMode;
@@ -337,12 +371,14 @@ export class RAGRetriever {
     }
 
     const enableMmr = options.enableMmr ?? true;
+    const mmrStartedAt = Date.now();
     const mmr = enableMmr
       ? applyMmr(sorted, matchCount, options.mmrLambda ?? 0.7)
       : {
           results: sorted.slice(0, matchCount),
           mode: 'disabled' as const,
         };
+    const mmrMs = Date.now() - mmrStartedAt;
 
     return {
       results: mmr.results,
@@ -359,7 +395,8 @@ export class RAGRetriever {
         candidateCount: candidates.length,
         vectorCandidateCount: vectorPath.lists.reduce((sum, list) => sum + list.length, 0),
         keywordCandidateCount: keywordPath.value.length,
-        mergedCandidateCount: fusedCandidates.length,
+        mergedCandidateCount: mergedCandidates.length,
+        filteredCandidateCount: fusedCandidates.length,
         returnedCount: mmr.results.length,
         matchThreshold,
         fusionStrategy,
@@ -375,12 +412,18 @@ export class RAGRetriever {
         crossEncoderReason: crossDecision.reason,
         crossEncoderError,
         topScoreGap,
+        filters: options.filters,
         timings: {
           embeddingMs: vectorPath.embeddingMs,
           vectorSearchMs: vectorPath.vectorSearchMs,
           keywordSearchMs: keywordPath.durationMs,
           parallelRecallMs,
+          fusionMs,
+          ruleRerankMs,
           crossEncoderMs,
+          mmrMs,
+          embeddingCacheHits: vectorPath.embeddingCacheHits,
+          embeddingCacheMisses: vectorPath.embeddingCacheMisses,
           totalMs: Date.now() - startedAt,
         },
       },
@@ -423,16 +466,40 @@ export class RAGRetriever {
     matchThreshold: number;
     matchCount: number;
     userId?: string;
+    indexVersion?: string;
   }) {
     const embeddingStartedAt = Date.now();
-    const embeddings = await this.embeddingClient.embedBatch(input.queries, {
-      idempotencyScope: `rag-query:${input.userId ?? 'anonymous'}`,
+    const cacheKeys = input.queries.map((query) => ({
+      tenantId: input.userId ?? 'anonymous',
+      indexVersion: input.indexVersion ?? 'index-unknown',
+      source: 'knowledge' as const,
+      query,
+      strategyVersion: `${QUERY_EMBEDDING_CACHE_VERSION}:${this.embeddingCacheVersion}`,
+    }));
+    const embeddings: Array<number[] | undefined> = cacheKeys.map((key) =>
+      this.embeddingCache?.get(key));
+    const missingIndexes = embeddings.flatMap((embedding, index) =>
+      embedding ? [] : [index]);
+    if (missingIndexes.length > 0) {
+      const missingQueries = missingIndexes.map((index) => input.queries[index]);
+      const missingEmbeddings = await this.embeddingClient.embedBatch(missingQueries, {
+        idempotencyScope: `rag-query:${input.userId ?? 'anonymous'}:${input.indexVersion ?? 'index-unknown'}`,
+      });
+      missingIndexes.forEach((queryIndex, batchIndex) => {
+        const embedding = missingEmbeddings[batchIndex];
+        embeddings[queryIndex] = embedding;
+        if (embedding) this.embeddingCache?.set(cacheKeys[queryIndex], embedding);
+      });
+    }
+    const resolvedEmbeddings = embeddings.map((embedding, index) => {
+      if (!embedding) throw new Error(`查询 embedding 缺失: index=${index}`);
+      return embedding;
     });
     const embeddingMs = Date.now() - embeddingStartedAt;
 
     const vectorStartedAt = Date.now();
     const lists = await Promise.all(
-      embeddings.map((embedding, queryIndex) => this.runVectorSearch({
+      resolvedEmbeddings.map((embedding, queryIndex) => this.runVectorSearch({
         query: input.queries[queryIndex],
         queryIndex,
         embedding,
@@ -445,6 +512,8 @@ export class RAGRetriever {
     return {
       lists,
       embeddingMs,
+      embeddingCacheHits: input.queries.length - missingIndexes.length,
+      embeddingCacheMisses: missingIndexes.length,
       vectorSearchMs: Date.now() - vectorStartedAt,
     };
   }
@@ -538,6 +607,42 @@ function mapSearchRow(
     metadata,
     embedding: parseEmbeddingText(item.embedding_text),
   };
+}
+
+function matchesRetrievalFilters(
+  candidate: SearchResult,
+  filters?: RetrievalFilters,
+) {
+  if (!filters) return true;
+  if (filters.pageIds?.length) {
+    const candidatePageId = extractNotionPageId(candidate.pageId)
+      ?? candidate.pageId.trim().toLowerCase();
+    const pageIds = new Set(filters.pageIds.map((pageId) =>
+      extractNotionPageId(pageId) ?? pageId.trim().toLowerCase()));
+    if (!pageIds.has(candidatePageId)) return false;
+  }
+  if (
+    filters.titleContains
+    && !candidate.pageTitle.toLowerCase().includes(filters.titleContains.toLowerCase())
+  ) {
+    return false;
+  }
+  if (filters.sourceTypes?.length) {
+    const metadataSource = candidate.metadata?.source_type;
+    const sourceType = metadataSource === 'document' || metadataSource === 'web'
+      ? metadataSource
+      : 'notion';
+    if (!filters.sourceTypes.includes(sourceType)) return false;
+  }
+  if (filters.timeRange?.from || filters.timeRange?.to) {
+    const lastEdited = candidate.metadata?.last_edited_time;
+    if (typeof lastEdited !== 'string') return false;
+    const timestamp = Date.parse(lastEdited);
+    if (!Number.isFinite(timestamp)) return false;
+    if (filters.timeRange.from && timestamp < Date.parse(filters.timeRange.from)) return false;
+    if (filters.timeRange.to && timestamp > Date.parse(filters.timeRange.to)) return false;
+  }
+  return true;
 }
 
 function fuseRankedLists(input: {

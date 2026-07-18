@@ -141,6 +141,7 @@ export function buildAtomicDocumentPayload(input: {
         parent_end_char: parentContext.endChar,
         parent_child_count: parentContext.childCount,
         content_hash: hashText(chunk.text),
+        source_type: 'notion',
         embedding_model: EMBEDDING_MODEL,
         chunker_version: CHUNKER_VERSION,
         last_edited_time: input.lastEditedTime,
@@ -159,6 +160,7 @@ export interface SyncResult {
   success: boolean;
   status: 'created' | 'updated' | 'skipped' | 'failed';
   error?: string;
+  indexVersion?: string;
 }
 
 export type SyncProgressEvent = {
@@ -206,6 +208,7 @@ export type SyncProgressEvent = {
 export type SyncOptions = {
   userId: string;
   force?: boolean;
+  maxRetries?: number;
   onEvent?: (event: SyncProgressEvent) => void;
 };
 
@@ -314,9 +317,10 @@ export async function syncNotionPage(
   pageId: string,
   options: SyncOptions,
 ): Promise<SyncResult> {
-  for (let attempt = 0; attempt <= SYNC_MAX_RETRIES; attempt++) {
-    const result = await syncNotionPageOnce(pageId, options, attempt + 1);
-    if (result.success || attempt >= SYNC_MAX_RETRIES) {
+  const maxRetries = Math.min(Math.max(options.maxRetries ?? SYNC_MAX_RETRIES, 0), 8);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const result = await syncNotionPageOnce(pageId, options, attempt + 1, maxRetries);
+    if (result.success || attempt >= maxRetries) {
       return result;
     }
 
@@ -325,10 +329,10 @@ export async function syncNotionPage(
       type: 'page_retry',
       pageId,
       status: 'failed',
-      message: `同步失败，准备重试 ${attempt + 1}/${SYNC_MAX_RETRIES}：${result.error}`,
+      message: `同步失败，准备重试 ${attempt + 1}/${maxRetries}：${result.error}`,
       metadata: {
         attempt: attempt + 1,
-        maxRetries: SYNC_MAX_RETRIES,
+        maxRetries,
         nextDelayMs,
         error: result.error,
       },
@@ -350,6 +354,7 @@ async function syncNotionPageOnce(
   pageId: string,
   options: SyncOptions,
   attempt = 1,
+  maxRetries = SYNC_MAX_RETRIES,
 ): Promise<SyncResult> {
   console.log(`\n开始同步页面: ${pageId}`);
   emitSyncEvent(options, {
@@ -358,7 +363,7 @@ async function syncNotionPageOnce(
     message: `开始同步页面 ${pageId}`,
     metadata: {
       attempt,
-      maxRetries: SYNC_MAX_RETRIES,
+      maxRetries,
     },
   });
 
@@ -424,6 +429,7 @@ async function syncNotionPageOnce(
         chunksCount: existingPage?.chunk_count ?? 0,
         success: true,
         status: 'skipped',
+        indexVersion: pageContentHash,
       };
     }
 
@@ -513,6 +519,7 @@ async function syncNotionPageOnce(
         chunksCount: 0,
         success: true,
         status: 'skipped',
+        indexVersion: pageContentHash,
       };
     }
 
@@ -602,6 +609,7 @@ async function syncNotionPageOnce(
         p_last_edited_time: page.lastEditedTime,
         p_page_metadata: {
           content_hash: pageContentHash,
+          index_version: pageContentHash,
           embedding_model: EMBEDDING_MODEL,
           chunker_version: CHUNKER_VERSION,
         },
@@ -665,6 +673,7 @@ async function syncNotionPageOnce(
       chunksCount: chunks.length,
       success: true,
       status: syncStatus,
+      indexVersion: pageContentHash,
     };
   } catch (error: any) {
     console.error(`  ✗ 同步失败: ${error.message}`);

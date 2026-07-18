@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { ragEvalCases, type RagEvalCase } from "../lib/agent/eval/rag-cases";
+import { AGENTIC_RAG_VERSION } from "../lib/agent/rag/types";
 import type {
   FusionStrategy,
   RAGSearchDebug,
@@ -25,6 +26,9 @@ type CliOptions = {
   enableKeywordSearch: boolean;
   enableCrossEncoder: boolean;
   fusionStrategy: FusionStrategy;
+  experiment: string;
+  baseline?: string;
+  maxRegression: number;
 };
 
 type RagCliConfig = {
@@ -39,7 +43,9 @@ type CaseReport = {
   passed: boolean;
   sourceHit: boolean;
   sourceRank: number | null;
+  relevanceMode: "explicit_source" | "keyword_proxy" | "not_evaluated";
   reciprocalRank: number;
+  ndcgAtK: number;
   keywordCoverage: number;
   forbiddenHit: boolean;
   noResultExpected: boolean;
@@ -84,6 +90,8 @@ function parseArgs(argv: string[], config: RagCliConfig): CliOptions {
     enableKeywordSearch: true,
     enableCrossEncoder: false,
     fusionStrategy: config.fusionStrategy,
+    experiment: AGENTIC_RAG_VERSION,
+    maxRegression: 0.02,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -139,6 +147,18 @@ function parseArgs(argv: string[], config: RagCliConfig): CliOptions {
     }
     if (arg === "--fusion") {
       options.fusionStrategy = parseFusionStrategy(argv[++i]);
+      continue;
+    }
+    if (arg === "--experiment") {
+      options.experiment = argv[++i]?.trim() || AGENTIC_RAG_VERSION;
+      continue;
+    }
+    if (arg === "--baseline") {
+      options.baseline = argv[++i];
+      continue;
+    }
+    if (arg === "--max-regression") {
+      options.maxRegression = parseScore(argv[++i], "--max-regression");
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -199,6 +219,9 @@ function printUsage(config: RagCliConfig) {
       "  --no-keyword            关闭 keyword search",
       "  --fusion rrf|weighted   选择 RRF 或校准加权融合",
       "  --cross-encoder         启用条件式 Cross-Encoder（需要配置 provider）",
+      `  --experiment <version>  实验/策略版本，默认 ${AGENTIC_RAG_VERSION}`,
+      "  --baseline <path>       与历史 JSON 报告比较并启用 CI 回归门禁",
+      "  --max-regression 0.02   指标允许的最大绝对回退，默认 0.02",
     ].join("\n"),
   );
 }
@@ -228,16 +251,22 @@ function findSourceRank(testCase: RagEvalCase, results: SearchResult[]) {
   const pageTitles = testCase.expectedPageTitles ?? [];
   const urls = testCase.expectedUrls ?? [];
 
-  if (pageIds.length === 0 && pageTitles.length === 0 && urls.length === 0) {
-    return null;
-  }
+  const hasExplicitSource = pageIds.length > 0 || pageTitles.length > 0 || urls.length > 0;
 
   const index = results.findIndex((result) => {
-    if (pageIds.includes(result.pageId)) return true;
-    if (urls.some((url) => result.pageUrl.includes(url))) return true;
-    return pageTitles.some((title) => includesText(result.pageTitle, title));
+    if (hasExplicitSource) {
+      if (pageIds.includes(result.pageId)) return true;
+      if (urls.some((url) => result.pageUrl.includes(url))) return true;
+      return pageTitles.some((title) => includesText(result.pageTitle, title));
+    }
+    const expectedKeywords = testCase.expectedKeywords ?? [];
+    if (expectedKeywords.length === 0) return false;
+    const text = `${result.pageTitle}\n${result.content}`;
+    const hits = expectedKeywords.filter((keyword) => includesText(text, keyword)).length;
+    return hits / expectedKeywords.length >= (testCase.minKeywordCoverage ?? 0.67);
   });
 
+  if (!hasExplicitSource && (testCase.expectedKeywords ?? []).length === 0) return null;
   return index >= 0 ? index + 1 : 0;
 }
 
@@ -266,6 +295,13 @@ function evaluateCase(params: {
 }): CaseReport {
   const { testCase, results, debug, latencyMs } = params;
   const sourceRank = findSourceRank(testCase, results);
+  const relevanceMode = expectedPageIds(testCase).length > 0
+    || (testCase.expectedPageTitles ?? []).length > 0
+    || (testCase.expectedUrls ?? []).length > 0
+      ? "explicit_source"
+      : (testCase.expectedKeywords ?? []).length > 0
+        ? "keyword_proxy"
+        : "not_evaluated";
   const sourceHit = sourceRank === null ? true : sourceRank > 0;
   const keywordCoverage = scoreKeywordCoverage(testCase, results);
   const minKeywordCoverage = testCase.minKeywordCoverage ?? 0.67;
@@ -284,7 +320,9 @@ function evaluateCase(params: {
     passed,
     sourceHit,
     sourceRank,
+    relevanceMode,
     reciprocalRank: sourceRank && sourceRank > 0 ? 1 / sourceRank : 0,
+    ndcgAtK: sourceRank && sourceRank > 0 ? 1 / Math.log2(sourceRank + 1) : 0,
     keywordCoverage,
     forbiddenHit,
     noResultExpected,
@@ -335,6 +373,9 @@ function summarize(reports: CaseReport[]) {
     mrr: sourceEvaluated.length
       ? sourceEvaluated.reduce((sum, report) => sum + report.reciprocalRank, 0) / sourceEvaluated.length
       : null,
+    ndcgAtK: sourceEvaluated.length
+      ? sourceEvaluated.reduce((sum, report) => sum + report.ndcgAtK, 0) / sourceEvaluated.length
+      : null,
     avgKeywordCoverage: retrievalReports.length
       ? retrievalReports.reduce((sum, report) => sum + report.keywordCoverage, 0) / retrievalReports.length
       : null,
@@ -342,6 +383,35 @@ function summarize(reports: CaseReport[]) {
     noResultAccuracy: noResultReports.length ? noResultHits / noResultReports.length : null,
     avgLatencyMs: reports.length ? totalLatencyMs / reports.length : 0,
   };
+}
+
+function compareWithBaseline(
+  current: ReturnType<typeof summarize>,
+  baselinePath: string | undefined,
+  maxRegression: number,
+) {
+  if (!baselinePath) return [];
+  const absolutePath = path.resolve(baselinePath);
+  const baseline = JSON.parse(fs.readFileSync(absolutePath, "utf8")) as {
+    summary?: Record<string, unknown>;
+  };
+  if (!baseline.summary) throw new Error(`baseline 缺少 summary: ${absolutePath}`);
+  const metrics = [
+    "passRate",
+    "recallAtK",
+    "mrr",
+    "ndcgAtK",
+    "noResultAccuracy",
+  ] as const;
+  return metrics.flatMap((metric) => {
+    const currentValue = current[metric];
+    const baselineValue = baseline.summary?.[metric];
+    if (typeof currentValue !== "number" || typeof baselineValue !== "number") return [];
+    const regression = baselineValue - currentValue;
+    return regression > maxRegression
+      ? [{ metric, current: currentValue, baseline: baselineValue, regression }]
+      : [];
+  });
 }
 
 function printCaseReport(report: CaseReport) {
@@ -354,7 +424,7 @@ function printCaseReport(report: CaseReport) {
   console.log(`\n[${status}] ${report.id} ${report.category ? `(${report.category})` : ""}`);
   console.log(`  Q: ${report.question}`);
   console.log(
-    `  sourceRank=${sourceRank} keywordCoverage=${report.keywordCoverage.toFixed(2)} latency=${report.latencyMs}ms${noResult}`,
+    `  sourceRank=${sourceRank} relevance=${report.relevanceMode} keywordCoverage=${report.keywordCoverage.toFixed(2)} latency=${report.latencyMs}ms${noResult}`,
   );
   if (report.debug.rewrittenQueries.length > 1) {
     console.log(`  rewrites=${report.debug.rewrittenQueries.join(" | ")}`);
@@ -372,7 +442,7 @@ function printCaseReport(report: CaseReport) {
     `  rerank mmr=${report.debug.mmrSimilarityMode} crossEncoder=${report.debug.crossEncoderUsed ? "used" : report.debug.crossEncoderReason}`,
   );
   console.log(
-    `  timings embedding=${report.debug.timings.embeddingMs}ms vector=${report.debug.timings.vectorSearchMs}ms keyword=${report.debug.timings.keywordSearchMs}ms parallel=${report.debug.timings.parallelRecallMs}ms cross=${report.debug.timings.crossEncoderMs}ms total=${report.debug.timings.totalMs}ms`,
+    `  timings embedding=${report.debug.timings.embeddingMs}ms vector=${report.debug.timings.vectorSearchMs}ms keyword=${report.debug.timings.keywordSearchMs}ms parallel=${report.debug.timings.parallelRecallMs}ms fusion=${report.debug.timings.fusionMs}ms rule=${report.debug.timings.ruleRerankMs}ms cross=${report.debug.timings.crossEncoderMs}ms mmr=${report.debug.timings.mmrMs}ms total=${report.debug.timings.totalMs}ms`,
   );
   for (const result of report.topResults.slice(0, 5)) {
     const advancedScores = [
@@ -432,8 +502,15 @@ async function main() {
   }
 
   const summary = summarize(reports);
+  const regressions = compareWithBaseline(
+    summary,
+    options.baseline,
+    options.maxRegression,
+  );
   const output = {
     generatedAt: new Date().toISOString(),
+    experiment: options.experiment,
+    strategyVersion: AGENTIC_RAG_VERSION,
     options: {
       limit: options.limit,
       threshold: options.threshold,
@@ -447,6 +524,7 @@ async function main() {
       fusionStrategy: options.fusionStrategy,
     },
     summary,
+    regressions,
     reports,
   };
 
@@ -466,6 +544,7 @@ async function main() {
       `recall@${options.limit}=${summary.recallAtK === null ? "n/a" : summary.recallAtK.toFixed(3)}`,
     );
     console.log(`mrr=${summary.mrr === null ? "n/a" : summary.mrr.toFixed(3)}`);
+    console.log(`nDCG@${options.limit}=${summary.ndcgAtK === null ? "n/a" : summary.ndcgAtK.toFixed(3)}`);
     console.log(
       `keywordCoverage=${summary.avgKeywordCoverage === null ? "n/a" : summary.avgKeywordCoverage.toFixed(3)}`,
     );
@@ -476,9 +555,14 @@ async function main() {
     if (options.out) {
       console.log(`report=${path.resolve(options.out)}`);
     }
+    for (const regression of regressions) {
+      console.log(
+        `REGRESSION ${regression.metric}: baseline=${regression.baseline.toFixed(3)} current=${regression.current.toFixed(3)} delta=-${regression.regression.toFixed(3)}`,
+      );
+    }
   }
 
-  if (summary.failed > 0) {
+  if (summary.failed > 0 || regressions.length > 0) {
     process.exitCode = 1;
   }
 }

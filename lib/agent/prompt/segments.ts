@@ -1,11 +1,13 @@
 import {
   IDENTITY_CONTENT,
+  EVIDENCE_CITATION_POLICY,
   KNOWLEDGE_SEARCH_POLICY,
   SEARCH_QUERY_POLICY,
   WEB_SEARCH_CONTENT,
 } from "./policies";
+import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
-export type PromptSegmentKind = "identity" | "memory" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "task-context" | "safety";
+export type PromptSegmentKind = "identity" | "memory" | "retrieval-plan" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "evidence-policy" | "task-context" | "safety";
 
 export type PromptSegment = {
   kind: PromptSegmentKind;
@@ -25,6 +27,7 @@ export type BuildSegmentsInput = {
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   knowledgeMetadata?: Record<string, unknown>; // RAG debug summary，写进 trace
   webSearchEnabled?: boolean; // 开启联网搜索 → 构造策略段
+  retrievalPlan?: RetrievalPlan;
 };
 
 /**
@@ -86,6 +89,46 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
     source: "system",
     dynamic: false,
   });
+
+  if (input.retrievalPlan) {
+    const plan = input.retrievalPlan;
+    segments.push({
+      kind: "retrieval-plan",
+      title: "显式检索计划",
+      content: [
+        `route=${plan.route}`,
+        `reason=${plan.reason}`,
+        `evidenceRequired=${plan.evidenceRequired}`,
+        `maxAttempts=${plan.maxAttempts}`,
+        `indexVersion=${plan.indexVersion}`,
+        ...plan.steps.map((step) =>
+          `${step.id}: source=${step.source}; query=${step.query}; filters=${JSON.stringify(step.filters ?? {})}`,
+        ),
+        plan.route === "no_retrieval"
+          ? "当前路由未预选检索；若进一步判断用户明确需要个人知识或实时公开证据，可把检索工具作为一次受限 fallback。"
+          : "优先使用该 route 对应的检索工具。证据不足时最多按计划重试一次，不得自行无限改写或降低阈值。",
+      ].join("\n"),
+      priority: 96,
+      tokenBudget: 520,
+      source: "runtime",
+      dynamic: true,
+      metadata: {
+        type: "retrieval_plan",
+        ...plan,
+      },
+    });
+    if (plan.route !== "no_retrieval") {
+      segments.push({
+        kind: "evidence-policy",
+        title: "证据引用策略",
+        content: EVIDENCE_CITATION_POLICY,
+        priority: 97,
+        tokenBudget: 360,
+        source: "system",
+        dynamic: false,
+      });
+    }
+  }
 
   const knowledge = input.knowledge?.trim();
   if (knowledge) {

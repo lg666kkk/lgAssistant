@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { QueryResultCache } from '@/lib/agent/rag/query-cache';
 import {
   RAGRetriever,
   type SearchResult,
@@ -231,5 +232,79 @@ describe('RAGRetriever advanced retrieval', () => {
 
     expect(response.debug.standaloneQuery).toContain('PostgreSQL HNSW');
     expect(response.debug.standaloneQuery).toContain('那它呢');
+  });
+
+  it('caches query embeddings by tenant and index version', async () => {
+    const embedBatch = vi.fn(async () => [[1, 0]]);
+    const retriever = new RAGRetriever({
+      embeddingClient: { embedBatch },
+      embeddingCache: new QueryResultCache<number[]>(),
+      vectorSearch: vi.fn(async () => []),
+      keywordSearch: vi.fn(async () => []),
+    });
+    const options = {
+      userId: 'user-1',
+      indexVersion: 'index-1',
+      enableQueryRewrite: false,
+      enableKeywordSearch: false,
+      enableCrossEncoder: false,
+    };
+
+    const first = await retriever.searchWithDebug('RAG cache', options);
+    const second = await retriever.searchWithDebug('RAG cache', options);
+    await retriever.searchWithDebug('RAG cache', { ...options, indexVersion: 'index-2' });
+
+    expect(embedBatch).toHaveBeenCalledTimes(2);
+    expect(first.debug.timings).toMatchObject({
+      embeddingCacheHits: 0,
+      embeddingCacheMisses: 1,
+    });
+    expect(second.debug.timings).toMatchObject({
+      embeddingCacheHits: 1,
+      embeddingCacheMisses: 0,
+    });
+  });
+
+  it('applies planned source filters to recalled candidates', async () => {
+    const retriever = new RAGRetriever({
+      embeddingClient: { embedBatch: vi.fn(async () => [[1, 0]]) },
+      vectorSearch: vi.fn(async () => [
+        result('notion', 0.9),
+        result('document', 0.8, { metadata: { source_type: 'document' } }),
+      ]),
+      keywordSearch: vi.fn(async () => []),
+    });
+
+    const response = await retriever.searchWithDebug('检索文档', {
+      enableQueryRewrite: false,
+      enableKeywordSearch: false,
+      enableCrossEncoder: false,
+      enableMmr: false,
+      filters: { sourceTypes: ['document'] },
+    });
+
+    expect(response.results.map((item) => item.id)).toEqual(['document']);
+    expect(response.debug.filteredCandidateCount).toBe(1);
+  });
+
+  it('normalizes page id filters before comparing candidates', async () => {
+    const pageId = '550e8400e29b41d4a716446655440000';
+    const retriever = new RAGRetriever({
+      embeddingClient: { embedBatch: vi.fn(async () => [[1, 0]]) },
+      vectorSearch: vi.fn(async () => [
+        result('notion-page', 0.9, { pageId }),
+      ]),
+      keywordSearch: vi.fn(async () => []),
+    });
+
+    const response = await retriever.searchWithDebug('检索指定页面', {
+      enableQueryRewrite: false,
+      enableKeywordSearch: false,
+      enableCrossEncoder: false,
+      enableMmr: false,
+      filters: { pageIds: ['550E8400-E29B-41D4-A716-446655440000'] },
+    });
+
+    expect(response.results.map((item) => item.pageId)).toEqual([pageId]);
   });
 });

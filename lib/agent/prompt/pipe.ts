@@ -1,6 +1,7 @@
 import { applyPromptBudget, rankSegments } from "./budget";
 import { renderSegments } from "./render";
 import { type PromptSegment, buildSegments } from "./segments";
+import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
 export type PromptPipeInput = {
   userMessage: string;
@@ -9,6 +10,7 @@ export type PromptPipeInput = {
   knowledgeMetadata?: Record<string, unknown>;
   webSearchEnabled?: boolean;
   currentDate?: string;
+  retrievalPlan?: RetrievalPlan;
   maxTokens?: number;
 };
 

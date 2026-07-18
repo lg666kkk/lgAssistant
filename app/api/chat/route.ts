@@ -19,10 +19,22 @@ import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
-import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
+import { readKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
+import {
+  buildRetrievalPlan,
+  filterToolsForRetrievalRoute,
+  resolveRetrievalAnchor,
+} from "@/lib/agent/rag/retrieval-router";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/platform/supabase";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { redactSensitiveValue } from "@/lib/agent/rag/governance";
+import {
+  applyGroundednessGuard,
+  verifyGroundedAnswer,
+} from "@/lib/agent/rag/answer-verifier";
+import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
+import type { AgentTrace } from "@/lib/agent/runtime/trace";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
@@ -152,6 +164,41 @@ async function hydrateRedisSessionHistory(input: {
   }
 }
 
+async function resolveLoopMessages(input: {
+  userId: string;
+  sessionId?: string;
+  messages: SessionHistoryMessage[];
+}) {
+  if (!input.sessionId || input.messages.length !== 1) return [...input.messages];
+
+  let history = await sessionStore.getHistory(input.userId, input.sessionId);
+  if (history.length === 0) {
+    const restoredHistory = await restoreSessionHistoryFromDatabase({
+      userId: input.userId,
+      sessionId: input.sessionId,
+    });
+    if (restoredHistory.length > 0) {
+      const currentUserContent = input.messages[0]?.content;
+      history = restoredHistory.filter(
+        (message, index) => !(
+          index === restoredHistory.length - 1
+          && message.role === "user"
+          && message.content === currentUserContent
+        ),
+      );
+      await hydrateRedisSessionHistory({
+        userId: input.userId,
+        sessionId: input.sessionId,
+        history,
+      });
+    }
+  }
+
+  return history.length > 0
+    ? [...history.slice(-SESSION_FALLBACK_MESSAGE_LIMIT), ...input.messages]
+    : [...input.messages];
+}
+
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
 export async function POST(req: Request) {
   const user = await requireUser(req);
@@ -202,18 +249,53 @@ export async function POST(req: Request) {
     role: msg.role as "user" | "assistant",
     content: msg.content,
   }));
-  let knowledgeProfile: string | undefined;
+  let hydratedLoopMessages = [...modelMessages];
   try {
-    knowledgeProfile = await buildKnowledgeProfileForTool({ userId: user.id });
+    hydratedLoopMessages = await resolveLoopMessages({
+      userId: user.id,
+      sessionId,
+      messages: modelMessages,
+    });
   } catch (error: any) {
-    console.error("[knowledge] 构建工具画像失败，使用默认 search_notes 描述:", error.message);
+    console.error("[session] 读取历史失败，使用请求消息:", error.message);
   }
+  const retrievalAnchor = resolveRetrievalAnchor(
+    hydratedLoopMessages,
+    body.approvedPlan !== undefined,
+  );
+  const approvedPlanObjective = body.approvedPlan
+    && typeof body.approvedPlan === "object"
+    && !Array.isArray(body.approvedPlan)
+    && typeof body.approvedPlan.objective === "string"
+      ? body.approvedPlan.objective.trim().slice(0, 500)
+      : "";
+  const retrievalQuery = retrievalAnchor.foundPriorTask
+    ? retrievalAnchor.query
+    : approvedPlanObjective || retrievalAnchor.query;
+  let knowledgeProfile: string | undefined;
+  let knowledgeIndexVersion = "index-unknown";
+  try {
+    const snapshot = await readKnowledgeProfileForTool({ userId: user.id });
+    knowledgeProfile = snapshot?.profile;
+    knowledgeIndexVersion = snapshot?.indexVersion ?? knowledgeIndexVersion;
+  } catch (error: any) {
+    console.error("[knowledge] 读取工具画像快照失败，使用默认描述:", error.message);
+  }
+  const retrievalPlan = buildRetrievalPlan({
+    query: retrievalQuery,
+    conversationContext: retrievalAnchor.conversationContext,
+    knowledgeProfile,
+    indexVersion: knowledgeIndexVersion,
+    webEnabled: enableWebSearch,
+  });
   // 有哪些工具
-  const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile });
+  const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
   // 给模型看的工具说明
-  const tools = toolRegistry
-    .listForModel()
-    .filter((tool) => enableWebSearch || tool.name !== "web_search");
+  const tools = filterToolsForRetrievalRoute(
+    toolRegistry.listForModel(),
+    retrievalPlan.route,
+    { webEnabled: enableWebSearch },
+  );
   const approvedPlan = body.approvedPlan === undefined
     ? undefined
     : normalizeExecutionPlan(body.approvedPlan, new Set(tools.map((tool) => tool.name)));
@@ -236,6 +318,7 @@ export async function POST(req: Request) {
   const readable = new ReadableStream({
     async start(controller) {
       let closed = false;
+      let pendingTrace: AgentTrace | undefined;
       const enqueueText = (text: string) => {
         if (closed || req.signal.aborted) return false;
         try {
@@ -261,6 +344,13 @@ export async function POST(req: Request) {
           closed = true;
         }
       };
+      const savePendingTrace = async () => {
+        const trace = pendingTrace;
+        pendingTrace = undefined;
+        if (!trace) return;
+        await saveTrace(trace, user.id).catch((error: any) =>
+          console.error("[trace] 保存失败，跳过:", error.message));
+      };
 
       await startActiveObservation("agent-chat", async (langfuseTrace) => {
         const traceInput = buildLangfuseTraceInput({
@@ -270,7 +360,9 @@ export async function POST(req: Request) {
           model: selectedModel,
           messages: modelMessages,
         });
-        const traceDisplayInput = traceInput.query || "(空消息)";
+        const safeTraceInput = redactSensitiveValue(traceInput);
+        const safeRetrievalPlan = redactSensitiveValue(retrievalPlan);
+        const traceDisplayInput = safeTraceInput.query || "(空消息)";
         langfuseTrace.update({
           input: traceDisplayInput,
           metadata: {
@@ -278,7 +370,8 @@ export async function POST(req: Request) {
             sessionId,
             userId: user.id,
             model: selectedModel,
-            traceInput,
+            traceInput: safeTraceInput,
+            retrievalPlan: safeRetrievalPlan,
           },
         });
         langfuseTrace.setTraceIO({ input: traceDisplayInput });
@@ -296,43 +389,7 @@ export async function POST(req: Request) {
       try {
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖
-        let loopMessages = [...modelMessages];
-        if (sessionId && messages.length === 1) {
-          try {
-            let history = await sessionStore.getHistory(user.id, sessionId);
-            if (history.length === 0) {
-              const restoredHistory = await restoreSessionHistoryFromDatabase({
-                userId: user.id,
-                sessionId,
-              });
-              if (restoredHistory.length > 0) {
-                const currentUserContent = modelMessages[0]?.content;
-                history = restoredHistory.filter(
-                  (message, index) =>
-                    !(
-                      index === restoredHistory.length - 1 &&
-                      message.role === "user" &&
-                      message.content === currentUserContent
-                    ),
-                );
-                await hydrateRedisSessionHistory({
-                  userId: user.id,
-                  sessionId,
-                  history,
-                });
-              }
-            }
-            if (history.length > 0) {
-              // 把 Redis 里的历史拼在本轮消息前面
-              loopMessages = [
-                ...history.slice(-SESSION_FALLBACK_MESSAGE_LIMIT),
-                ...modelMessages,
-              ];
-            }
-          } catch (e: any) {
-            console.error("[session] 读取历史失败，跳过:", e.message);
-          }
-        }
+        let loopMessages = [...hydratedLoopMessages];
 
         console.log("[chat] loopMessages 实际发送给 Agent:", previewLoopMessages(loopMessages));
 
@@ -355,7 +412,9 @@ export async function POST(req: Request) {
         const prompt = buildPromptPipe({
           userMessage: lastUser?.content ?? "",
           memory: memorySystem,
-          webSearchEnabled: enableWebSearch,
+          webSearchEnabled:
+            retrievalPlan.route === "web" || retrievalPlan.route === "both",
+          retrievalPlan,
           currentDate: new Date().toISOString(),
           maxTokens: 4200,
         });
@@ -389,6 +448,7 @@ export async function POST(req: Request) {
           systemSegments,
           userId: user.id,
           model: selectedModel,
+          retrievalPlan,
           shouldStop: () => req.signal.aborted || closed,
           onProgress: (plan: PlanProgressEventData) => enqueueEvent({ type: "plan_progress", plan }, enqueueText),
         };
@@ -447,10 +507,9 @@ export async function POST(req: Request) {
           selectedModel,
           systemSegments, // 段化结构，写进 trace 供详情页按段展示
           user.id,
+          retrievalPlan,
         );
-        void saveTrace(agentLoopResult.trace, user.id).catch((e: any) =>
-          console.error("[trace] 保存失败，跳过:", e.message),
-        );
+        pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
 
         // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
@@ -462,16 +521,17 @@ export async function POST(req: Request) {
 
         if (agentLoopResult.completed) {
           const assistantMessage = extractLastAssistantText(agentLoopResult.loopMessages);
+          const safeAssistantMessage = redactSensitiveValue(assistantMessage);
           langfuseTrace.update({
             output: {
               completed: true,
               stopReason: agentLoopResult.stopReason,
-              assistantMessage,
+              assistantMessage: safeAssistantMessage,
             },
           });
           langfuseTrace.setTraceIO({
             input: traceDisplayInput,
-            output: assistantMessage,
+            output: safeAssistantMessage,
           });
           void persistSessionTurn({
             userId: user.id,
@@ -481,6 +541,7 @@ export async function POST(req: Request) {
           }).catch((e: any) =>
             console.error("[session] 写入历史失败:", e.message),
           );
+          await savePendingTrace();
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
@@ -495,6 +556,10 @@ export async function POST(req: Request) {
           enqueueTextEvent("\n\n检测到重复工具调用，我会基于当前结果总结。\n\n");
         }
         let finalAssistantText = "";
+        const evidenceBundles = agentLoopResult.evidenceBundles ?? [];
+        const evidenceRequired = retrievalPlan.evidenceRequired;
+        const shouldValidateEvidence = evidenceRequired
+          || mergeEvidenceBundles(evidenceBundles).length > 0;
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
         stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel, {
@@ -511,7 +576,7 @@ export async function POST(req: Request) {
           stream,
           (text) => {
             finalAssistantText += text;
-            return enqueueTextEvent(text);
+            return shouldValidateEvidence ? true : enqueueTextEvent(text);
           },
           () => req.signal.aborted || closed,
         );
@@ -522,15 +587,35 @@ export async function POST(req: Request) {
             output: {
               completed: false,
               stopReason: "aborted",
-              assistantMessage: finalAssistantText,
+              assistantMessage: redactSensitiveValue(finalAssistantText),
             },
           });
           langfuseTrace.setTraceIO({
             input: traceDisplayInput,
-            output: finalAssistantText,
+            output: redactSensitiveValue(finalAssistantText),
           });
+          await savePendingTrace();
           closeStream();
           return;
+        }
+        if (shouldValidateEvidence) {
+          const validationStartedAt = Date.now();
+          const report = verifyGroundedAnswer(
+            finalAssistantText,
+            evidenceBundles,
+            { evidenceRequired },
+          );
+          const guardedText = applyGroundednessGuard(finalAssistantText, report);
+          agentLoopResult.trace.steps.push({
+            type: "answer_validation",
+            index: agentLoopResult.trace.steps.length,
+            startedAt: validationStartedAt,
+            durationMs: Date.now() - validationStartedAt,
+            report,
+            guarded: guardedText !== finalAssistantText,
+          });
+          finalAssistantText = guardedText;
+          enqueueTextEvent(finalAssistantText);
         }
         if (allToolSources.length > 0) {
           enqueueSources(allToolSources, enqueueText);
@@ -552,17 +637,22 @@ export async function POST(req: Request) {
           output: {
             completed: true,
             stopReason: finalStopReason ?? "end_turn",
-            assistantMessage: finalAssistantText,
+            assistantMessage: redactSensitiveValue(finalAssistantText),
           },
         });
         langfuseTrace.setTraceIO({
           input: traceDisplayInput,
-          output: finalAssistantText,
+          output: redactSensitiveValue(finalAssistantText),
         });
+        agentLoopResult.trace.endedAt = Date.now();
+        agentLoopResult.trace.totalDurationMs =
+          agentLoopResult.trace.endedAt - agentLoopResult.trace.startedAt;
+        await savePendingTrace();
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();
       } catch (error: any) {
+        await savePendingTrace();
         if (req.signal.aborted || closed) {
           langfuseTrace.update({
             output: {

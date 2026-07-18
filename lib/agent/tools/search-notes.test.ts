@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  RAGSearchOptions,
   RAGSearchResponse,
   SearchResult,
 } from "@/lib/knowledge/retriever";
+import { QueryResultCache } from "@/lib/agent/rag/query-cache";
+import {
+  AGENTIC_RAG_VERSION,
+  type RetrievalPlan,
+} from "@/lib/agent/rag/types";
 import { createSearchNotesTool } from "./search-notes";
 
 function searchResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -40,6 +46,7 @@ function response(
       effectiveMatchCount: 5,
       candidateLimit: 20,
       candidateCount: results.length,
+      filteredCandidateCount: results.length,
       vectorCandidateCount: results.length,
       keywordCandidateCount: 0,
       mergedCandidateCount: results.length,
@@ -62,19 +69,61 @@ function response(
         vectorSearchMs: 0,
         keywordSearchMs: 0,
         parallelRecallMs: 0,
+        fusionMs: 0,
+        ruleRerankMs: 0,
         crossEncoderMs: 0,
+        mmrMs: 0,
+        embeddingCacheHits: 0,
+        embeddingCacheMisses: 1,
         totalMs: 0,
       },
     },
   };
 }
 
-describe("search_notes bounded fallback", () => {
+function retrievalPlan(queries: string[]): RetrievalPlan {
+  return {
+    id: "retrieval-test",
+    version: AGENTIC_RAG_VERSION,
+    route: "knowledge",
+    originalQuery: queries[0],
+    standaloneQuery: queries[0],
+    queryType: "semantic",
+    reason: "test",
+    confidence: 1,
+    evidenceRequired: true,
+    maxAttempts: 2,
+    indexVersion: "index-test",
+    steps: queries.map((query, index) => ({
+      id: `knowledge-${index + 1}`,
+      source: "knowledge",
+      query,
+      purpose: index === 0 ? "primary_retrieval" : "multi_hop_or_rewrite",
+    })),
+    createdAt: "2026-07-17T00:00:00.000Z",
+  };
+}
+
+function createTestTool(
+  searchWithDebug: (
+    query: string,
+    options?: RAGSearchOptions,
+  ) => Promise<RAGSearchResponse>,
+  plan?: RetrievalPlan,
+) {
+  return createSearchNotesTool({
+    retriever: { searchWithDebug },
+    retrievalPlan: plan,
+    cache: new QueryResultCache<RAGSearchResponse>(),
+  });
+}
+
+describe("search_notes bounded evidence loop", () => {
   it("does not retry when primary retrieval returns evidence", async () => {
     const searchWithDebug = vi.fn().mockResolvedValue(
       response([searchResult()], 0.5),
     );
-    const tool = createSearchNotesTool({ retriever: { searchWithDebug } });
+    const tool = createTestTool(searchWithDebug);
 
     const result = await tool.execute(
       { query: "RAG 是什么" },
@@ -95,7 +144,7 @@ describe("search_notes bounded fallback", () => {
     });
   });
 
-  it("uses a bounded non-zero threshold and limits fallback results", async () => {
+  it("retries a planned query without lowering the threshold", async () => {
     const fallbackResult = searchResult({
       similarity: 0.45,
       vectorScore: 0.45,
@@ -105,8 +154,11 @@ describe("search_notes bounded fallback", () => {
     const searchWithDebug = vi
       .fn()
       .mockResolvedValueOnce(response([], 0.5))
-      .mockResolvedValueOnce(response([fallbackResult], 0.4));
-    const tool = createSearchNotesTool({ retriever: { searchWithDebug } });
+      .mockResolvedValueOnce(response([fallbackResult], 0.5));
+    const tool = createTestTool(
+      searchWithDebug,
+      retrievalPlan(["RAG 是什么", "检索增强生成 原理"]),
+    );
 
     const result = await tool.execute(
       { query: "RAG 是什么", limit: 10 },
@@ -118,14 +170,15 @@ describe("search_notes bounded fallback", () => {
       matchCount: 5,
     });
     expect(searchWithDebug.mock.calls[1][1]).toMatchObject({
-      matchThreshold: 0.4,
-      matchCount: 3,
+      matchThreshold: 0.5,
+      matchCount: 5,
     });
     expect(searchWithDebug.mock.calls[1][1].matchThreshold).toBeGreaterThan(0);
     expect(result.metadata).toMatchObject({
       ragReturnedCount: 1,
-      ragUsedFallback: true,
-      ragFallbackReason: "primary_no_results",
+      ragThresholdFallback: false,
+      ragRetryCount: 1,
+      ragRetryReason: "planner_secondary_query",
     });
   });
 
@@ -149,7 +202,7 @@ describe("search_notes bounded fallback", () => {
         }),
       ], 0.5),
     );
-    const tool = createSearchNotesTool({ retriever: { searchWithDebug } });
+    const tool = createTestTool(searchWithDebug);
 
     const result = await tool.execute(
       { query: "RAG 是什么", limit: 100 },
@@ -180,7 +233,7 @@ describe("search_notes bounded fallback", () => {
         }),
       ], 0.5),
     );
-    const tool = createSearchNotesTool({ retriever: { searchWithDebug } });
+    const tool = createTestTool(searchWithDebug);
 
     const result = await tool.execute(
       { query: "RAG 是什么" },
@@ -201,8 +254,11 @@ describe("search_notes bounded fallback", () => {
     const searchWithDebug = vi
       .fn()
       .mockResolvedValueOnce(response([], 0.5))
-      .mockResolvedValueOnce(response([weakResult], 0.4));
-    const tool = createSearchNotesTool({ retriever: { searchWithDebug } });
+      .mockResolvedValueOnce(response([weakResult], 0.5));
+    const tool = createTestTool(
+      searchWithDebug,
+      retrievalPlan(["不存在的资料", "不存在资料 精确记录"]),
+    );
 
     const result = await tool.execute(
       { query: "不存在的资料" },
@@ -210,19 +266,69 @@ describe("search_notes bounded fallback", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.content).toBe("没有找到相关笔记");
+    expect(result.content).toBe("没有找到足以支持回答的个人知识库证据");
     expect(result.metadata).toMatchObject({
       ragReturnedCount: 0,
-      ragUsedFallback: true,
+      ragThresholdFallback: false,
+      ragRetryCount: 1,
       ragAttempts: [
-        { label: "primary", acceptedCount: 0 },
+        { attempt: 1, acceptedCount: 0, threshold: 0.5 },
         {
-          label: "bounded_fallback",
+          attempt: 2,
           returnedCount: 1,
           acceptedCount: 0,
           rejectedCount: 1,
+          threshold: 0.5,
         },
       ],
+    });
+  });
+
+  it("returns individually accepted evidence even when overall sufficiency is weak", async () => {
+    const weakButAccepted = searchResult({
+      content: "alpha",
+      similarity: 0.52,
+      vectorScore: 0.52,
+      combinedScore: 0.52,
+      rerankScore: 0.52,
+    });
+    const searchWithDebug = vi.fn().mockResolvedValue(
+      response([weakButAccepted], 0.5),
+    );
+    const tool = createTestTool(searchWithDebug);
+
+    const result = await tool.execute(
+      { query: "alpha beta gamma delta epsilon" },
+      { userId: "user-1" },
+    );
+
+    expect(result.metadata).toMatchObject({
+      ragReturnedCount: 1,
+      evidenceSufficient: false,
+    });
+    expect(result.content).toContain("整体证据充分性不足");
+    expect((result.data as { results: unknown[] }).results).toHaveLength(1);
+  });
+
+  it("keeps planner filters authoritative while accepting extra tool filters", async () => {
+    const searchWithDebug = vi.fn().mockResolvedValue(
+      response([searchResult()], 0.5),
+    );
+    const plan = retrievalPlan(["RAG 是什么"]);
+    plan.steps[0].filters = { titleContains: "Planner 标题" };
+    const tool = createTestTool(searchWithDebug, plan);
+
+    await tool.execute({
+      query: "RAG 是什么",
+      filters: {
+        titleContains: "模型覆盖标题",
+        sourceTypes: ["document"],
+      },
+    }, { userId: "user-1" });
+
+    expect(searchWithDebug.mock.calls[0][1]?.filters).toEqual({
+      titleContains: "Planner 标题",
+      sourceTypes: ["document"],
     });
   });
 });

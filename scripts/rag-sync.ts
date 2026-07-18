@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { syncNotionPageTree, syncNotionPages } from "../lib/knowledge/sync";
+import { enqueueKnowledgeProfileRefresh } from "../lib/agent/tools/knowledge-profile";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
@@ -41,6 +42,8 @@ async function main() {
     }
     process.exit(1);
   }
+
+  await enqueueKnowledgeProfileRefresh({ userId });
 
   console.log("\n所有页面同步成功");
 }

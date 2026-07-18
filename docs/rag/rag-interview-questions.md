@@ -78,7 +78,7 @@
 ### Q9. 检索没有命中任何结果时，你的系统怎么办？
 
 - **想听**：这是「诚实性」设计题。宁可返回「没找到」也不要降阈值硬塞——低相关内容进上下文，模型会基于噪声编造。
-- **项目落点**：项目已移除 threshold=0 兜底。当前首次按 0.5 检索；无结果时最多降到 0.4、最多取 3 条，并要求综合证据分不低于 0.28，否则明确返回无结果。两次尝试和弱证据拒绝数量会写入 RAG metadata。
+- **项目落点**：项目已移除 threshold=0 和降阈值兜底。显式 Query Planner 最多给出两条 query，两次都使用同一个全局阈值；Evidence Grader 根据分数、query coverage、双路召回一致性和 score gap 判断证据是否充分，不充分就明确返回无证据。query attempts、拒绝数量和 `thresholdFallback=false` 会写入 Trace。
 - **Senior 信号**：主动讲出「给模型坏证据比不给证据更糟」。
 
 ### Q10. 多租户下怎么做数据隔离？向量检索层怎么保证 A 用户查不到 B 用户的笔记？
@@ -167,7 +167,7 @@
 
 - **回答思路**：阈值 0 会把“库里最像的内容”误当成“足够相关的内容”，尤其会破坏 no-result 问题；模型看到低质量证据后更容易产生有引用外观的幻觉。
 - **改进方案**：设置二级阈值下限；增加 top1 绝对分数、top1-top2 gap 和规则 rerank 门槛；无结果时允许 Agent 改写 query 重试一次；仍不达标则返回没有证据。
-- **项目落点**：当前已经落地受控二级召回（0.5 → 0.4）和最低证据分 0.28，并通过 `ragAttempts/ragUsedFallback` 在 Trace 中展示。后续仍应使用扩大后的 no-result eval 校准这些参数，而不是把当前数值视为永久常量。
+- **项目落点**：当前是固定阈值、最多两条计划 query 和显式 Evidence Grader；Trace 记录 `queryAttempts`、`scoreGap`、`degradationReason` 和 `thresholdFallback`。后续仍应使用扩大的 no-result eval 校准 Grader，而不是把规则门槛视为永久常量。
 - **验证指标**：no-result accuracy、误召回率、groundedness，而不只是 Recall@K。
 
 ### Q24. 为什么同步必须原子替换？当前项目是怎么实现的？
@@ -211,7 +211,7 @@
 ### Q30. Recall@K、Precision@K、MRR、nDCG 分别回答什么问题？
 
 - **回答思路**：Recall@K 看相关证据是否进入前 K；Precision@K 看返回结果中有多少相关；MRR 强调第一个正确结果的位置；nDCG 适合多个结果具有不同相关等级的排序质量。不能只报一个 pass rate。
-- **项目落点**：当前脚本已有 Recall@K、MRR、关键词覆盖率、no-result accuracy 和平均延迟；尚缺分级 relevance label，因此暂时不能严谨计算 nDCG。
+- **项目落点**：当前脚本已有 Recall@K、MRR、二元 relevance 的 nDCG@K、关键词覆盖率、no-result accuracy 和平均延迟；尚缺 0/1/2/3 分级 relevance label，因此不能把当前 nDCG 当作多级相关性的完整评估。
 
 ### Q31. 如何构建一个可信的 RAG Golden Set？
 
@@ -311,7 +311,7 @@
 ### Q48. Self-RAG / CRAG 这类「自我纠错检索」的核心思想是什么？和你项目的受控 fallback 有什么关系？
 
 - **想听**：把「检索质量」本身变成被评估和决策的对象。Self-RAG 训练模型输出反思 token 决定要不要检索、检索结果是否相关、生成是否有据；CRAG 用一个轻量评估器给检索结果打分，按「正确/含糊/错误」分流——错误时丢弃并改走 web search 或 query 改写重试。共同点是：检索不再是「查一次就用」的管道，而是带质量门控的循环。
-- **项目落点**：本项目的两级阈值 + 证据分门槛（0.5 → 0.4 + evidence ≥ 0.28）+ 拒绝弱证据，就是 CRAG 评估器的规则版；Agentic RAG 里模型看到「没找到」后自己改写 query 重试，就是 Self-RAG 反思循环的工具化实现。能把论文思想映射回自己的工程决策，比复述论文本身值钱得多。
+- **项目落点**：本项目用 Retrieval Router、最多两条计划 query、固定阈值和 Evidence Grader 做 CRAG 风格的规则闭环；弱证据不会因为无结果而放宽门槛。回答后还执行 claim-level citation 与 groundedness 检查。它仍是确定性规则版，不等于训练式 Self-RAG/CRAG evaluator。
 - **追问**：规则门槛和训练出来的评估器，边界在哪？（规则只能看分数分布，评估器能看内容相关性；但评估器自己也要评测和维护）
 
 ### Q49. 除了固定字符数切块，前沿的分块方案有哪些？各自解决什么问题？
@@ -342,7 +342,7 @@
 
 - **想听**：所有问题都走同一条检索链路既浪费又不稳定。简单常识题可能不需要检索；单事实题一次检索足够；多跳题需要「推理一步、检索一步」。Adaptive-RAG 用问题复杂度路由不同策略，FLARE 一类 Active Retrieval 则在生成过程中根据低置信内容触发补充检索；更新的 self-routing / multi-round RAG 进一步学习是否继续搜索以及何时停止。
 - **关键难点**：路由器的 false negative 比 false positive 更危险。不该跳过检索却跳过，会直接失去事实依据；多检索一次通常只是增加延迟和成本。因此需要按风险设置不对称阈值，并记录 `route/retrievalRounds/stopReason`，分别评估质量、p95 延迟和 token 成本。
-- **项目落点**：当前主要依靠模型结合 `search_notes` 描述和 knowledge-profile 自主决定是否调用；工具内部是 primary + bounded fallback 两级尝试，但没有显式的问题复杂度分类、最大检索轮数和停止策略。下一步应先把路由决策和轮数写入 Trace，再用 direct/no-result/multi-hop case 评估，而不是直接增加一个路由模型。
+- **项目落点**：当前聊天入口在 Agent Loop 前执行显式 Router，输出 `no_retrieval/knowledge/web/both`，再过滤模型可见工具；Query Planner 负责 standalone query、时间/页面过滤和 multi-hop 拆分，单个检索工具每轮只允许调用一次，工具内部最多两条 query。路由 precision/recall 有独立离线数据集和 CI 门槛。
 - **追问**：路由器应该用规则、小模型还是主模型？（先用可解释规则和现有主模型日志建立标签；流量和成本足够大时再训练小模型，且必须保留高风险问题的强制检索策略）
 
 ### Q54. 实时 RAG / Temporal RAG 和普通的「定时重建索引」有什么不同？
@@ -428,7 +428,7 @@
 | Cross-Encoder | `lib/knowledge/reranker.ts` | 通用 HTTP provider、响应完整性校验、超时与规则降级 |
 | 关键词 SQL | `docs/schemas/migrations/20260704-rag-keyword-search.sql` | Postgres FTS、LIKE/overlap 中文兜底、用户过滤 |
 | 多租户 | `docs/schemas/migrations/20260628-rag-multitenant.sql` | user_id、RPC pre-filter、HNSW、级联删除 |
-| Agent 工具 | `lib/agent/tools/search-notes.ts` | 工具路由、阈值 fallback、RAG debug metadata |
+| Agent 工具 | `lib/agent/tools/search-notes.ts` | 固定阈值检索、有限 query retry、EvidenceBundle 与 RAG debug metadata |
 | 知识库画像 | `lib/agent/tools/knowledge-profile.ts` | wiki summary 压缩、source hash 缓存和持久化 |
 | 评测数据 | `lib/agent/eval/rag-cases.ts` | 六类 case 结构、当前规模限制 |
 | 评测脚本 | `scripts/rag-eval.ts` | Recall@K/MRR/no-result、RRF/weighted、multi-query 和 Cross-Encoder 消融 |

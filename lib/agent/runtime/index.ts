@@ -28,6 +28,16 @@ import {
 } from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
 import { ragConfig } from "@/lib/platform/config";
+import {
+  applyGroundednessGuard,
+  verifyGroundedAnswer,
+} from "@/lib/agent/rag/answer-verifier";
+import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
+import {
+  isEvidenceBundle,
+  type EvidenceBundle,
+  type RetrievalPlan,
+} from "@/lib/agent/rag/types";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -55,6 +65,7 @@ import type {
   AgentTrace,
   ContextCompactionTraceStep,
   ModelTraceStep,
+  RetrievalTraceStep,
   ToolTraceStep,
 } from "@/lib/agent/runtime/trace";
 
@@ -72,6 +83,7 @@ export type AgentLoopResult = {
   stopReason: AgentLoopStopReason;
   metrics: AgentLoopMetrics;
   trace: AgentTrace;
+  evidenceBundles?: EvidenceBundle[];
 };
 
 export interface ToolSourceType {
@@ -476,11 +488,16 @@ export async function executeTools(
   userId?: string,
   requestId?: string,
   conversationContext?: string[],
+  precomputedResults: Map<
+    string,
+    Awaited<ReturnType<typeof executeToolCall>>
+  > = new Map(),
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
   const toolCalls: ToolCallEventData[] = [];
   const toolSteps: ToolTraceStep[] = [];
+  const evidenceBundles: EvidenceBundle[] = [];
   const toolMetrics: Array<{
     name: string;
     durationMs?: number;
@@ -497,6 +514,11 @@ export async function executeTools(
 
   toolUses.forEach((toolUse, index) => {
     originalIndexById.set(toolUse.id, index);
+    const precomputed = precomputedResults.get(toolUse.id);
+    if (precomputed) {
+      duplicateExecutionResults.push({ toolUse, toolResult: precomputed });
+      return;
+    }
     const key = getToolCallKey(toolUse);
     if (seenBatchKeys.has(key)) {
       duplicateExecutionResults.push({
@@ -551,6 +573,14 @@ export async function executeTools(
       durationMs,
       costPerUse,
     });
+    if (
+      toolResult.data
+      && typeof toolResult.data === "object"
+      && "evidenceBundle" in toolResult.data
+      && isEvidenceBundle(toolResult.data.evidenceBundle)
+    ) {
+      evidenceBundles.push(toolResult.data.evidenceBundle);
+    }
     if (
       toolUse.name === "search_notes" &&
       toolResult.ok &&
@@ -717,6 +747,7 @@ export async function executeTools(
     toolCalls,
     toolMetrics,
     toolSteps,
+    evidenceBundles,
   };
 }
 
@@ -925,12 +956,32 @@ export async function runAgentLoop(
     metadata?: Record<string, unknown>;
   }>,
   userId?: string,
+  retrievalPlan?: RetrievalPlan,
+  initialEvidenceBundles: EvidenceBundle[] = [],
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
   const tokenBudget = new TokenBudget(AGENT_LOOP_TOKEN_BUDGET);
   const trace = createTrace(requestId, sessionId);
   let stepIndex = 0; // model/tool step 共享的全局递增序号
+  const evidenceBundles: EvidenceBundle[] = [...initialEvidenceBundles];
+  const retrievalToolCalls = new Map<string, number>();
+  if (retrievalPlan) {
+    trace.steps.push({
+      type: "retrieval",
+      phase: "routed",
+      index: stepIndex++,
+      startedAt: Date.now(),
+      planId: retrievalPlan.id,
+      route: retrievalPlan.route,
+      reason: retrievalPlan.reason,
+      confidence: retrievalPlan.confidence,
+      evidenceRequired: retrievalPlan.evidenceRequired,
+      maxAttempts: retrievalPlan.maxAttempts,
+      indexVersion: retrievalPlan.indexVersion,
+      query: retrievalPlan.standaloneQuery,
+    });
+  }
   let lastCompactedMessageCount: number | undefined;
   const metrics: AgentLoopMetrics = {
     estimatedTokensSpent: 0,
@@ -1138,8 +1189,17 @@ export async function runAgentLoop(
     );
     const modelStartedAt = Date.now();
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
-    const onTextDelta = (text: string) =>
-      enqueueEvent({ type: "text", content: text }, enqueueText);
+    const evidenceRequired = retrievalPlan?.evidenceRequired === true;
+    const shouldBufferEvidenceAnswer = evidenceRequired
+      || mergeEvidenceBundles(evidenceBundles).length > 0;
+    let bufferedEvidenceText = "";
+    const onTextDelta = (text: string) => {
+      if (shouldBufferEvidenceAnswer) {
+        bufferedEvidenceText += text;
+        return true;
+      }
+      return enqueueEvent({ type: "text", content: text }, enqueueText);
+    };
     const loopTelemetry = buildAgentLoopTelemetry({
       messages: loopMessages,
     });
@@ -1267,13 +1327,36 @@ export async function runAgentLoop(
       };
     }
     if (toolUses.length === 0) {
-      // 文本已在 callModel 流式过程中逐 token 推出，这里只处理来源
+      let finalText = directText;
+      if (shouldBufferEvidenceAnswer) {
+        const validationStartedAt = Date.now();
+        const report = verifyGroundedAnswer(
+          finalText || bufferedEvidenceText,
+          evidenceBundles,
+          { evidenceRequired },
+        );
+        const guardedText = applyGroundednessGuard(finalText || bufferedEvidenceText, report);
+        const guarded = guardedText !== (finalText || bufferedEvidenceText);
+        finalText = guardedText;
+        trace.steps.push({
+          type: "answer_validation",
+          index: stepIndex++,
+          startedAt: validationStartedAt,
+          durationMs: Date.now() - validationStartedAt,
+          report,
+          guarded,
+        });
+        enqueueEvent({ type: "text", content: finalText }, enqueueText);
+      }
       if (allToolSources.length > 0) {
         enqueueSources(allToolSources, enqueueText);
       }
       loopMessages = [
         ...loopMessages,
-        { role: "assistant" as const, content: initialResponse.content },
+        {
+          role: "assistant" as const,
+          content: shouldBufferEvidenceAnswer ? finalText : initialResponse.content,
+        },
       ];
       return {
         loopMessages,
@@ -1281,9 +1364,40 @@ export async function runAgentLoop(
         stopReason: "completed",
         metrics,
         trace: finalizeTrace("completed", true),
+        evidenceBundles,
       };
     }
-    const toolCallKeys = toolUses.map(getToolCallKey);
+    const budgetSkippedResults = new Map<
+      string,
+      Awaited<ReturnType<typeof executeToolCall>>
+    >();
+    for (const toolUse of toolUses) {
+      if (
+        toolUse.name !== "search_notes"
+        && toolUse.name !== "web_search"
+        && toolUse.name !== "web_fetch"
+      ) continue;
+      const used = retrievalToolCalls.get(toolUse.name) ?? 0;
+      // search_notes/web_search 自身执行最多两条计划 query；同一工具只允许模型调用一次。
+      const limit = toolUse.name === "web_fetch" ? 2 : 1;
+      if (used >= limit) {
+        budgetSkippedResults.set(toolUse.id, {
+          ok: true,
+          toolName: toolUse.name,
+          toolCallId: toolUse.id,
+          content: `${toolUse.name} 已达到本轮检索预算 ${limit} 次，本次调用已跳过；请使用已有证据继续回答。`,
+          metadata: {
+            status: "retrieval_budget_skipped",
+            retrievalBudget: limit,
+          },
+        });
+        continue;
+      }
+      retrievalToolCalls.set(toolUse.name, used + 1);
+    }
+    const executableToolUses = toolUses.filter((toolUse) =>
+      !budgetSkippedResults.has(toolUse.id));
+    const toolCallKeys = executableToolUses.map(getToolCallKey);
     const hasRepeatedToolCall = toolCallKeys.some((key) =>
       seenToolCalls.has(key),
     );
@@ -1315,6 +1429,7 @@ export async function runAgentLoop(
       toolCalls,
       toolMetrics,
       toolSteps,
+      evidenceBundles: newEvidenceBundles,
     } = await executeTools(
       toolUses,
       toolRegistry,
@@ -1322,6 +1437,7 @@ export async function runAgentLoop(
       userId,
       requestId,
       buildToolConversationContext(loopMessages),
+      budgetSkippedResults,
     );
     if (shouldStop()) {
       return {
@@ -1346,6 +1462,51 @@ export async function runAgentLoop(
     for (const step of toolSteps) {
       step.index = stepIndex++;
       trace.steps.push(step);
+    }
+    evidenceBundles.push(...newEvidenceBundles);
+    for (const bundle of newEvidenceBundles) {
+      const thresholds = bundle.attempts.flatMap((attempt) =>
+        typeof attempt.threshold === "number" ? [attempt.threshold] : []);
+      const thresholdFallback = thresholds.slice(1).some(
+        (threshold) => threshold < thresholds[0],
+      );
+      const timings = bundle.attempts.reduce<Record<string, number>>(
+        (total, attempt) => {
+          for (const [phase, duration] of Object.entries(attempt.timings ?? {})) {
+            if (Number.isFinite(duration)) total[phase] = (total[phase] ?? 0) + duration;
+          }
+          return total;
+        },
+        {},
+      );
+      const retrievalStep: RetrievalTraceStep = {
+        type: "retrieval",
+        phase: "graded",
+        index: stepIndex++,
+        startedAt: Date.now(),
+        planId: bundle.planId ?? retrievalPlan?.id ?? "unplanned",
+        route: bundle.route,
+        reason: bundle.grade.reason,
+        evidenceRequired: retrievalPlan?.evidenceRequired,
+        maxAttempts: retrievalPlan?.maxAttempts ?? 2,
+        indexVersion: bundle.indexVersion,
+        source: bundle.evidences[0]?.source ?? bundle.attempts[0]?.source,
+        query: bundle.query,
+        filters: retrievalPlan?.steps.find(
+          (step) => step.source === (bundle.attempts[0]?.source ?? bundle.evidences[0]?.source),
+        )?.filters,
+        evidenceCount: bundle.evidences.length,
+        grade: bundle.grade,
+        cacheHits: bundle.attempts.filter((attempt) => attempt.cacheHit).length,
+        queryAttempts: bundle.attempts.length,
+        thresholdFallback,
+        scoreGap: bundle.grade.scoreGap,
+        degradationReason: bundle.grade.sufficient ? undefined : bundle.grade.reason,
+        attempts: bundle.attempts,
+        timings,
+        durationMs: timings.totalMs,
+      };
+      trace.steps.push(retrievalStep);
     }
     // 每个工具调用发一个 tool_call 事件（替代旧的 __TOOL_CALL__ marker 字符串）
     for (const tc of toolCalls) {

@@ -33,3 +33,19 @@ export async function GET(
 
   return Response.json({ trace: data });
 }
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: { id: string } },
+) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+
+  const { error } = await getSupabase()
+    .from("agent_traces")
+    .delete()
+    .eq("id", params.id)
+    .eq("user_id", user.id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ deleted: true });
+}

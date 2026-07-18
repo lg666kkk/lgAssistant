@@ -16,6 +16,9 @@ import type {
   PlanStepData,
 } from "@/lib/agent/runtime/events";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
+import type { RetrievalPlan } from "@/lib/agent/rag/types";
+import { scopeRetrievalPlanToTools } from "@/lib/agent/rag/retrieval-router";
+import type { EvidenceBundle } from "@/lib/agent/rag/types";
 import { startActiveObservation } from "@langfuse/tracing";
 
 type ModelMessage = Anthropic.MessageParam;
@@ -42,6 +45,7 @@ export type PlanAndExecuteInput = {
   }>;
   userId?: string;
   model?: ChatModelId;
+  retrievalPlan?: RetrievalPlan;
   shouldStop?: () => boolean;
   onProgress?: (progress: PlanProgressEventData) => void;
 };
@@ -429,6 +433,9 @@ export async function executePlan(
   const startAtStep = control.startAtStep ?? 0;
   const skipStepIds = new Set(control.skipStepIds ?? []);
   const priorStepResults = control.priorStepResults ?? [];
+  const evidenceBundles: EvidenceBundle[] = [];
+  const evidenceBundleIds = new Set<string>();
+  const usedRetrievalTools = new Map<string, number>();
 
   trace.steps.push(planTraceStep({
     planId: plan.id,
@@ -503,7 +510,16 @@ export async function executePlan(
     };
     emit("running");
     const started = Date.now();
-    const allowedTools = input.tools.filter((tool) => step.allowedTools.includes(tool.name));
+    const allowedTools = input.tools.filter((tool) =>
+      step.allowedTools.includes(tool.name)
+      && !(
+        (tool.name === "search_notes" || tool.name === "web_search" || tool.name === "web_fetch")
+        && (usedRetrievalTools.get(tool.name) ?? 0) >= (tool.name === "web_fetch" ? 2 : 1)
+      ));
+    const stepRetrievalPlan = scopeRetrievalPlanToTools(
+      input.retrievalPlan,
+      allowedTools.map((tool) => tool.name),
+    );
     const result = await runAgentLoop(
       loopMessages,
       allowedTools,
@@ -519,9 +535,31 @@ export async function executePlan(
       input.model ?? defaultChatModel,
       input.systemSegments,
       input.userId,
+      stepRetrievalPlan,
+      stepRetrievalPlan ? evidenceBundles : [],
     );
     loopMessages = result.loopMessages;
     addMetrics(metrics, result.metrics);
+    for (const bundle of result.evidenceBundles ?? []) {
+      if (evidenceBundleIds.has(bundle.bundleId)) continue;
+      evidenceBundleIds.add(bundle.bundleId);
+      evidenceBundles.push(bundle);
+    }
+    for (const traceStep of result.trace.steps) {
+      if (
+        traceStep.type === "tool"
+        && (
+          traceStep.name === "search_notes"
+          || traceStep.name === "web_search"
+          || traceStep.name === "web_fetch"
+        )
+      ) {
+        usedRetrievalTools.set(
+          traceStep.name,
+          (usedRetrievalTools.get(traceStep.name) ?? 0) + 1,
+        );
+      }
+    }
     trace.steps.push(...reindexTraceSteps(result.trace.steps, trace.steps.length));
 
     const output = extractLastAssistantText(loopMessages);
@@ -576,5 +614,6 @@ export async function executePlan(
     stopReason: "completed",
     metrics,
     trace,
+    evidenceBundles,
   };
 }

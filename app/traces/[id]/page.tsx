@@ -99,7 +99,67 @@ type PlanStep = {
   failureReason?: string;
 };
 
-type Step = ModelStep | ToolStep | ContextCompactionStep | PlanStep;
+type RetrievalStep = {
+  type: "retrieval";
+  index: number;
+  durationMs?: number;
+  phase: "routed" | "graded";
+  planId: string;
+  route: "no_retrieval" | "knowledge" | "web" | "both";
+  reason: string;
+  confidence?: number;
+  evidenceRequired?: boolean;
+  maxAttempts: number;
+  indexVersion: string;
+  source?: "knowledge" | "web";
+  query?: string;
+  filters?: Record<string, unknown>;
+  evidenceCount?: number;
+  grade?: {
+    sufficient: boolean;
+    grade: string;
+    reason: string;
+    topScore: number | null;
+    scoreGap: number | null;
+    queryCoverage: number;
+    acceptedEvidenceIds: string[];
+  };
+  cacheHits?: number;
+  queryAttempts?: number;
+  thresholdFallback?: boolean;
+  scoreGap?: number | null;
+  degradationReason?: string;
+  attempts?: Array<Record<string, unknown>>;
+  timings?: Record<string, number>;
+};
+
+type AnswerValidationStep = {
+  type: "answer_validation";
+  index: number;
+  durationMs?: number;
+  guarded: boolean;
+  report: {
+    status: "pass" | "warn" | "fail";
+    evidenceRequired?: boolean;
+    evidenceCount: number;
+    claimCount: number;
+    citedClaimCount: number;
+    supportedClaimCount: number;
+    citationPrecision: number;
+    citationCoverage: number;
+    groundedness: number;
+    unknownCitationIds: string[];
+    checks: Array<Record<string, unknown>>;
+  };
+};
+
+type Step =
+  | ModelStep
+  | ToolStep
+  | ContextCompactionStep
+  | PlanStep
+  | RetrievalStep
+  | AnswerValidationStep;
 
 type Trace = {
   id: string;
@@ -383,6 +443,10 @@ function RagDebugSummary({ debug }: { debug: Record<string, unknown> }) {
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
           <span>并行召回 {asNumber(timings.parallelRecallMs) ?? 0}ms</span>
           <span>Embedding {asNumber(timings.embeddingMs) ?? 0}ms</span>
+          <span>
+            Embedding cache {asNumber(timings.embeddingCacheHits) ?? 0}/
+            {(asNumber(timings.embeddingCacheHits) ?? 0) + (asNumber(timings.embeddingCacheMisses) ?? 0)}
+          </span>
           <span>向量 {asNumber(timings.vectorSearchMs) ?? 0}ms</span>
           <span>关键词 {asNumber(timings.keywordSearchMs) ?? 0}ms</span>
           <span>Cross-Encoder {asNumber(timings.crossEncoderMs) ?? 0}ms</span>
@@ -779,9 +843,23 @@ export default function TraceDetailPage({
                       <span className="font-medium text-amber-300">
                         上下文压缩
                       </span>
-                    ) : (
+                    ) : step.type === "plan" ? (
                       <span className="font-medium text-indigo-300">
                         执行计划 · {step.phase}
+                      </span>
+                    ) : step.type === "retrieval" ? (
+                      <span className="font-medium text-cyan-300">
+                        检索闭环 · {step.phase}
+                      </span>
+                    ) : (
+                      <span className={`font-medium ${
+                        step.report.status === "pass"
+                          ? "text-emerald-300"
+                          : step.report.status === "warn"
+                            ? "text-amber-300"
+                            : "text-rose-300"
+                      }`}>
+                        回答证据校验 · {step.report.status}
                       </span>
                     )}
                     <span className="ml-auto text-xs text-slate-600">
@@ -928,7 +1006,7 @@ export default function TraceDetailPage({
                         meta={`${step.summaryChars} 字符`}
                       />
                     </div>
-                  ) : (
+                  ) : step.type === "plan" ? (
                     <div className="mt-2 text-xs">
                       <div className="text-slate-300">{step.goal}</div>
                       <div className="mt-1 flex flex-wrap gap-2 text-slate-500">
@@ -950,6 +1028,78 @@ export default function TraceDetailPage({
                           {step.failureReason}
                         </div>
                       )}
+                    </div>
+                  ) : step.type === "retrieval" ? (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                        <span>route {step.route}</span>
+                        <span>强制证据 {step.evidenceRequired ? "是" : "否"}</span>
+                        <span>source {step.source ?? "-"}</span>
+                        <span>query {step.query ?? "-"}</span>
+                        <span>尝试 {step.queryAttempts ?? 0}/{step.maxAttempts}</span>
+                        <span>证据 {step.evidenceCount ?? 0}</span>
+                        <span>缓存命中 {step.cacheHits ?? 0}</span>
+                        <span className={step.thresholdFallback ? "text-rose-300" : "text-emerald-300"}>
+                          降阈值 {step.thresholdFallback ? "是" : "否"}
+                        </span>
+                      </div>
+                      <div className="text-slate-500">
+                        reason={step.reason} · index={step.indexVersion}
+                        {step.confidence !== undefined
+                          ? ` · confidence=${step.confidence.toFixed(2)}`
+                          : ""}
+                      </div>
+                      {step.grade && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                          <span>grade {step.grade.grade}</span>
+                          <span>充分 {String(step.grade.sufficient)}</span>
+                          <span>top {formatScore(step.grade.topScore)}</span>
+                          <span>score gap {formatScore(step.scoreGap)}</span>
+                          <span>query coverage {formatScore(step.grade.queryCoverage)}</span>
+                        </div>
+                      )}
+                      {step.degradationReason && (
+                        <div className="rounded bg-amber-950/30 px-2 py-1 text-amber-300">
+                          降级原因：{step.degradationReason}
+                        </div>
+                      )}
+                      {step.timings && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+                          <span>embedding {step.timings.embeddingMs ?? 0}ms</span>
+                          <span>embedding cache {step.timings.embeddingCacheHits ?? 0}/{(step.timings.embeddingCacheHits ?? 0) + (step.timings.embeddingCacheMisses ?? 0)}</span>
+                          <span>vector {step.timings.vectorSearchMs ?? 0}ms</span>
+                          <span>keyword {step.timings.keywordSearchMs ?? 0}ms</span>
+                          <span>fusion {step.timings.fusionMs ?? 0}ms</span>
+                          <span>rerank {(step.timings.ruleRerankMs ?? 0) + (step.timings.crossEncoderMs ?? 0)}ms</span>
+                          <span>MMR {step.timings.mmrMs ?? 0}ms</span>
+                          <span>total {step.timings.totalMs ?? 0}ms</span>
+                        </div>
+                      )}
+                      {step.filters && (
+                        <Collapsible label="过滤条件" body={toText(step.filters)} />
+                      )}
+                      {step.attempts && step.attempts.length > 0 && (
+                        <Collapsible label="Query attempts" body={toText(step.attempts)} />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                        <span>claims {step.report.claimCount}</span>
+                        <span>强制证据 {step.report.evidenceRequired ? "是" : "否"}</span>
+                        <span>已引用 {step.report.citedClaimCount}</span>
+                        <span>已支持 {step.report.supportedClaimCount}</span>
+                        <span>citation precision {(step.report.citationPrecision * 100).toFixed(1)}%</span>
+                        <span>citation coverage {(step.report.citationCoverage * 100).toFixed(1)}%</span>
+                        <span>groundedness {(step.report.groundedness * 100).toFixed(1)}%</span>
+                        <span>guard {step.guarded ? "已触发" : "未触发"}</span>
+                      </div>
+                      {step.report.unknownCitationIds.length > 0 && (
+                        <div className="rounded bg-rose-950/40 px-2 py-1 text-rose-300">
+                          未知引用：{step.report.unknownCitationIds.join(", ")}
+                        </div>
+                      )}
+                      <Collapsible label="Claim checks" body={toText(step.report.checks)} />
                     </div>
                   )}
                 </div>

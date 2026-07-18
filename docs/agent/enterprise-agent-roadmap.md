@@ -29,7 +29,7 @@
 | 问题 | 证据 | 严重度 |
 |---|---|---|
 | 工具确认接口 = 任意工具执行接口 | [confirm/route.ts](../../app/api/tools/confirm/route.ts) 直接接收客户端 `toolCall.name + input`，带 `approved: true` 执行——「确认」是客户端自我声明，登录用户可绕过风险分级执行任何工具 | **最高** |
-| cron 鉴权可伪造 | [tick/route.ts:23](../../app/api/cron/tick/route.ts) `userAgent.includes("vercel-cron/1.0")` 单独即放行，UA 任何人可伪造 | 高 |
+| cron 鉴权可伪造 | 已由 `lib/scheduler/cron-auth.ts` 统一改为 Bearer/x-cron-secret 严格校验，伪造 UA 不再放行 | 已修复 |
 | webhook SSRF | `scheduler/handlers/` reminder 向用户提供的 webhook 地址发请求，无内网/metadata endpoint 防护 | 高 |
 
 ### 0.3 当前系统一句话定位
@@ -115,9 +115,8 @@ P0 ──> P1 ──> P2 ──┐
 
 ### E0.2 cron 鉴权去掉 UA 信任 — S / 高
 
-- **缺口**：[tick/route.ts:23](../../app/api/cron/tick/route.ts) UA 含 `vercel-cron/1.0` 即放行。
-- **改法**：删除 UA 分支；生产环境强制 `CRON_SECRET`（未配置则启动报错），Vercel Cron 配置带 secret 的 URL 或 header。
-- **验收**：伪造 UA 的请求返回 403；无 secret 的生产部署启动即失败（fail-fast）。
+- **状态**：已完成。`tick` 和 `rag-ingestion` 共用 `lib/scheduler/cron-auth.ts`，删除 UA 与 query-string secret 分支；配置 secret 后只有 Bearer 或 `x-cron-secret` 匹配才放行。
+- **验收**：伪造 UA、错误 secret、开发 header 绕过均有单元测试；生产环境未配置 secret 时所有 cron 请求返回 403。
 
 ### E0.3 webhook / 外发请求统一 SSRF 防护 — S~M / 高
 

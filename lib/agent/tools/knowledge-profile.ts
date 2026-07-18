@@ -18,6 +18,8 @@ type NotionPageProfileRow = {
 type StoredKnowledgeProfileRow = {
   source_hash?: string | null;
   profile?: string | null;
+  metadata?: Record<string, unknown> | null;
+  updated_at?: string | null;
 };
 
 const MAX_PROFILE_CHARS = 360;
@@ -31,6 +33,14 @@ const profileCache = new Map<
     profile: string;
   }
 >();
+const profileRefreshes = new Map<string, Promise<string | undefined>>();
+
+export type KnowledgeProfileSnapshot = {
+  profile: string;
+  sourceHash: string;
+  indexVersion: string;
+  updatedAt?: string;
+};
 
 function uniqueStrings(values: Array<string | null | undefined>, limit: number) {
   const seen = new Set<string>();
@@ -130,9 +140,10 @@ async function storeProfile(input: {
         source_hash: input.sourceHash,
         profile: input.profile,
         metadata: {
-          source: "compiled_wiki_summaries",
+          source: "knowledge_sync_refresh",
           wiki_summary_count: input.wikiSummaryCount,
           wiki_page_count: input.wikiPageCount,
+          index_version: input.sourceHash,
         },
         updated_at: new Date().toISOString(),
       },
@@ -142,6 +153,61 @@ async function storeProfile(input: {
   if (error) {
     console.warn("[knowledge-profile] 写入持久画像失败:", error.message);
   }
+}
+
+export async function readKnowledgeProfileForTool(input: {
+  userId: string;
+}): Promise<KnowledgeProfileSnapshot | undefined> {
+  const cached = profileCache.get(input.userId);
+  if (cached?.profile) {
+    return {
+      profile: cached.profile,
+      sourceHash: cached.hash,
+      indexVersion: cached.hash,
+    };
+  }
+
+  const { data, error } = await getSupabase()
+    .from("knowledge_profiles")
+    .select("source_hash,profile,metadata,updated_at")
+    .eq("user_id", input.userId)
+    .eq("profile_type", PROFILE_TYPE)
+    .maybeSingle();
+  if (error) {
+    console.warn("[knowledge-profile] 读取画像快照失败:", error.message);
+    return undefined;
+  }
+
+  const row = data as StoredKnowledgeProfileRow | null;
+  const profile = row?.profile?.trim();
+  const sourceHash = row?.source_hash?.trim();
+  if (!profile || !sourceHash) return undefined;
+  profileCache.set(input.userId, { hash: sourceHash, profile });
+  return {
+    profile,
+    sourceHash,
+    indexVersion:
+      typeof row?.metadata?.index_version === "string"
+        ? row.metadata.index_version
+        : sourceHash,
+    updatedAt: row?.updated_at ?? undefined,
+  };
+}
+
+export function enqueueKnowledgeProfileRefresh(input: { userId: string }) {
+  const existing = profileRefreshes.get(input.userId);
+  if (existing) return existing;
+
+  const refresh = buildKnowledgeProfileForTool(input)
+    .catch((error) => {
+      console.error("[knowledge-profile] 异步刷新失败:", error);
+      return undefined;
+    })
+    .finally(() => {
+      profileRefreshes.delete(input.userId);
+    });
+  profileRefreshes.set(input.userId, refresh);
+  return refresh;
 }
 
 function buildDeterministicProfile(input: {
@@ -280,6 +346,11 @@ export async function buildKnowledgeProfileForTool(input: {
   if (wikiRows.length === 0 && pageRows.length === 0) return undefined;
 
   const wikiCount = exactWikiCount ?? wikiRows.length;
+  const sourceHash = hashProfileInput(JSON.stringify({
+    wikiRows,
+    pageRows,
+    wikiCount,
+  }));
   const deterministicProfile = buildDeterministicProfile({
     wikiRows,
     pageRows,
@@ -304,5 +375,14 @@ export async function buildKnowledgeProfileForTool(input: {
     "当用户问题明显落在以上范围内时，优先调用本工具；若问题无关或需要公开实时信息，应改用或补充 web_search。",
   ].filter(Boolean);
 
-  return truncateProfile(sections.join("\n"));
+  const profile = truncateProfile(sections.join("\n"));
+  profileCache.set(input.userId, { hash: sourceHash, profile });
+  await storeProfile({
+    userId: input.userId,
+    sourceHash,
+    profile,
+    wikiSummaryCount: wikiRows.filter((row) => row.summary?.trim()).length,
+    wikiPageCount: wikiCount,
+  });
+  return profile;
 }

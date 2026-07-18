@@ -1,23 +1,10 @@
 import { syncNotionPageTree, syncNotionPages } from "@/lib/knowledge/sync";
+import { enqueueKnowledgeProfileRefresh } from "@/lib/agent/tools/knowledge-profile";
+import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 
 export const runtime = "nodejs";
-
-function extractNotionPageId(input: string): string | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  const compact = trimmed.match(/[0-9a-fA-F]{32}/);
-  if (compact) return compact[0].toLowerCase();
-
-  const uuid = trimmed.match(
-    /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/,
-  );
-  if (uuid) return uuid[0].replace(/-/g, "").toLowerCase();
-
-  return null;
-}
 
 function streamEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -99,6 +86,10 @@ export async function POST(req: Request) {
                   force,
                   onEvent: (event) => streamEvent(controller, encoder, event),
                 });
+
+            if (results.some((result) => result.success)) {
+              void enqueueKnowledgeProfileRefresh({ userId: user.id });
+            }
 
             langfuseTrace.update({
               output: {

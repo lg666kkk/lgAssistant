@@ -1,6 +1,14 @@
 import { truncateToolContent } from "./budget";
 import type { AgentLoopMetrics, AgentLoopStopReason } from "./index";
 import type { ChatModelId, ModelUsageBreakdown } from "@/lib/agent/models";
+import type {
+  EvidenceGrade,
+  GroundednessReport,
+  RetrievalAttempt,
+  RetrievalFilters,
+  RetrievalRoute,
+  RetrievalSource,
+} from "@/lib/agent/rag/types";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -90,11 +98,43 @@ export type PlanTraceStep = TraceStepBase & {
   failureReason?: string;
 };
 
+export type RetrievalTraceStep = TraceStepBase & {
+  type: "retrieval";
+  phase: "routed" | "graded";
+  planId: string;
+  route: RetrievalRoute;
+  reason: string;
+  confidence?: number;
+  evidenceRequired?: boolean;
+  maxAttempts: number;
+  indexVersion: string;
+  source?: RetrievalSource;
+  query?: string;
+  filters?: RetrievalFilters;
+  evidenceCount?: number;
+  grade?: EvidenceGrade;
+  cacheHits?: number;
+  queryAttempts?: number;
+  thresholdFallback?: boolean;
+  scoreGap?: number | null;
+  degradationReason?: string;
+  attempts?: RetrievalAttempt[];
+  timings?: Record<string, number>;
+};
+
+export type AnswerValidationTraceStep = TraceStepBase & {
+  type: "answer_validation";
+  report: GroundednessReport;
+  guarded: boolean;
+};
+
 export type TraceStep =
   | ModelTraceStep
   | ToolTraceStep
   | ContextCompactionTraceStep
-  | PlanTraceStep; // 判别联合
+  | PlanTraceStep
+  | RetrievalTraceStep
+  | AnswerValidationTraceStep; // 判别联合
 
 export type AgentTrace = {
   requestId: string;
@@ -168,8 +208,12 @@ export function formatTraceTree(trace: AgentTrace): string {
     } else if (step.type === "context_compaction") {
       const method = step.method ? ` method=${step.method}` : "";
       return `${branch} #${step.index} compact (${dur}) ${step.beforeTokens}→${step.afterTokens} tok middle=${step.middleMessageCount}${method}`;
+    } else if (step.type === "plan") {
+      return `${branch} #${step.index} plan ${step.phase} ${step.status} goal="${step.goal.slice(0, 100)}"`;
+    } else if (step.type === "retrieval") {
+      return `${branch} #${step.index} retrieval ${step.phase} route=${step.route} required=${step.evidenceRequired ?? false} evidence=${step.evidenceCount ?? 0}`;
     }
-    return `${branch} #${step.index} plan ${step.phase} ${step.status} goal="${step.goal.slice(0, 100)}"`;
+    return `${branch} #${step.index} answer_validation ${step.report.status} groundedness=${step.report.groundedness.toFixed(2)}`;
   });
 
   return [header, ...lines].join("\n");

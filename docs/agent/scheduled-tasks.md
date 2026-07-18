@@ -150,9 +150,8 @@ export async function tick(now: number) {
 
 ```ts
 export async function GET(req: Request) {
-  // 关键：校验密钥，否则任何人都能触发你的所有任务
-  const secret = req.headers.get("x-cron-secret") ?? new URL(req.url).searchParams.get("secret");
-  if (secret !== process.env.CRON_SECRET) return new Response("forbidden", { status: 403 });
+  // 统一校验 Bearer/x-cron-secret；不信任 User-Agent 或 URL query secret
+  if (!isAuthorizedCronRequest(req)) return new Response("forbidden", { status: 403 });
   await tick(Date.now());
   return Response.json({ ok: true });
 }

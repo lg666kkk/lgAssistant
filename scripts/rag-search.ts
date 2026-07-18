@@ -109,7 +109,7 @@ async function main() {
   console.log(`Cross-Encoder: ${debug.crossEncoderUsed ? "已执行" : debug.crossEncoderReason}`);
   console.log(`数量: ${debug.returnedCount}/${debug.effectiveMatchCount}`);
   console.log(
-    `耗时: parallel=${debug.timings.parallelRecallMs}ms embedding=${debug.timings.embeddingMs}ms vector=${debug.timings.vectorSearchMs}ms keyword=${debug.timings.keywordSearchMs}ms total=${debug.timings.totalMs}ms`,
+    `耗时: parallel=${debug.timings.parallelRecallMs}ms embedding=${debug.timings.embeddingMs}ms vector=${debug.timings.vectorSearchMs}ms keyword=${debug.timings.keywordSearchMs}ms fusion=${debug.timings.fusionMs}ms rerank=${debug.timings.ruleRerankMs + debug.timings.crossEncoderMs}ms mmr=${debug.timings.mmrMs}ms total=${debug.timings.totalMs}ms`,
   );
   console.log("");
 
