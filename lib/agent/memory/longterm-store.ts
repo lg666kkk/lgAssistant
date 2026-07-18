@@ -1,5 +1,6 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
-import type { MemoryRecord, MemoryStore } from "./types";
+import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
+import type { MemoryRecord, MemoryStore, MemoryWriteMetadata } from "./types";
 
 const TABLE = "agent_memories";
 
@@ -14,23 +15,14 @@ function requireUserId(options: { userId?: string }, operation: string): string 
  * 实现 MemoryStore 主接口（不实现 recall —— 长期层没有向量）。
  */
 export class LongTermStore implements MemoryStore {
-  // db 行（snake_case）→ MemoryRecord（camelCase）。四个方法都复用它，避免重复映射。
   private toRecord(row: any): MemoryRecord {
-    return {
-      id: row.id,
-      key: row.key,
-      layer: row.layer,            // db 里恒为 'longterm'，直接读，不硬编码
-      content: row.content,
-      metadata: row.metadata ?? {}, // metadata 理论非空，兜底防 null
-      createdAt: row.created_at,    // snake_case → camelCase 的关键映射
-      // 注意：long-term 没有相似度，不设 score（接口里 score 是可选的）
-    };
+    return memoryRecordFromRow(row, "longterm");
   }
 
   async set(
     key: string,
     content: string,
-    metadata: Record<string, unknown> = {},
+    metadata: MemoryWriteMetadata = {},
     options: { userId?: string } = {},
   ): Promise<void> {
     if (!hasSupabaseConfig()) return; // 没配 Supabase 直接跳过，和 trace-store 一致
@@ -45,6 +37,9 @@ export class LongTermStore implements MemoryStore {
           key,
           content,
           metadata: { ...metadata, userId },
+          ...memoryColumnsFromMetadata(metadata),
+          valid_from: new Date().toISOString(),
+          valid_to: null,
           // 显式传 updated_at：DEFAULT NOW() 只在 INSERT 生效，
           // upsert 走 UPDATE 分支时不会自动刷新，必须手动给
           updated_at: new Date().toISOString(),
@@ -52,8 +47,30 @@ export class LongTermStore implements MemoryStore {
         { onConflict: "user_id,key" },
       );
     if (error) {
-      console.error("[LongTermStore.set] 写入失败:", error.message);
+      throw new Error(`[LongTermStore.set] 写入失败: ${error.message}`);
     }
+  }
+
+  async invalidate(
+    key: string,
+    options: { userId?: string; reason?: string } = {},
+  ): Promise<void> {
+    if (!hasSupabaseConfig()) return;
+    const userId = requireUserId(options, "invalidate");
+    if (!userId) return;
+
+    const now = new Date().toISOString();
+    const { error } = await getSupabase()
+      .from(TABLE)
+      .update({
+        status: "invalidated",
+        valid_to: now,
+        updated_at: now,
+      })
+      .eq("key", key)
+      .eq("user_id", userId)
+      .eq("status", "active");
+    if (error) throw new Error(`[LongTermStore.invalidate] 失效失败: ${error.message}`);
   }
 
   async get(key: string, options: { userId?: string } = {}): Promise<MemoryRecord | null> {
@@ -85,7 +102,7 @@ export class LongTermStore implements MemoryStore {
       .eq("key", key)
       .eq("user_id", userId);     // WHERE key = $1 AND user_id = $2
     if (error) {
-      console.error("[LongTermStore.forget] 删除失败:", error.message);
+      throw new Error(`[LongTermStore.forget] 删除失败: ${error.message}`);
     }
   }
 

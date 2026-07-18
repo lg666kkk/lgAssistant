@@ -102,13 +102,26 @@ SemanticMemoryStore                ← 仅语义层实现
    └────── ③ consolidate(对话) [LLM抽取值得记的事实] ─→ 写回长期+语义
 ```
 
+### 可信记忆生命周期
+
+`20260718-trusted-memory-lifecycle.sql` 将直接 upsert 升级为可治理的记忆记录：每条记忆保存类型、来源、置信度、重要性、状态、生效区间、访问时间和用户原文证据。
+
+写入管线现在按以下顺序执行：
+
+1. 只从 user 消息抽取事实，并校验 `evidenceExcerpt` 必须逐字存在于用户原话；
+2. 拒绝密码、令牌、私钥、银行卡号和身份证号；
+3. 查询相同 key 和语义相似的旧记忆；
+4. 决定 `ADD / UPDATE / INVALIDATE / NOOP`，忘记请求目标不明确时拒绝猜测；
+5. 删除语义改为软失效，召回只读取 `active` 记忆；
+6. 召回按相关性、重要性和新鲜度重排，并将内容作为不可信数据而非指令注入 prompt。
+
 ### 第 4 课核心概念
 
 - **编排层 vs 执行层**：`memory-flow` 是「中间人/指挥」，对上给主循环提供 `recallForPrompt`/`consolidate` 两个入口，对下调 store 的 recall/set，**自己不碰数据库**。同 `tool-router` 解耦工具的思路。
 - **Anthropic system 是顶层参数**：不在 `messages` 数组里，是 `client.messages.create({ system, messages })`。本项目原本无 system 层，借此补上。
 - **强制结构化输出**：`tool_choice: { type: "tool", name }` 逼模型必走某工具 → 输出一定符合 `input_schema` 的 JSON，不用解析自然语言。同 eval 的 StructuredOutput 套路。
 - **LLM 判断「什么值得记」**：不写规则，让模型读对话抽取长期事实。规则只能机械匹配字符串（「我对…」抓得到，「香菜我真没办法」漏掉），LLM 天然懂「过敏=长期、算术题=一次性」。
-- **沉淀异步不阻塞**：`void consolidate(...).catch(...)`，用户拿到回答后后台抽取写回，不等。
+- **普通沉淀不阻塞响应**：偏好/事实抽取继续在回答后后台执行；显式“忘记/删除记忆”属于用户直接要求的数据变更，会在本轮同步完成。生产规模扩大后，普通沉淀应替换成带持久化和重试的任务队列。
 
 ### 第 4 课技术选型与决策
 

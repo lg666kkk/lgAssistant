@@ -56,7 +56,7 @@ describe("记忆流动闭环（沉淀 → 召回）", () => {
       });
 
       expect(systemText).toContain("香菜"); // 召回成功并拼进 system 文本
-      expect(systemText).toContain("已知信息"); // 是拼好的 system 段落格式
+      expect(systemText).toContain("memory-data"); // 是按不可信数据封装的 system 段落
     },
   );
 

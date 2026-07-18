@@ -38,6 +38,7 @@ import {
   type EvidenceBundle,
   type RetrievalPlan,
 } from "@/lib/agent/rag/types";
+import type { ContextPlan } from "@/lib/agent/context/types";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -72,6 +73,7 @@ import type {
 export type AgentLoopStopReason =
   | "completed"
   | "awaiting_user_input"
+  | "awaiting_tool_confirmation"
   | "max_tokens"
   | "token_budget_exceeded"
   | "repeated_tool_call"
@@ -437,7 +439,8 @@ const COMPACTION_SYSTEM_PROMPT = `你负责压缩较早的对话上下文，供�
 
 function buildCompactionPrompt(input: {
   digest: string;
-  targetTokens: number;
+  targetContextTokens: number;
+  summaryTokenBudget: number;
   middleMessageCount: number;
 }) {
   return `请压缩下面这段中间历史摘要。
@@ -452,7 +455,8 @@ function buildCompactionPrompt(input: {
 - 未解决问题
 - 下一步建议
 
-目标长度：约 ${input.targetTokens} tokens。
+压缩后的整体上下文目标：不超过约 ${input.targetContextTokens} tokens。
+本摘要自身上限：约 ${input.summaryTokenBudget} tokens。
 中间历史消息数：${input.middleMessageCount}
 
 中间历史：
@@ -461,21 +465,23 @@ ${input.digest}`;
 
 export async function callCompressionModel(input: {
   digest: string;
-  targetTokens: number;
+  targetContextTokens: number;
+  summaryTokenBudget: number;
   middleMessageCount: number;
   model?: ChatModelId;
   telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<string> {
   return generateTextWithProvider({
     model: input.model ?? "deepseek-v4-flash",
-    maxOutputTokens: Math.min(Math.max(512, input.targetTokens), 2_000),
+    maxOutputTokens: Math.min(Math.max(256, input.summaryTokenBudget), 2_000),
     telemetryFunctionId: "conversation-context-compress",
     system: COMPACTION_SYSTEM_PROMPT,
     prompt: buildCompactionPrompt(input),
     telemetryMetadata: {
       ...input.telemetryMetadata,
       operation: "conversation-context-compress",
-      targetTokens: input.targetTokens,
+      targetContextTokens: input.targetContextTokens,
+      summaryTokenBudget: input.summaryTokenBudget,
       middleMessageCount: input.middleMessageCount,
     },
   });
@@ -958,11 +964,13 @@ export async function runAgentLoop(
   userId?: string,
   retrievalPlan?: RetrievalPlan,
   initialEvidenceBundles: EvidenceBundle[] = [],
+  contextPlan?: ContextPlan,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
   const tokenBudget = new TokenBudget(AGENT_LOOP_TOKEN_BUDGET);
   const trace = createTrace(requestId, sessionId);
+  trace.contextPlan = contextPlan;
   let stepIndex = 0; // model/tool step 共享的全局递增序号
   const evidenceBundles: EvidenceBundle[] = [...initialEvidenceBundles];
   const retrievalToolCalls = new Map<string, number>();
@@ -1296,6 +1304,7 @@ export async function runAgentLoop(
       systemPromptTruncated: systemSummary?.truncated,
       systemPromptOriginalChars: systemSummary?.originalChars,
       systemSegments,
+      contextPlanId: contextPlan?.id,
       requestedToolCalls: toolUses.map((t: ToolUseBlock) => ({
         name: t.name,
         id: t.id,
@@ -1518,6 +1527,18 @@ export async function runAgentLoop(
       initialResponse,
       toolResultBlocks,
     );
+    const pendingConfirmation = toolCalls.find(
+      (toolCall) => toolCall.metadata?.status === "pending_confirmation",
+    );
+    if (pendingConfirmation) {
+      return {
+        loopMessages,
+        completed: true,
+        stopReason: "awaiting_tool_confirmation",
+        metrics,
+        trace: finalizeTrace("awaiting_tool_confirmation", true),
+      };
+    }
     const userQuestion = toolCalls.find(
       (toolCall) => toolCall.metadata?.status === "awaiting_user_input",
     );

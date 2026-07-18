@@ -1,11 +1,12 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { EmbeddingClient } from "@/lib/knowledge/embedding";
-import type { MemoryRecord, SemanticMemoryStore } from "./types";
+import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
+import type { MemoryRecord, MemoryWriteMetadata, SemanticMemoryStore } from "./types";
 
 const TABLE = "agent_semantic_memories";
 const MATCH_FN = "match_memories";
 // get/list 用：不取 embedding（1024 维白传），列出其余字段
-const COLS = "id, key, layer, content, metadata, created_at";
+const COLS = "id, key, layer, memory_type, source, confidence, importance, status, content, evidence, metadata, created_at, updated_at, valid_from, valid_to, last_accessed_at";
 
 function requireUserId(options: { userId?: string }, operation: string): string | null {
   if (options.userId) return options.userId;
@@ -28,23 +29,13 @@ export class SemanticStore implements SemanticMemoryStore {
 
   // db 行 → MemoryRecord。语义层有 score（相似度），但仅 recall 的行才带 similarity
   private toRecord(row: any): MemoryRecord {
-    const record: MemoryRecord = {
-      id: row.id,
-      key: row.key,
-      layer: row.layer ?? "semantic",
-      content: row.content,
-      metadata: row.metadata ?? {},
-      createdAt: row.created_at,
-    };
-    // 只有 recall（match_memories）的行才有 similarity；get/list 没有，就不设 score
-    if (row.similarity != null) record.score = row.similarity;
-    return record;
+    return memoryRecordFromRow(row, "semantic");
   }
 
   async set(
     key: string,
     content: string,
-    metadata: Record<string, unknown> = {},
+    metadata: MemoryWriteMetadata = {},
     options: { userId?: string } = {},
   ): Promise<void> {
     if (!hasSupabaseConfig()) return;
@@ -62,13 +53,34 @@ export class SemanticStore implements SemanticMemoryStore {
           content,
           embedding,
           metadata: { ...metadata, userId },
+          ...memoryColumnsFromMetadata(metadata),
+          valid_from: new Date().toISOString(),
+          valid_to: null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,key" },
       );
     if (error) {
-      console.error("[SemanticStore.set] 写入失败:", error.message);
+      throw new Error(`[SemanticStore.set] 写入失败: ${error.message}`);
     }
+  }
+
+  async invalidate(
+    key: string,
+    options: { userId?: string; reason?: string } = {},
+  ): Promise<void> {
+    if (!hasSupabaseConfig()) return;
+    const userId = requireUserId(options, "invalidate");
+    if (!userId) return;
+
+    const now = new Date().toISOString();
+    const { error } = await getSupabase()
+      .from(TABLE)
+      .update({ status: "invalidated", valid_to: now, updated_at: now })
+      .eq("key", key)
+      .eq("user_id", userId)
+      .eq("status", "active");
+    if (error) throw new Error(`[SemanticStore.invalidate] 失效失败: ${error.message}`);
   }
 
   async get(key: string, options: { userId?: string } = {}): Promise<MemoryRecord | null> {
@@ -100,7 +112,7 @@ export class SemanticStore implements SemanticMemoryStore {
       .eq("key", key)
       .eq("user_id", userId);
     if (error) {
-      console.error("[SemanticStore.forget] 删除失败:", error.message);
+      throw new Error(`[SemanticStore.forget] 删除失败: ${error.message}`);
     }
   }
 
@@ -113,6 +125,7 @@ export class SemanticStore implements SemanticMemoryStore {
       .from(TABLE)
       .select(COLS)
       .eq("user_id", userId)
+      .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(limit);
     if (error) {
@@ -120,6 +133,19 @@ export class SemanticStore implements SemanticMemoryStore {
       return [];
     }
     return (data ?? []).map((row: any) => this.toRecord(row));
+  }
+
+  async touch(keys: string[], options: { userId?: string } = {}): Promise<void> {
+    if (!hasSupabaseConfig() || keys.length === 0) return;
+    const userId = requireUserId(options, "touch");
+    if (!userId) return;
+
+    const { error } = await getSupabase()
+      .from(TABLE)
+      .update({ last_accessed_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .in("key", Array.from(new Set(keys)));
+    if (error) console.error("[SemanticStore.touch] 更新访问时间失败:", error.message);
   }
 
   // ⭐ 主角：按语义相似度召回

@@ -15,9 +15,15 @@ import {
   shouldUsePlanAndExecute,
 } from "@/lib/agent/runtime/plan-execution";
 import { saveTrace } from "@/lib/agent/runtime/trace-store";
-import { recallForPrompt, consolidate } from "@/lib/agent/memory/memory-flow";
+import {
+  recallForPrompt,
+  consolidate,
+  handleExplicitForgetRequest,
+  renderMemoryOperationContext,
+  type ExplicitForgetResult,
+} from "@/lib/agent/memory/memory-flow";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
-import { resolveChatModel } from "@/lib/agent/models";
+import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { readKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 import {
@@ -28,6 +34,7 @@ import {
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/platform/supabase";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import { redactSensitiveValue } from "@/lib/agent/rag/governance";
 import {
   applyGroundednessGuard,
@@ -36,6 +43,13 @@ import {
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import type { AgentTrace } from "@/lib/agent/runtime/trace";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { buildContextPlan } from "@/lib/agent/context/plan";
+import {
+  createContextSnapshot,
+  loadContextSnapshot,
+  saveContextSnapshot,
+} from "@/lib/agent/context/snapshot-store";
+import type { ContextPlan } from "@/lib/agent/context/types";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
@@ -169,15 +183,54 @@ async function resolveLoopMessages(input: {
   sessionId?: string;
   messages: SessionHistoryMessage[];
 }) {
-  if (!input.sessionId || input.messages.length !== 1) return [...input.messages];
+  if (!input.sessionId) {
+    return {
+      messages: [...input.messages],
+      source: "client" as const,
+      originalMessageCount: input.messages.length,
+      snapshot: null,
+    };
+  }
+
+  const snapshot = await loadContextSnapshot({
+    userId: input.userId,
+    sessionId: input.sessionId,
+  });
+  if (snapshot) {
+    const currentMessage = [...input.messages].reverse().find((message) => message.role === "user");
+    const snapshotMessages = [...snapshot.messages];
+    const lastSnapshotMessage = snapshotMessages[snapshotMessages.length - 1];
+    const duplicateCurrent = currentMessage
+      && lastSnapshotMessage?.role === currentMessage.role
+      && lastSnapshotMessage.content === currentMessage.content;
+    return {
+      messages: currentMessage && !duplicateCurrent
+        ? [...snapshotMessages, currentMessage]
+        : snapshotMessages,
+      source: "snapshot" as const,
+      originalMessageCount: input.messages.length,
+      snapshot,
+    };
+  }
+
+  if (input.messages.length !== 1) {
+    return {
+      messages: [...input.messages],
+      source: "client" as const,
+      originalMessageCount: input.messages.length,
+      snapshot: null,
+    };
+  }
 
   let history = await sessionStore.getHistory(input.userId, input.sessionId);
+  let source: ContextPlan["history"]["source"] = history.length > 0 ? "redis" : "client";
   if (history.length === 0) {
     const restoredHistory = await restoreSessionHistoryFromDatabase({
       userId: input.userId,
       sessionId: input.sessionId,
     });
     if (restoredHistory.length > 0) {
+      source = "database";
       const currentUserContent = input.messages[0]?.content;
       history = restoredHistory.filter(
         (message, index) => !(
@@ -194,9 +247,14 @@ async function resolveLoopMessages(input: {
     }
   }
 
-  return history.length > 0
-    ? [...history.slice(-SESSION_FALLBACK_MESSAGE_LIMIT), ...input.messages]
-    : [...input.messages];
+  return {
+    messages: history.length > 0
+      ? [...history.slice(-SESSION_FALLBACK_MESSAGE_LIMIT), ...input.messages]
+      : [...input.messages],
+    source,
+    originalMessageCount: input.messages.length,
+    snapshot: null,
+  };
 }
 
 // Next.js App Router 的 API 路由，处理 POST /api/chat 请求
@@ -249,9 +307,14 @@ export async function POST(req: Request) {
     role: msg.role as "user" | "assistant",
     content: msg.content,
   }));
-  let hydratedLoopMessages = [...modelMessages];
+  let hydratedContext: Awaited<ReturnType<typeof resolveLoopMessages>> = {
+    messages: [...modelMessages],
+    source: "client",
+    originalMessageCount: modelMessages.length,
+    snapshot: null,
+  };
   try {
-    hydratedLoopMessages = await resolveLoopMessages({
+    hydratedContext = await resolveLoopMessages({
       userId: user.id,
       sessionId,
       messages: modelMessages,
@@ -259,8 +322,13 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("[session] 读取历史失败，使用请求消息:", error.message);
   }
+  const hydratedLoopMessages = hydratedContext.messages;
   const retrievalAnchor = resolveRetrievalAnchor(
-    hydratedLoopMessages,
+    hydratedLoopMessages.flatMap((message) =>
+      typeof message.content === "string"
+        ? [{ role: message.role, content: message.content }]
+        : [],
+    ),
     body.approvedPlan !== undefined,
   );
   const approvedPlanObjective = body.approvedPlan
@@ -291,10 +359,17 @@ export async function POST(req: Request) {
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
   // 给模型看的工具说明
-  const tools = filterToolsForRetrievalRoute(
+  const routeTools = filterToolsForRetrievalRoute(
     toolRegistry.listForModel(),
     retrievalPlan.route,
     { webEnabled: enableWebSearch },
+  );
+  const latestUserQuery = [...modelMessages]
+    .reverse()
+    .find((message) => message.role === "user")?.content ?? "";
+  const tools = filterToolsForUserIntent(
+    routeTools,
+    approvedPlanObjective || latestUserQuery,
   );
   const approvedPlan = body.approvedPlan === undefined
     ? undefined
@@ -399,6 +474,19 @@ export async function POST(req: Request) {
         const lastUser = [...messages]
           .reverse()
           .find((m: any) => m.role === "user");
+        let explicitForgetResult: ExplicitForgetResult = { handled: false };
+        if (lastUser) {
+          explicitForgetResult = await handleExplicitForgetRequest({
+            message: lastUser.content,
+            userId: user.id,
+            sessionId,
+            requestId,
+          }).catch((error: any) => {
+            console.error("[memory] 显式忘记处理失败:", error.message);
+            return { handled: false } as const;
+          });
+        }
+        const explicitForgetHandled = explicitForgetResult.handled;
         let memorySystem = "";
         if (lastUser) {
           try {
@@ -411,6 +499,7 @@ export async function POST(req: Request) {
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
         const prompt = buildPromptPipe({
           userMessage: lastUser?.content ?? "",
+          memoryOperation: renderMemoryOperationContext(explicitForgetResult),
           memory: memorySystem,
           webSearchEnabled:
             retrievalPlan.route === "web" || retrievalPlan.route === "both",
@@ -420,6 +509,29 @@ export async function POST(req: Request) {
         });
         const systemPrompt = prompt.systemPrompt;
         const systemSegments = prompt.segments;
+        const contextPlan = buildContextPlan({
+          model: selectedModel,
+          windowTokens: getModelContextWindowTokens(selectedModel),
+          outputReserveTokens: 4_096,
+          messages: loopMessages,
+          originalMessageCount: hydratedContext.originalMessageCount,
+          historySource: hydratedContext.source,
+          tools,
+          prompt,
+          snapshotId: hydratedContext.snapshot?.id,
+        });
+        const persistSnapshot = async (snapshotMessages: typeof loopMessages) => {
+          if (!sessionId) return;
+          const snapshot = createContextSnapshot({
+            previous: hydratedContext.snapshot ?? undefined,
+            userId: user.id,
+            sessionId,
+            model: selectedModel,
+            messages: snapshotMessages,
+          });
+          await saveContextSnapshot(snapshot);
+          hydratedContext.snapshot = snapshot;
+        };
 
         // 异步写入 sessions 表，不阻塞响应（和 consolidate 同一模式）
         if (sessionId && systemPrompt) {
@@ -449,6 +561,7 @@ export async function POST(req: Request) {
           userId: user.id,
           model: selectedModel,
           retrievalPlan,
+          contextPlan,
           shouldStop: () => req.signal.aborted || closed,
           onProgress: (plan: PlanProgressEventData) => enqueueEvent({ type: "plan_progress", plan }, enqueueText),
         };
@@ -470,6 +583,11 @@ export async function POST(req: Request) {
             }).catch((e: any) =>
               console.error("[session] 保存计划提案失败:", e.message),
             );
+            await persistSnapshot([
+              ...loopMessages,
+              { role: "assistant", content: proposalText },
+            ]).catch((error: any) =>
+              console.error("[context-snapshot] 保存计划提案失败:", error.message));
             langfuseTrace.update({
               output: { completed: true, status: "awaiting_plan_approval", plan: proposal },
             });
@@ -508,14 +626,11 @@ export async function POST(req: Request) {
           systemSegments, // 段化结构，写进 trace 供详情页按段展示
           user.id,
           retrievalPlan,
+          [],
+          contextPlan,
         );
         pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
-
-        // ③ 沉淀：后台异步抽取「值得长期记住的事实」并写回，不阻塞响应。
-        void consolidate(modelMessages, { sessionId, userId: user.id }).catch((e: any) =>
-          console.error("[consolidate] 失败:", e.message),
-        );
 
         const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user")?.content;
 
@@ -541,6 +656,12 @@ export async function POST(req: Request) {
           }).catch((e: any) =>
             console.error("[session] 写入历史失败:", e.message),
           );
+          await persistSnapshot(loopMessages).catch((error: any) =>
+            console.error("[context-snapshot] 保存失败:", error.message));
+          if (!explicitForgetHandled) {
+            void consolidate(loopMessages, { sessionId, userId: user.id, requestId }).catch((e: any) =>
+              console.error("[consolidate] 失败:", e.message));
+          }
           await savePendingTrace();
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
@@ -633,6 +754,16 @@ export async function POST(req: Request) {
         }).catch((e: any) =>
           console.error("[session] 写入历史失败:", e.message),
         );
+        const completedMessages = [
+          ...loopMessages,
+          { role: "assistant" as const, content: finalAssistantText },
+        ];
+        await persistSnapshot(completedMessages).catch((error: any) =>
+          console.error("[context-snapshot] 保存失败:", error.message));
+        if (!explicitForgetHandled) {
+          void consolidate(completedMessages, { sessionId, userId: user.id, requestId }).catch((e: any) =>
+            console.error("[consolidate] 失败:", e.message));
+        }
         langfuseTrace.update({
           output: {
             completed: true,

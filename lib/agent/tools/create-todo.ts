@@ -50,7 +50,7 @@ export const createTodoTool: ToolDefinition = {
   },
   name: "create_todo",
   description:
-    "创建一个待办事项。适合用户要求记录任务、提醒事项、计划安排时使用。这个工具会写入数据，必须先经过用户确认。",
+    "创建一个待办事项。仅当用户明确要求创建、新增、记录或加入待办/TODO 时使用；‘提醒一下，我喜欢/习惯/过敏……’是在陈述长期偏好，不是创建待办，禁止调用本工具。这个工具会写入数据，必须先经过用户确认。",
   riskLevel: "confirm",
   input_schema: {
     type: "object",

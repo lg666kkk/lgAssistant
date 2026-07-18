@@ -9,6 +9,7 @@ import type {
   RetrievalRoute,
   RetrievalSource,
 } from "@/lib/agent/rag/types";
+import type { ContextPlan } from "@/lib/agent/context/types";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -48,6 +49,7 @@ export type ModelTraceStep = TraceStepBase & {
     content: string;
     metadata?: Record<string, unknown>;
   }>;
+  contextPlanId?: string;
 };
 
 export type ToolTraceStep = TraceStepBase & {
@@ -146,6 +148,7 @@ export type AgentTrace = {
   completed: boolean;
   steps: TraceStep[];
   metrics: AgentLoopMetrics; // 直接复用现有聚合 metrics，trace 是明细，metrics 是汇总，并存
+  contextPlan?: ContextPlan;
 };
 
 export function createTrace(requestId: string, sessionId?: string): AgentTrace {

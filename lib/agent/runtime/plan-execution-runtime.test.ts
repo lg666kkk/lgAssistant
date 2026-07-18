@@ -81,6 +81,58 @@ function retrievalPlan(): RetrievalPlan {
 describe("Plan-and-Execute runtime integration", () => {
   beforeEach(() => runAgentLoopMock.mockReset());
 
+  it("propagates pending tool confirmation without continuing the plan", async () => {
+    const pendingTrace = createTrace("todo-step");
+    pendingTrace.steps.push({
+      type: "tool",
+      index: 0,
+      startedAt: 0,
+      name: "create_todo",
+      input: { title: "提交周报" },
+      ok: false,
+      error: "Tool requires approval: create_todo",
+      contentSummary: "需要用户确认",
+      contentTruncated: false,
+      contentOriginalChars: 6,
+      metadata: { status: "pending_confirmation" },
+      costPerUse: 0,
+    });
+    runAgentLoopMock.mockResolvedValueOnce({
+      loopMessages: [{ role: "assistant", content: "待确认" }],
+      completed: true,
+      stopReason: "awaiting_tool_confirmation",
+      metrics: metrics(),
+      trace: pendingTrace,
+      evidenceBundles: [],
+    });
+
+    const result = await executePlan({
+      messages: [{ role: "user", content: "创建一个提交周报的待办" }],
+      tools: [{
+        name: "create_todo",
+        description: "todo",
+        input_schema: { type: "object", properties: {} },
+      }],
+      toolRegistry: new ToolRegistry(),
+      maxToolIterations: 4,
+      allToolSources: [],
+      requestId: "request-todo",
+    }, {
+      id: "plan-todo",
+      objective: "创建待办",
+      steps: [{
+        id: "create",
+        goal: "创建待办",
+        allowedTools: ["create_todo"],
+        successCriteria: ["待办已创建"],
+      }],
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.stopReason).toBe("awaiting_tool_confirmation");
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+  });
+
   it("aggregates evidence and allows each retrieval tool only once across plan steps", async () => {
     const firstTrace = createTrace("step-1");
     firstTrace.steps.push({
@@ -184,5 +236,49 @@ describe("Plan-and-Execute runtime integration", () => {
       route: "knowledge",
       evidenceRequired: true,
     });
+  });
+
+  it("passes the same context plan to every executor step", async () => {
+    runAgentLoopMock.mockImplementation(async (...args: unknown[]) => ({
+      loopMessages: [
+        ...(Array.isArray(args[0]) ? args[0] : []),
+        { role: "assistant", content: "完成" },
+      ],
+      completed: true,
+      stopReason: "completed",
+      metrics: metrics(),
+      trace: createTrace("step"),
+      evidenceBundles: [],
+    }));
+    const contextPlan = {
+      id: "context-plan-1",
+      snapshotId: "snapshot-1",
+      policy: { id: "default-chat", version: "1" },
+      model: "deepseek-v4-flash",
+      windowTokens: 32_000,
+      outputReserveTokens: 4_096,
+      history: { source: "snapshot" as const, originalMessages: 2, keptMessages: 2 },
+      sources: [],
+      totals: { systemTokens: 0, messageTokens: 2, toolSchemaTokens: 0, totalTokens: 2 },
+      createdAt: "2026-07-18T00:00:00.000Z",
+    };
+    const result = await executePlan({
+      messages: [{ role: "user", content: "先分析再总结" }],
+      tools: [],
+      toolRegistry: new ToolRegistry(),
+      maxToolIterations: 2,
+      allToolSources: [],
+      requestId: "request-context",
+      contextPlan,
+    }, {
+      id: "plan-context",
+      objective: "分析总结",
+      steps: [
+        { id: "one", goal: "分析", allowedTools: [], successCriteria: ["完成"] },
+        { id: "two", goal: "总结", allowedTools: [], successCriteria: ["完成"] },
+      ],
+    });
+    expect(result.trace.contextPlan?.id).toBe("context-plan-1");
+    expect(runAgentLoopMock.mock.calls.every((call) => call[16]?.id === "context-plan-1")).toBe(true);
   });
 });

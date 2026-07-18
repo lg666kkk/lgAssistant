@@ -1,10 +1,21 @@
 import { estimateTokensFromText } from "@/lib/agent/runtime/budget";
+import { truncateTextByTokens } from "@/lib/agent/runtime/tokenizer";
 import type { PromptSegment } from "./segments";
 
 export type PromptBudgetResult = {
   kept: PromptSegment[];
   omitted: PromptSegment[];
   estimatedTokens: number;
+  decisions: PromptBudgetDecision[];
+};
+
+export type PromptBudgetDecision = {
+  kind: PromptSegment["kind"];
+  title: string;
+  originalTokens: number;
+  keptTokens: number;
+  decision: "kept" | "truncated" | "omitted";
+  reason?: "segment_budget" | "global_budget";
 };
 
 export function estimatePromptTokens(content: string) {
@@ -12,9 +23,16 @@ export function estimatePromptTokens(content: string) {
 }
 
 export function truncatePromptContent(content: string, maxTokens: number) {
-  const maxChars = Math.max(0, maxTokens) * 4;
-  if (content.length <= maxChars) return content;
-  return `${content.slice(0, maxChars)}\n\n...（prompt 段已按预算截断）`;
+  if (maxTokens <= 0) return "";
+  if (estimatePromptTokens(content) <= maxTokens) return content;
+
+  const suffix = "\n\n...（prompt 段已按预算截断）";
+  const suffixTokens = estimatePromptTokens(suffix);
+  if (suffixTokens >= maxTokens) {
+    return truncateTextByTokens(content, maxTokens).content;
+  }
+  const body = truncateTextByTokens(content, maxTokens - suffixTokens).content;
+  return truncateTextByTokens(`${body}${suffix}`, maxTokens).content;
 }
 
 export function rankSegments(segments: PromptSegment[]) {
@@ -30,31 +48,52 @@ export function applyPromptBudget(
 ): PromptBudgetResult {
   const kept: PromptSegment[] = [];
   const omitted: PromptSegment[] = [];
+  const decisions: PromptBudgetDecision[] = [];
   let used = 0;
+  const separatorTokens = estimatePromptTokens("\n\n");
 
   for (const segment of segments) {
-    const tokens = estimatePromptTokens(segment.content);
+    const originalTokens = estimatePromptTokens(segment.content);
+    const ownLimit = Math.max(0, segment.tokenBudget ?? originalTokens);
+    const ownBudgetedContent = truncatePromptContent(segment.content, ownLimit);
+    const ownBudgetedTokens = estimatePromptTokens(ownBudgetedContent);
+    const separatorCost = kept.length > 0 ? separatorTokens : 0;
+    const remaining = Math.max(0, options.maxTokens - used - separatorCost);
+    const globalBudgetedContent = truncatePromptContent(ownBudgetedContent, remaining);
+    const keptTokens = estimatePromptTokens(globalBudgetedContent);
 
-    if (used + tokens <= options.maxTokens) {
-      kept.push(segment);
-      used += tokens;
-      continue;
-    }
-
-    const remaining = Math.max(0, options.maxTokens - used);
-    const segmentBudget = Math.min(segment.tokenBudget ?? remaining, remaining);
-
-    if (segmentBudget > 0) {
-      const content = truncatePromptContent(segment.content, segmentBudget);
+    if (globalBudgetedContent && keptTokens > 0) {
       kept.push({
         ...segment,
-        content,
+        content: globalBudgetedContent,
       });
-      used += estimatePromptTokens(content);
+      used += separatorCost + keptTokens;
+      const truncatedByOwnBudget = ownBudgetedTokens < originalTokens;
+      const truncatedByGlobalBudget = keptTokens < ownBudgetedTokens;
+      decisions.push({
+        kind: segment.kind,
+        title: segment.title,
+        originalTokens,
+        keptTokens,
+        decision: truncatedByOwnBudget || truncatedByGlobalBudget ? "truncated" : "kept",
+        reason: truncatedByGlobalBudget
+          ? "global_budget"
+          : truncatedByOwnBudget
+            ? "segment_budget"
+            : undefined,
+      });
     } else {
       omitted.push(segment);
+      decisions.push({
+        kind: segment.kind,
+        title: segment.title,
+        originalTokens,
+        keptTokens: 0,
+        decision: "omitted",
+        reason: "global_budget",
+      });
     }
   }
 
-  return { kept, omitted, estimatedTokens: used };
+  return { kept, omitted, estimatedTokens: used, decisions };
 }

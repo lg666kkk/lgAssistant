@@ -57,5 +57,6 @@
 | 14 | Agent 可观测性完善方案 | [agent-observability-improvement-plan.md](./agent/agent-observability-improvement-plan.md) | 评估 / 规划 |
 | 15 | RAG 项目面试题库 | [rag-interview-questions.md](./rag/rag-interview-questions.md) | 已完善 |
 | 16 | RAG 检索质量升级 | [rag-retrieval-quality.md](./rag/rag-retrieval-quality.md) | 已实现 / 待部署迁移 |
+| 17 | 记忆双写原子性（长期层+语义层同事务） | [memory-atomic-dual-write.md](./agent/memory-atomic-dual-write.md) | 已实现 / 待部署迁移 |
 
 > 后续每实现一个功能，在此表格追加一行。

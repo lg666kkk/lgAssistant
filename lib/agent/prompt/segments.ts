@@ -7,7 +7,7 @@ import {
 } from "./policies";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
-export type PromptSegmentKind = "identity" | "memory" | "retrieval-plan" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "evidence-policy" | "task-context" | "safety";
+export type PromptSegmentKind = "identity" | "memory-operation" | "memory" | "retrieval-plan" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "evidence-policy" | "task-context" | "safety";
 
 export type PromptSegment = {
   kind: PromptSegmentKind;
@@ -16,6 +16,7 @@ export type PromptSegment = {
   priority: number;       // 越高越重要
   tokenBudget?: number;   // 这个段最多允许多少 token
   source?: string;        // memory / system / runtime / user
+  trust?: "trusted" | "user" | "external";
   dynamic?: boolean;      // 是否每轮变化
   metadata?: Record<string, unknown>; // trace 展示用的结构化调试信息
 };
@@ -23,6 +24,7 @@ export type PromptSegment = {
 export type BuildSegmentsInput = {
   includeIdentity?: boolean; // 是否注入基础身份段，默认 true
   userMessage?: string; // 当前轮用户消息，用来约束模型只回答最新问题
+  memoryOperation?: string; // 已执行的记忆写入/失效结果，属于可信 runtime 状态
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   knowledgeMetadata?: Record<string, unknown>; // RAG debug summary，写进 trace
@@ -49,20 +51,16 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
     });
   }
 
-  const userMessage = input.userMessage?.trim();
-  if (userMessage) {
+  const memoryOperation = input.memoryOperation?.trim();
+  if (memoryOperation) {
     segments.push({
-      kind: "task-context",
-      title: "当前问题",
-      content: [
-        "当前轮必须优先回答下面这一条用户消息：",
-        userMessage,
-        "",
-        "历史对话只作为背景使用；不要主动逐个回答历史里的旧问题，也不要把旧回答重新输出，除非当前用户明确要求回顾或总结历史。",
-      ].join("\n"),
-      priority: 110,
-      tokenBudget: 500,
-      source: "user",
+      kind: "memory-operation",
+      title: "记忆操作结果",
+      content: memoryOperation,
+      priority: 108,
+      tokenBudget: 220,
+      source: "runtime",
+      trust: "trusted",
       dynamic: true,
     });
   }
@@ -76,6 +74,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       priority: 90,
       tokenBudget: 500,
       source: "memory",
+      trust: "external",
       dynamic: false,
     });
   }
@@ -102,7 +101,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
         `maxAttempts=${plan.maxAttempts}`,
         `indexVersion=${plan.indexVersion}`,
         ...plan.steps.map((step) =>
-          `${step.id}: source=${step.source}; query=${step.query}; filters=${JSON.stringify(step.filters ?? {})}`,
+          `${step.id}: source=${step.source}; purpose=${step.purpose}`,
         ),
         plan.route === "no_retrieval"
           ? "当前路由未预选检索；若进一步判断用户明确需要个人知识或实时公开证据，可把检索工具作为一次受限 fallback。"
@@ -111,6 +110,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       priority: 96,
       tokenBudget: 520,
       source: "runtime",
+      trust: "trusted",
       dynamic: true,
       metadata: {
         type: "retrieval_plan",
@@ -139,6 +139,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       priority: 95,
       tokenBudget: 1200,
       source: "knowledge",
+      trust: "external",
       dynamic: true,
       metadata: input.knowledgeMetadata,
     });

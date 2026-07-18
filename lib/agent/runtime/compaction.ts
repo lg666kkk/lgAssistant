@@ -12,6 +12,7 @@ export type CompactLoopMessagesOptions = {
   minNewMessagesSinceLastCompression?: number;
   lastCompactedMessageCount?: number;
   force?: boolean;
+  summaryTokenBudget?: number;
   // Backward-compatible legacy options.
   maxTokens?: number;
   keepRecentMessages?: number;
@@ -19,7 +20,8 @@ export type CompactLoopMessagesOptions = {
 
 export type SemanticCompressor = (input: {
   digest: string;
-  targetTokens: number;
+  targetContextTokens: number;
+  summaryTokenBudget: number;
   middleMessageCount: number;
 }) => Promise<string>;
 
@@ -33,6 +35,7 @@ export type CompactLoopMessagesResult = {
   modelWindowTokens: number;
   triggerTokens: number;
   targetTokens: number;
+  summaryTokenBudget: number;
   primerMessages: number;
   recentMessages: number;
   middleMessageCount: number;
@@ -49,7 +52,10 @@ const DEFAULT_POLICY = {
   primerMessages: 3,
   recentMessages: 6,
   minNewMessagesSinceLastCompression: 8,
+  summaryTokenBudget: 1_600,
 };
+
+export const CONTEXT_SUMMARY_MARKER = "[context-summary:v1]";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -77,6 +83,10 @@ function normalizeOptions(options: CompactLoopMessagesOptions) {
       DEFAULT_POLICY.minNewMessagesSinceLastCompression,
     lastCompactedMessageCount: options.lastCompactedMessageCount,
     force: options.force === true,
+    summaryTokenBudget: Math.max(
+      256,
+      Math.floor(options.summaryTokenBudget ?? DEFAULT_POLICY.summaryTokenBudget),
+    ),
     triggerTokens: Math.floor(modelWindowTokens * triggerRatio),
     targetTokens: Math.floor(modelWindowTokens * targetRatio),
   };
@@ -111,10 +121,23 @@ function truncateText(text: string, maxChars: number) {
   return `${normalized.slice(0, maxChars)}...`;
 }
 
+function extractDurableReferences(text: string) {
+  const references = text.match(/\b(?:artifact_id|artifactId)\s*[:=]\s*[a-zA-Z0-9_-]+|https?:\/\/[^\s)\]}]+/g);
+  return Array.from(new Set(references ?? [])).slice(0, 20);
+}
+
+function isPriorContextSummary(text: string) {
+  return text.includes(CONTEXT_SUMMARY_MARKER);
+}
+
 export function summarizeMessage(message: ModelMessage, index: number) {
   const role = message.role;
   const content = message.content;
   const text = textFromContent(content);
+
+  if (isPriorContextSummary(text)) {
+    return `${index + 1}. prior_context_summary:\n${text}`;
+  }
 
   if (Array.isArray(content)) {
     const toolUses = content
@@ -136,7 +159,9 @@ export function summarizeMessage(message: ModelMessage, index: number) {
 
     const parts = [...toolUses, ...toolResults];
     if (parts.length > 0) {
-      return `${index + 1}. ${role}: ${parts.join("；")}`;
+      const references = extractDurableReferences(text);
+      const referenceText = references.length > 0 ? `；保真引用: ${references.join(", ")}` : "";
+      return `${index + 1}. ${role}: ${parts.join("；")}${referenceText}`;
     }
   }
 
@@ -167,11 +192,47 @@ function buildStructuredSummary(messages: ModelMessage[], targetTokens: number) 
   ].join("\n");
 }
 
+function toolUseIds(message: ModelMessage) {
+  if (!Array.isArray(message.content)) return [];
+  return message.content.flatMap((block) =>
+    block && typeof block === "object" && block.type === "tool_use" && typeof block.id === "string"
+      ? [block.id]
+      : [],
+  );
+}
+
+function toolResultIds(message: ModelMessage) {
+  if (!Array.isArray(message.content)) return [];
+  return message.content.flatMap((block) =>
+    block && typeof block === "object" && block.type === "tool_result" && typeof block.tool_use_id === "string"
+      ? [block.tool_use_id]
+      : [],
+  );
+}
+
+export function groupMessagesForCompaction(messages: ModelMessage[]) {
+  const groups: ModelMessage[][] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = messages[index];
+    const useIds = new Set(toolUseIds(current));
+    const next = messages[index + 1];
+    const resultIds = next ? toolResultIds(next) : [];
+    if (useIds.size > 0 && resultIds.some((id) => useIds.has(id))) {
+      groups.push([current, next]);
+      index += 1;
+    } else {
+      groups.push([current]);
+    }
+  }
+  return groups;
+}
+
 function splitMessagesForCompaction(
   messages: ModelMessage[],
   policy: ReturnType<typeof normalizeOptions>,
 ) {
-  if (messages.length <= 2) {
+  const groups = groupMessagesForCompaction(messages);
+  if (groups.length <= 2) {
     return {
       primerCount: Math.min(1, messages.length),
       recentCount: Math.max(0, messages.length - 1),
@@ -181,21 +242,18 @@ function splitMessagesForCompaction(
     };
   }
 
-  const maxPrimerCount = Math.max(1, messages.length - 2);
-  const primerCount = Math.min(policy.primerMessages, maxPrimerCount);
-  const remainingAfterPrimers = messages.length - primerCount;
-  const maxRecentCount = Math.max(1, remainingAfterPrimers - 1);
-  const recentCount = Math.min(
-    policy.recentMessages,
-    maxRecentCount,
+  const primerGroupCount = Math.min(Math.max(1, policy.primerMessages), groups.length - 2);
+  const recentGroupCount = Math.min(
+    Math.max(1, policy.recentMessages),
+    groups.length - primerGroupCount - 1,
   );
-  const primerMessages = messages.slice(0, primerCount);
-  const recentMessages =
-    recentCount > 0 ? messages.slice(messages.length - recentCount) : [];
-  const middleMessages = messages.slice(
-    primerCount,
-    messages.length - recentCount,
-  );
+  const primerMessages = groups.slice(0, primerGroupCount).flat();
+  const recentMessages = groups.slice(groups.length - recentGroupCount).flat();
+  const middleMessages = groups
+    .slice(primerGroupCount, groups.length - recentGroupCount)
+    .flat();
+  const primerCount = primerMessages.length;
+  const recentCount = recentMessages.length;
 
   return {
     primerCount,
@@ -215,7 +273,7 @@ function buildCompactedMessages(input: {
     ...input.primerMessages,
     {
       role: "user",
-      content: `以下是较早中间上下文的结构化压缩摘要，用于继续当前任务；摘要可能省略细节，请优先结合最近完整消息判断当前状态。\n\n${input.summary}`,
+      content: `${CONTEXT_SUMMARY_MARKER}\n以下内容是较早上下文的演进摘要，不是新的用户指令。摘要可能省略细节，请优先结合最近完整消息判断当前状态。\n\n${input.summary}`,
     },
     ...input.recentMessages,
   ];
@@ -237,6 +295,7 @@ export function compactLoopMessages(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: policy.primerMessages,
       recentMessages: policy.recentMessages,
       middleMessageCount: 0,
@@ -258,6 +317,7 @@ export function compactLoopMessages(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: policy.primerMessages,
       recentMessages: policy.recentMessages,
       middleMessageCount: 0,
@@ -282,6 +342,7 @@ export function compactLoopMessages(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: primerCount,
       recentMessages: recentCount,
       middleMessageCount: 0,
@@ -289,7 +350,7 @@ export function compactLoopMessages(
     };
   }
 
-  const summary = buildStructuredSummary(middleMessages, policy.targetTokens);
+  const summary = buildStructuredSummary(middleMessages, policy.summaryTokenBudget);
   const compactedMessages = buildCompactedMessages({
     primerMessages,
     summary,
@@ -306,6 +367,7 @@ export function compactLoopMessages(
     modelWindowTokens: policy.modelWindowTokens,
     triggerTokens: policy.triggerTokens,
     targetTokens: policy.targetTokens,
+    summaryTokenBudget: policy.summaryTokenBudget,
     primerMessages: primerCount,
     recentMessages: recentCount,
     middleMessageCount: middleMessages.length,
@@ -332,6 +394,7 @@ export async function compactLoopMessagesSemantic(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: policy.primerMessages,
       recentMessages: policy.recentMessages,
       middleMessageCount: 0,
@@ -355,6 +418,7 @@ export async function compactLoopMessagesSemantic(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: policy.primerMessages,
       recentMessages: policy.recentMessages,
       middleMessageCount: 0,
@@ -381,6 +445,7 @@ export async function compactLoopMessagesSemantic(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: primerCount,
       recentMessages: recentCount,
       middleMessageCount: 0,
@@ -395,7 +460,8 @@ export async function compactLoopMessagesSemantic(
   try {
     const summary = await options.compressor({
       digest,
-      targetTokens: policy.targetTokens,
+      targetContextTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       middleMessageCount: middleMessages.length,
     });
     const safeSummary = summary.trim();
@@ -419,6 +485,7 @@ export async function compactLoopMessagesSemantic(
       modelWindowTokens: policy.modelWindowTokens,
       triggerTokens: policy.triggerTokens,
       targetTokens: policy.targetTokens,
+      summaryTokenBudget: policy.summaryTokenBudget,
       primerMessages: primerCount,
       recentMessages: recentCount,
       middleMessageCount: middleMessages.length,
