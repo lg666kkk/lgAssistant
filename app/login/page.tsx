@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getBrowserSupabase } from "@/lib/auth/client";
 
@@ -37,6 +37,14 @@ function getSafeNextPath(value: string | null) {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginFallback />}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = getBrowserSupabase();
@@ -201,6 +209,14 @@ export default function LoginPage() {
           {mode === "login" ? "没有账号？去注册" : "已有账号？去登录"}
         </button>
       </form>
+    </div>
+  );
+}
+
+function LoginFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+      加载登录页...
     </div>
   );
 }

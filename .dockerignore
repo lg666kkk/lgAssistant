@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+.env*
+data
+dist
+build
+out
+reports
+.DS_Store
+npm-debug.log*

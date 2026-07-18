@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      secrets:
+        - source: app_env
+          target: app_env
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      # Nginx on the host terminates public HTTP/HTTPS traffic.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - agent-artifacts:/app/data/agent-artifacts
+    restart: unless-stopped
+
+secrets:
+  app_env:
+    file: .env.production
+
+volumes:
+  agent-artifacts:

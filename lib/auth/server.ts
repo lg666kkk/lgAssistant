@@ -82,3 +82,15 @@ export async function requireUser(req: Request): Promise<User | Response> {
   const user = await getUserFromRequest(req);
   return user ?? unauthorized();
 }
+
+export async function requireConfigAdmin(req: Request, user?: User) {
+  const currentUser = user ?? await getUserFromRequest(req);
+  if (!currentUser?.email) return false;
+  const allowedEmails = new Set(
+    (process.env.CONFIG_ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return allowedEmails.has(currentUser.email.toLowerCase());
+}

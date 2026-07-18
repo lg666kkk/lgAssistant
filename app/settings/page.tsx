@@ -16,10 +16,31 @@ type ConfigGroup = {
   }>;
 };
 
+type RuntimeConfigItem = {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+  secret: boolean;
+  type: "text" | "select";
+  options?: string[];
+  configured: boolean;
+  value: string | null;
+  source: "database" | "environment" | "unset";
+  updatedAt?: string;
+};
+
 export default function SettingsPage() {
   const [configGroups, setConfigGroups] = useState<ConfigGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [runtimeItems, setRuntimeItems] = useState<RuntimeConfigItem[]>([]);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeLoading, setRuntimeLoading] = useState(true);
+  const [canEditRuntime, setCanEditRuntime] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [runtimeNotice, setRuntimeNotice] = useState<string | null>(null);
 
   const loadConfig = () => {
     setLoading(true);
@@ -33,6 +54,26 @@ export default function SettingsPage() {
       .then((data) => setConfigGroups(data.groups ?? []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+
+    setRuntimeLoading(true);
+    setRuntimeError(null);
+    authFetch("/api/settings/runtime-config", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "加载运行时配置失败");
+        return data as { canEdit: boolean; items: RuntimeConfigItem[] };
+      })
+      .then((data) => {
+        setCanEditRuntime(data.canEdit);
+        setRuntimeItems(data.items);
+        setDrafts(Object.fromEntries(
+          data.items
+            .filter((item) => !item.secret)
+            .map((item) => [item.key, item.value ?? ""]),
+        ));
+      })
+      .catch((e) => setRuntimeError(e.message))
+      .finally(() => setRuntimeLoading(false));
   };
 
   useEffect(() => {
@@ -44,6 +85,36 @@ export default function SettingsPage() {
     0,
   );
   const totalCount = configGroups.reduce((sum, group) => sum + group.items.length, 0);
+  const runtimeGroups = runtimeItems.reduce<Record<string, RuntimeConfigItem[]>>((groups, item) => {
+    (groups[item.group] ??= []).push(item);
+    return groups;
+  }, {});
+
+  const saveRuntimeConfig = async (item: RuntimeConfigItem) => {
+    const value = drafts[item.key]?.trim() ?? "";
+    if (!value) {
+      setRuntimeNotice(item.secret ? "请输入新的密钥后再保存" : "配置值不能为空");
+      return;
+    }
+    setSavingKey(item.key);
+    setRuntimeNotice(null);
+    try {
+      const response = await authFetch("/api/settings/runtime-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: item.key, value }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存运行时配置失败");
+      setRuntimeNotice(`${item.label} 已加密保存。业务链路接入该配置后会在缓存刷新时读取新值。`);
+      if (item.secret) setDrafts((current) => ({ ...current, [item.key]: "" }));
+      loadConfig();
+    } catch (saveError) {
+      setRuntimeNotice(saveError instanceof Error ? saveError.message : "保存运行时配置失败");
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   return (
     <AuthGate>
@@ -130,6 +201,86 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+
+        <section className="mt-8 border-t border-zinc-800 pt-8">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-100">运行时配置</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                动态配置保存到 Supabase；敏感值加密存储且不会回显。
+              </p>
+            </div>
+            <span className="rounded bg-zinc-900 px-2 py-1 text-xs text-zinc-500">
+              {canEditRuntime ? "配置管理员" : "只读"}
+            </span>
+          </div>
+
+          {runtimeLoading && <div className="mt-4 text-sm text-zinc-500">加载运行时配置...</div>}
+          {runtimeError && (
+            <div className="mt-4 rounded border border-amber-900 bg-amber-950/30 px-3 py-2 text-sm text-amber-300">
+              {runtimeError}
+            </div>
+          )}
+          {runtimeNotice && (
+            <div className="mt-4 rounded border border-sky-900 bg-sky-950/30 px-3 py-2 text-sm text-sky-300">
+              {runtimeNotice}
+            </div>
+          )}
+
+          {!runtimeLoading && !runtimeError && (
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              {Object.entries(runtimeGroups).map(([group, items]) => (
+                <section key={group} className="border border-zinc-800 bg-zinc-950">
+                  <h3 className="border-b border-zinc-800 px-4 py-3 text-sm font-medium text-zinc-200">{group}</h3>
+                  <div className="space-y-4 p-4">
+                    {items.map((item) => (
+                      <div key={item.key} className="border-b border-zinc-900 pb-4 last:border-0 last:pb-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <label htmlFor={`runtime-${item.key}`} className="text-sm text-zinc-200">{item.label}</label>
+                          <span className="text-xs text-zinc-600">
+                            {item.configured ? `已配置 (${item.source})` : "未配置"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-zinc-600">{item.description}</p>
+                        {item.type === "select" ? (
+                          <select
+                            id={`runtime-${item.key}`}
+                            value={drafts[item.key] ?? ""}
+                            disabled={!canEditRuntime}
+                            onChange={(event) => setDrafts((current) => ({ ...current, [item.key]: event.target.value }))}
+                            className="mt-2 w-full border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 disabled:opacity-50"
+                          >
+                            {item.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            id={`runtime-${item.key}`}
+                            type={item.secret ? "password" : "text"}
+                            value={drafts[item.key] ?? ""}
+                            placeholder={item.secret && item.configured ? "已配置；输入新值以覆盖" : "请输入配置值"}
+                            disabled={!canEditRuntime}
+                            onChange={(event) => setDrafts((current) => ({ ...current, [item.key]: event.target.value }))}
+                            className="mt-2 w-full border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-200 disabled:opacity-50"
+                          />
+                        )}
+                        {canEditRuntime && (
+                          <button
+                            type="button"
+                            onClick={() => void saveRuntimeConfig(item)}
+                            disabled={savingKey === item.key}
+                            className="mt-2 border border-sky-800 px-3 py-1.5 text-xs text-sky-300 hover:bg-sky-950 disabled:opacity-50"
+                          >
+                            {savingKey === item.key ? "保存中..." : "保存"}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
     </AuthGate>
