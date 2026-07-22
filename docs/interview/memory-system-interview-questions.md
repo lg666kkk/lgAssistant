@@ -2,7 +2,7 @@
 
 > 以面试官视角整理，按真实面试节奏逐层深入：概念分层 → 写入与生命周期 → 召回与上下文 → 安全隐私 → 可靠性 → 评测观测 → 代码深挖 → 生产故障与演进。
 > 每题给出「想听」「项目落点」或「追问」。回答时应区分已实现能力、工程取舍和待完善项，不把路线图当作当前事实。
-> 核心代码：`lib/agent/memory/`、`app/api/chat/route.ts`；设计说明：[layered-memory.md](./layered-memory.md)；SQL：`docs/schemas/*memories*.sql`。
+> 核心代码：`lib/agent/memory/`、`app/api/chat/route.ts`；设计说明：[layered-memory.md](../agent/memory/layered-memory.md)；SQL：`docs/schemas/*memories*.sql`。
 
 ---
 

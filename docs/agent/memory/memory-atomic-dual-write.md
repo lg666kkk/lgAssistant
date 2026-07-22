@@ -37,15 +37,15 @@ consolidate / handleExplicitForgetRequest
 
 ### 关键代码走读
 
-- SQL：[migrations/20260718-atomic-memory-write.sql](../schemas/migrations/20260718-atomic-memory-write.sql)
+- SQL：[migrations/20260718-atomic-memory-write.sql](../../schemas/migrations/20260718-atomic-memory-write.sql)
   的 `upsert_memory` / `invalidate_memory`。两条 `ON CONFLICT (user_id, key) DO UPDATE` 放在同一个
   函数体里，靠函数的隐式事务保证原子。`ON CONFLICT` 里**不覆盖 `created_at`**，保留首次创建时间。
-- `buildUpsertParams`（[atomic-writer.ts](../../lib/agent/memory/atomic-writer.ts)）刻意抽成**纯函数**：
+- `buildUpsertParams`（[atomic-writer.ts](../../../lib/agent/memory/atomic-writer.ts)）刻意抽成**纯函数**：
   它复用 `memoryColumnsFromMetadata` 把 metadata 里的 `type/source/confidence/importance/status` 归一到
   合法值（clamp + 白名单），避免违反表上的 CHECK 约束。纯函数没有 DB/embedding 依赖，能直接单测。
 - `MemoryWriter.upsert` 先 `embedSingle` 再 `rpc`：**embedding 失败发生在任何 DB 写之前**，所以失败
   路径也不会产生半写。
-- 结线：[memory-flow.ts](../../lib/agent/memory/memory-flow.ts) 三处 `Promise.all` 双写全部替换为
+- 结线：[memory-flow.ts](../../../lib/agent/memory/memory-flow.ts) 三处 `Promise.all` 双写全部替换为
   `writer.upsert` / `writer.invalidate`。`longTerm`/`semantic` store 仍保留，用于 `get`/`recall`/`touch`
   等读路径。
 
@@ -70,5 +70,5 @@ consolidate / handleExplicitForgetRequest
 ## 延伸阅读
 
 - [分层记忆系统](./layered-memory.md) — 记忆整体架构（本改动属于其中的写入可靠性一环）
-- 迁移：[20260718-atomic-memory-write.sql](../schemas/migrations/20260718-atomic-memory-write.sql)
-- 单测：[atomic-writer.test.ts](../../lib/agent/memory/atomic-writer.test.ts)
+- 迁移：[20260718-atomic-memory-write.sql](../../schemas/migrations/20260718-atomic-memory-write.sql)
+- 单测：[atomic-writer.test.ts](../../../lib/agent/memory/atomic-writer.test.ts)

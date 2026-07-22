@@ -1,6 +1,6 @@
 # 分层记忆系统（能力 2）
 
-> 后续治理优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
+> 后续治理优先级见 [企业级 Agent 路线图](../roadmap/enterprise-agent-roadmap.md)。
 > 本笔记随实现逐课追加，当前进度：**第 1~5 课（架构设计 / 长期记忆 / 语义记忆 / 记忆流动 / 会话记忆）均已完成。记忆系统完整。**
 
 ## 这个功能解决什么问题
@@ -36,7 +36,7 @@ SemanticMemoryStore                ← 仅语义层实现
   + recall(query, k)               ← 额外的「按相似度召回」能力
 ```
 
-实现位置：[types.ts](../../lib/agent/memory/types.ts)。本课只写类型/接口，零实现。
+实现位置：[types.ts](../../../lib/agent/memory/types.ts)。本课只写类型/接口，零实现。
 
 ### 技术选型与决策
 
@@ -48,9 +48,9 @@ SemanticMemoryStore                ← 仅语义层实现
 
 打通「写入 → 读回」完整闭环，第一个能真跑、有测试护航的实现。
 
-- 表结构：[memories-schema.sql](../../docs/schemas/memories-schema.sql)（表名 `agent_memories`）
-- 实现类：[longterm-store.ts](../../lib/agent/memory/longterm-store.ts)（`LongTermStore implements MemoryStore`）
-- 闭环测试：[longterm-store.test.ts](../../lib/agent/memory/longterm-store.test.ts)（连真实 Supabase，4 case 全绿）
+- 表结构：[memories-schema.sql](../../../docs/schemas/memories-schema.sql)（表名 `agent_memories`）
+- 实现类：[longterm-store.ts](../../../lib/agent/memory/longterm-store.ts)（`LongTermStore implements MemoryStore`）
+- 闭环测试：[longterm-store.test.ts](../../../lib/agent/memory/longterm-store.test.ts)（连真实 Supabase，4 case 全绿）
 
 **Supabase CRUD 套路**：`await getSupabase().from("表").动作(...)` → `{ data, error }`，永远先看 error。
 动作对照 SQL：`upsert`=INSERT..ON CONFLICT、`select+eq`=WHERE、`order/limit`=ORDER BY/LIMIT、`delete`=DELETE。
@@ -66,9 +66,9 @@ SemanticMemoryStore                ← 仅语义层实现
 
 收掉第一课拆 `SemanticMemoryStore` 的伏笔，实现按「意思」召回的 `recall`。
 
-- 表 + 函数：[semantic-memories-schema.sql](../../docs/schemas/semantic-memories-schema.sql)（表 `agent_semantic_memories` + 函数 `match_memories`）
-- 实现类：[semantic-store.ts](../../lib/agent/memory/semantic-store.ts)（`SemanticStore implements SemanticMemoryStore`）
-- 语义召回测试：[semantic-store.test.ts](../../lib/agent/memory/semantic-store.test.ts)（连真实 Supabase + embedding API，3 case 全绿）
+- 表 + 函数：[semantic-memories-schema.sql](../../../docs/schemas/semantic-memories-schema.sql)（表 `agent_semantic_memories` + 函数 `match_memories`）
+- 实现类：[semantic-store.ts](../../../lib/agent/memory/semantic-store.ts)（`SemanticStore implements SemanticMemoryStore`）
+- 语义召回测试：[semantic-store.test.ts](../../../lib/agent/memory/semantic-store.test.ts)（连真实 Supabase + embedding API，3 case 全绿）
 
 **一句话原理**：存时把文本转成 1024 维向量一起存；召回时把 query 也转向量，让数据库找向量最近的几条。
 
@@ -92,9 +92,9 @@ SemanticMemoryStore                ← 仅语义层实现
 
 把三层存储从「零件」变成「活系统」：对话自动召回、自动沉淀。
 
-- 编排层：[memory-flow.ts](../../lib/agent/memory/memory-flow.ts)（`recallForPrompt` 召回 + `consolidate` 沉淀）
-- 闭环测试：[memory-flow.test.ts](../../lib/agent/memory/memory-flow.test.ts)（端到端真调模型，3 case 全绿）
-- 接入点：[runtime/index.ts](../../lib/agent/runtime/index.ts)（callModel 加 system）+ [route.ts](../../app/api/chat/route.ts)（召回注入 + 沉淀触发）
+- 编排层：[memory-flow.ts](../../../lib/agent/memory/memory-flow.ts)（`recallForPrompt` 召回 + `consolidate` 沉淀）
+- 闭环测试：[memory-flow.test.ts](../../../lib/agent/memory/memory-flow.test.ts)（端到端真调模型，3 case 全绿）
+- 接入点：[runtime/index.ts](../../../lib/agent/runtime/index.ts)（callModel 加 system）+ [route.ts](../../../app/api/chat/route.ts)（召回注入 + 沉淀触发）
 
 **完整闭环**：
 ```
@@ -134,10 +134,10 @@ SemanticMemoryStore                ← 仅语义层实现
 
 补齐最后一层，让 Agent 在同一会话内记住上下文。
 
-- 类型定义：[types.ts](../../lib/agent/memory/types.ts)（`SessionMessage` + `SessionStore` 接口）
-- 实现类：[session-store.ts](../../lib/agent/memory/session-store.ts)（`RedisSessionStore implements SessionStore`）
-- 测试：[session-store.test.ts](../../lib/agent/memory/session-store.test.ts)（连真实本地 Redis，4 case 全绿）
-- 接入点：[route.ts](../../app/api/chat/route.ts)（读历史补全 + 写入本轮消息）
+- 类型定义：[types.ts](../../../lib/agent/memory/types.ts)（`SessionMessage` + `SessionStore` 接口）
+- 实现类：[session-store.ts](../../../lib/agent/memory/session-store.ts)（`RedisSessionStore implements SessionStore`）
+- 测试：[session-store.test.ts](../../../lib/agent/memory/session-store.test.ts)（连真实本地 Redis，4 case 全绿）
+- 接入点：[route.ts](../../../app/api/chat/route.ts)（读历史补全 + 写入本轮消息）
 
 ### 第 5 课核心概念
 
@@ -161,7 +161,7 @@ SemanticMemoryStore                ← 仅语义层实现
 - **接口成员逗号/分号混用**：TS 两者都合法但要风格统一，项目里统一用分号。
 - **`DEFAULT NOW()` 只在 INSERT 生效**：upsert 走 UPDATE 分支不刷新 `updated_at`，必须显式传 `updated_at: new Date().toISOString()`。
 - **`single()` 查不到会抛错**：要「查不到返回 null」必须用 `maybeSingle()`。
-- **坑3｜Node 20 + supabase-js 的 WebSocket 报错**：`createClient` 初始化 realtime 客户端，Node <22 无原生 WebSocket 直接抛错（即便根本不用 realtime）。报错信息建议装 `ws`，但实际 `ws` 已被装；真正修法是在 vitest setupFiles（[test-setup.ts](../../lib/test-setup.ts)）里把 `ws` 挂到 `globalThis.WebSocket`，只动测试环境、不改业务代码。
+- **坑3｜Node 20 + supabase-js 的 WebSocket 报错**：`createClient` 初始化 realtime 客户端，Node <22 无原生 WebSocket 直接抛错（即便根本不用 realtime）。报错信息建议装 `ws`，但实际 `ws` 已被装；真正修法是在 vitest setupFiles（[test-setup.ts](../../../lib/test-setup.ts)）里把 `ws` 挂到 `globalThis.WebSocket`，只动测试环境、不改业务代码。
 - **坑4｜接口早期漏字段，后期功能才暴露**：第 1 课定 `MemoryRecord` 时只加了 `id`（db 主键），漏了 `key`（业务键）。长期记忆没暴露问题，直到第 3 课 `recall` 想用 `key` 区分记录，才发现接口没这字段、`toRecord` 也没映射，表现为 `h.key === undefined`。修法：接口补 `key` + 两个 store 的 `toRecord` 都补 `key: row.key`。教训：早期接口的缺字段会在后期功能上爆出来。
 - **坑5｜测试清理放错位置导致向量召回被污染**：第 3 个用例把 `forget(k)` 写在断言**后面**，断言一失败就抛异常、跳过清理 → 垃圾数据累积（跑几次表里堆了 7 条「美式咖啡」）→ recall 召回全是残留、目标被挤出前 N → 又失败又不清理，恶性循环。表面「召回不准」，根因是「测试不自清理」。修法：清理一律放 `afterAll`，把所有用到的 key（含临时 key）统一登记清理；断言改成不依赖排名的稳健写法（验证「改内容后对新 query 的 score 升高」）。
 - **坑6｜配置一直是坏的，被 mock/手测掩盖**：`config.ts` 的 `model: 'deepseek-v4-pro'` + `apiKey: ANTHROPIC_API_KEY` 从未在真实路径用过——eval 走 mock 轨、聊天靠前端手测。`consolidate` 是**第一个在测试里真调模型的代码**，把坏配置炸出来。实测有效组合是 `ANTHROPIC_AUTH_TOKEN`(Bearer) + 模型 `claude-sonnet-4-6`（该端点其实是 Claude 代理）。教训：mock 轨绿 ≠ 真实链路通。⚠️ 主项目 config 仍坏，待单独修。
@@ -169,5 +169,5 @@ SemanticMemoryStore                ← 仅语义层实现
 
 ## 延伸阅读
 
-- 解耦同款套路：[tool-router](../../lib/agent/tools/tool-router.ts) 解耦工具与主循环。
-- 复用的基础设施：[supabase.ts](../../lib/platform/supabase.ts)（向量检索）、[embedding.ts](../../lib/knowledge/embedding.ts)（1024 维向量）。
+- 解耦同款套路：[tool-router](../../../lib/agent/tools/tool-router.ts) 解耦工具与主循环。
+- 复用的基础设施：[supabase.ts](../../../lib/platform/supabase.ts)（向量检索）、[embedding.ts](../../../lib/knowledge/embedding.ts)（1024 维向量）。

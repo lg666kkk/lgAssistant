@@ -2,7 +2,7 @@
 
 > 评估日期：2026-07-16（同日整合代码审查执行清单，原 observability-quick-wins.md 已并入本文）  
 > 评估依据：当前仓库 Trace、Langfuse/OTel、SSE、Usage、RAG 观测和 Eval 实现。  
-> 上下文专题参考：[Agent 上下文管理面试题库](./context-management-interview-questions.md)
+> 上下文专题参考：[Agent 上下文管理面试题库](../../interview/context-management-interview-questions.md)
 > 整合新增：关键缺口的 file:line 锚点、P1-5 降级路径上报、§9.0 快速落地批次（映射企业路线图 E9/E11）、§12 面试视角。
 
 ## 1. 结论
@@ -424,7 +424,7 @@ agent.run
 
 ### §9.0 快速落地批次（按成本排序，可穿插在下述阶段前先行）
 
-来自代码审查执行清单的低成本先行项，每批映射到本文阶段与[企业路线图](./enterprise-agent-roadmap.md)：
+来自代码审查执行清单的低成本先行项，每批映射到本文阶段与[企业路线图](../roadmap/enterprise-agent-roadmap.md)：
 
 | 批次 | 内容 | 成本 | 映射 |
 |---|---|---|---|

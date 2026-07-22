@@ -1,8 +1,8 @@
 # Agent 评估与可观测性面试题库（结合当前项目代码）
 
-> 以面试官视角整理，结构参考 [RAG 面试题库](../rag/rag-interview-questions.md)，按真实面试节奏逐层深入：概念边界 -> Trace 设计 -> 离线评估 -> 记忆专项评估 -> 线上监控 -> 可靠性与治理 -> 代码深挖 -> 故障排查与演进。
+> 以面试官视角整理，结构参考 [RAG 面试题库](./rag-interview-questions.md)，按真实面试节奏逐层深入：概念边界 -> Trace 设计 -> 离线评估 -> 记忆专项评估 -> 线上监控 -> 可靠性与治理 -> 代码深挖 -> 故障排查与演进。
 > 每题给出「想听」「项目落点」或「追问」。回答时建议使用“当前实现 -> 设计原因 -> 已知边界 -> 验证指标 -> 下一步演进”五段结构，不把 Langfuse、Trace UI 或少量通过的测试直接等同于生产级质量体系。
-> 核心代码：`lib/agent/runtime/trace.ts`、`lib/agent/eval/`、`app/api/chat/route.ts`、`lib/agent/memory/`；现状设计见 [observability-trace-eval.md](./observability-trace-eval.md) 和 [agent-observability-improvement-plan.md](./agent-observability-improvement-plan.md)。
+> 核心代码：`lib/agent/runtime/trace.ts`、`lib/agent/eval/`、`app/api/chat/route.ts`、`lib/agent/memory/`；现状设计见 [observability-trace-eval.md](../agent/observability/observability-trace-eval.md) 和 [agent-observability-improvement-plan.md](../agent/observability/agent-observability-improvement-plan.md)。
 
 ---
 

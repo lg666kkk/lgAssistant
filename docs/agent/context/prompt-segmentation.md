@@ -1,6 +1,6 @@
 # Prompt 段化注入（Prompt Pipe 最小内核）
 
-> 承接 [trace-visualization.md](./trace-visualization.md)（可视化）。  
+> 承接 [trace-visualization.md](../observability/trace-visualization.md)（可视化）。  
 > 对应 ROADMAP M2.4「Prompt Pipe 组装管道」的核心部分。
 
 ## 这个功能解决什么问题
@@ -47,7 +47,7 @@ traces/[id]/page.tsx
 
 ### 关键代码走读
 
-**[lib/agent/prompt/segments.ts](../../lib/agent/prompt/segments.ts)**  
+**[lib/agent/prompt/segments.ts](../../../lib/agent/prompt/segments.ts)**  
 三个段构造函数（纯函数，输入→段数组）：
 - `identity`（priority 最高）：固定身份文本，默认启用，`includeIdentity: false` 可关闭
 - `memory`：`recallForPrompt` 的返回直接作为 content，空串跳过不产生段
@@ -55,10 +55,10 @@ traces/[id]/page.tsx
 
 `renderSegments` 只做 `.map(s => s.content).join("\n\n")`——渲染结果与改造前的裸拼一致，模型侧无感知。
 
-**[runtime/index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop` 签名**  
+**[runtime/index.ts](../../../lib/agent/runtime/index.ts) `runAgentLoop` 签名**  
 新增末尾可选参数 `systemSegments?`，写进每轮 `modelStep.systemSegments`。整个 loop 的 system 不变，但逐 step 记录，单看任意 step 即可知道当轮注入了什么段。
 
-**[app/traces/[id]/page.tsx](../../app/traces/[id]/page.tsx) `SystemContext` 组件**  
+**[app/traces/[id]/page.tsx](../../../app/traces/[id]/page.tsx) `SystemContext` 组件**  
 段类型 → 配色 tag（identity=紫/memory=绿/web-search-policy=蓝），每段独立展开。`segments.length === 0 && !step.systemPrompt` 时返回 `null`，旧 trace 不会渲染空块。
 
 ### 技术选型与决策
@@ -77,4 +77,4 @@ traces/[id]/page.tsx
 ## 延伸阅读
 
 - 本次只做段化内核；后续完整 Prompt Pipe：加 `priority` 字段 + `TokenBudget` 预算裁剪（复用 [context-token-budget.md](./context-token-budget.md) 的 `estimateTokensFromText`），超预算时丢弃低优先级段并记进 `droppedSegmentIds`。
-- 上一篇（可视化）：[trace-visualization.md](./trace-visualization.md)
+- 上一篇（可视化）：[trace-visualization.md](../observability/trace-visualization.md)

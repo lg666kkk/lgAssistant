@@ -339,7 +339,7 @@ Chat UI / SSE
 
 RAG 已有独立的64道深挖题库，不在本文重复：
 
-- [RAG 面试题库](../rag/rag-interview-questions.md)
+- [RAG 面试题库](./rag-interview-questions.md)
 - 推荐重点：Q2完整链路、Q10多租户、Q18融合、Q24原子同步、Q28 Prompt Injection、Q30指标、Q35 Ablation、Q43发布门禁、Q48自纠错检索、Q59 Claim-level Attribution。
 
 ### 跨模块追问

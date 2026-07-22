@@ -8,7 +8,7 @@
 
 ## 这个功能解决什么问题
 
-当前项目所有"到点该做的事"都靠**前端主动请求**触发（典型是 [app/api/leetcode/daily/route.ts](../../app/api/leetcode/daily/route.ts)：用户打开页面才 GET 一次每日练习）。这意味着：
+当前项目所有"到点该做的事"都靠**前端主动请求**触发（典型是 [app/api/leetcode/daily/route.ts](../../../app/api/leetcode/daily/route.ts)：用户打开页面才 GET 一次每日练习）。这意味着：
 
 - 用户不打开页面，什么都不会发生（无法"每天早上自动推送"）；
 - 无法让用户自定义"每天 9 点提醒我喝水"这类动态任务；
@@ -334,9 +334,9 @@ default_channel      text      -- 该用户默认走哪个通道
 
 ## 延伸阅读
 
-- [app/api/leetcode/daily/route.ts](../../app/api/leetcode/daily/route.ts) —— 现有"伪定时任务"，最先改造的对象
-- [lib/agent/runtime/index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop` —— agent-task handler 的复用点
-- [lib/chat/session-manager.ts](../../lib/chat/session-manager.ts) —— 多用户会话隔离参考
+- [app/api/leetcode/daily/route.ts](../../../app/api/leetcode/daily/route.ts) —— 现有"伪定时任务"，最先改造的对象
+- [lib/agent/runtime/index.ts](../../../lib/agent/runtime/index.ts) `runAgentLoop` —— agent-task handler 的复用点
+- [lib/chat/session-manager.ts](../../../lib/chat/session-manager.ts) —— 多用户会话隔离参考
 - `cron-parser`（npm）—— cron 表达式解析与下次时间计算
 - Vercel Cron Jobs 官方文档 —— 心跳来源之一
 - Telegram Bot API `sendMessage` / `getUpdates` / `setWebhook` —— TG 通道接入

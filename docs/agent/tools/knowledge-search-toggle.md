@@ -83,6 +83,6 @@ if (enableKnowledgeSearch && shouldAutoSearchKnowledge(lastUser.content)) {
 - `tsc --noEmit` 会报 `lib/agent/memory/session-store.ts` 的两个既有错误（`RedisSessionClient.on` 不存在），与本功能无关，是该文件已有的未提交改动，勿被误导。
 
 ## 延伸阅读
-- [prompt-segmentation.md](./prompt-segmentation.md) — 知识库检索结果如何作为一个段注入 system prompt
+- [prompt-segmentation.md](../context/prompt-segmentation.md) — 知识库检索结果如何作为一个段注入 system prompt
 - `lib/agent/tools/search-notes.ts` — `search_notes` 工具定义
 - `lib/knowledge/retriever.ts` — RAG 检索实现

@@ -8,7 +8,7 @@
 | 目的 | 文档 |
 |---|---|
 | 理解整个项目 | [项目全模块总结与面试题](./interview/project-modules-interview-guide.md) |
-| 查看后续建设优先级 | [企业级 Agent 路线图](./agent/enterprise-agent-roadmap.md) |
+| 查看后续建设优先级 | [企业级 Agent 路线图](./agent/roadmap/enterprise-agent-roadmap.md) |
 | 理解当前 Agentic RAG | [Agentic RAG 生产化实现](./rag/agentic-rag-production.md) |
 | 查找专题文档 | [文档分类索引](./docs-catalog.md) |
 | 初始化或迁移数据库 | [数据库初始化指南](./database/database-setup-guide.md) / [schemas](./schemas/) |

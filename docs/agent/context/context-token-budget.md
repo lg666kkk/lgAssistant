@@ -1,6 +1,6 @@
 # 上下文与 Token 预算管理
 
-> 当前建设优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
+> 当前建设优先级见 [企业级 Agent 路线图](../roadmap/enterprise-agent-roadmap.md)。
 
 ## 这个功能解决什么问题
 
@@ -33,17 +33,17 @@ for 每一轮 (上限 maxToolIterations):
 
 ### 关键代码走读
 
-**[budget.ts](../../lib/agent/runtime/budget.ts) — `TokenBudget.spend`**
+**[budget.ts](../../../lib/agent/runtime/budget.ts) — `TokenBudget.spend`**
 ```ts
 spend(tokens: number) {
   this.spent += Math.max(0, tokens);  // 负数当 0，防止把预算"倒加"回去
 }
 ```
 
-**[budget.ts](../../lib/agent/runtime/budget.ts) — `truncateToolContent`**
+**[budget.ts](../../../lib/agent/runtime/budget.ts) — `truncateToolContent`**
 截断后仍返回 `truncated` / `originalChars` 元数据，这样前端和 trace 能知道"这里发生过截断"，而不是悄悄丢内容。
 
-**[runtime/index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop`**
+**[runtime/index.ts](../../../lib/agent/runtime/index.ts) `runAgentLoop`**
 ```ts
 const compacted = compactLoopMessages(loopMessages, { maxTokens: 16_000, keepRecentMessages: 4 });
 loopMessages = compacted.messages;
@@ -53,7 +53,7 @@ tokenBudget.spend(estimatedContextTokens);
 ```
 顺序很关键：**先压缩、再估算、再问预算**。压缩在前，预算检查看到的才是压缩后的真实大小。
 
-**[compaction.ts](../../lib/agent/runtime/compaction.ts) — 保留结构**
+**[compaction.ts](../../../lib/agent/runtime/compaction.ts) — 保留结构**
 ```ts
 const firstMessage = messages[0];                              // 首条（含 system/RAG 注入）必须留
 const recentMessages = messages.slice(-keepRecentMessages);    // 最近 K 条原文留
@@ -75,4 +75,4 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 ## 延伸阅读
 
 - Anthropic: Effective context engineering / context management
-- 关联实现：[可观测性：Trace 与 Eval](./observability-trace-eval.md)。
+- 关联实现：[可观测性：Trace 与 Eval](../observability/observability-trace-eval.md)。

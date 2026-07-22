@@ -1,6 +1,6 @@
 # 结构化事件协议（能力 4）
 
-> 当前建设优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
+> 当前建设优先级见 [企业级 Agent 路线图](../roadmap/enterprise-agent-roadmap.md)。
 > 从文本 marker 协议升级为 SSE 事件流。
 
 ## 这个功能解决什么问题

@@ -2,7 +2,7 @@
 
 > 以面试官视角整理的 RAG 考察题库，按真实面试节奏逐层深入：概念动机 → 数据摄取 → 检索核心 → 工程生产化 → Agentic RAG → 评测调优 → 线上故障 → 前沿方向。
 > 每题给出「回答思路」和「追问方向」。回答思路不是标准答案，而是帮助你按照“当前实现 → 设计原因 → 已知取舍 → 验证指标 → 下一步演进”组织表达。
-> 项目对照：本项目的实现见 [rag-implementation.md](./rag-implementation.md)，检索代码在 `lib/knowledge/retriever.ts`，工具接入在 `lib/agent/tools/search-notes.ts`，评测脚本在 `scripts/rag-eval.ts`。
+> 项目对照：本项目的实现见 [rag-implementation.md](../rag/rag-implementation.md)，检索代码在 `lib/knowledge/retriever.ts`，工具接入在 `lib/agent/tools/search-notes.ts`，评测脚本在 `scripts/rag-eval.ts`。
 
 ---
 

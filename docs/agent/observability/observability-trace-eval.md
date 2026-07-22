@@ -32,20 +32,20 @@ Eval 腿：cases.ts 定义期望 → run-eval.test.ts 跑 loop → 断言 trace/
 
 ### 关键代码走读
 
-**[trace.ts](../../lib/agent/runtime/trace.ts) — 判别联合**
+**[trace.ts](../../../lib/agent/runtime/trace.ts) — 判别联合**
 `TraceStep = ModelTraceStep | ToolTraceStep`，公共基 `TraceStepBase` 带 model/tool 共享的递增 `index`（还原真实时间线）。`summarizeText` 复用 `truncateToolContent(text, 500)`，避免散落魔法数字。
 
-**[index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop` — finalizeTrace 去重**
+**[index.ts](../../../lib/agent/runtime/index.ts) `runAgentLoop` — finalizeTrace 去重**
 4 个 return 出口（completed / token_budget_exceeded / repeated_tool_call / max_iterations）都要回填 `stopReason/completed/endedAt/totalDurationMs/metrics`。提取本地 `finalizeTrace(stopReason, completed)` 就地改并 return trace，每个出口写一行 `trace: finalizeTrace(...)`，避免重复 20 行。
 
-**[trace-store.ts](../../lib/agent/runtime/trace-store.ts) — 落库**
+**[trace-store.ts](../../../lib/agent/runtime/trace-store.ts) — 落库**
 ```ts
 if (!hasSupabaseConfig()) return;            // 没配置静默跳过
 const { error } = await getSupabase().from("agent_traces").insert({...});
 if (error) console.error("[saveTrace] 落库失败:", error.message);  // 失败只记录不抛
 ```
 
-**[run-eval.test.ts](../../lib/agent/eval/run-eval.test.ts) — 双轨**
+**[run-eval.test.ts](../../../lib/agent/eval/run-eval.test.ts) — 双轨**
 ```ts
 describe("eval (mock)", () => { /* 注入 fakeCallModel，验证编排，默认跑 */ });
 describe.skipIf(!RUN_LIVE)("eval (live)", () => { /* EVAL_LIVE=1 才真调模型 */ });
@@ -69,6 +69,6 @@ describe.skipIf(!RUN_LIVE)("eval (live)", () => { /* EVAL_LIVE=1 才真调模型
 
 ## 延伸阅读
 
-- 上一步：[context-token-budget.md](./context-token-budget.md)（能力1，本笔记的 trace 复用了它的 `truncateToolContent`）。
+- 上一步：[context-token-budget.md](../context/context-token-budget.md)（能力1，本笔记的 trace 复用了它的 `truncateToolContent`）。
 - 进阶方向：LLM-as-judge 给开放式回答打分；trace 前端可视化（依赖能力4 结构化事件协议，届时一起做）；eval 输出通过率/平均耗时/token 汇总表。
 - Anthropic: Building effective agents / 可观测性实践。

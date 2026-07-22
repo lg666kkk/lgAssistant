@@ -1,6 +1,6 @@
 # Agent Harness 面试题库（结合当前项目代码）
 
-> 以面试官视角整理，参考 [RAG 面试题库](../rag/rag-interview-questions.md) 的分层方式，并结合当前项目的记忆、上下文、工具、规划、观测和评测实现。
+> 以面试官视角整理，参考 [RAG 面试题库](./rag-interview-questions.md) 的分层方式，并结合当前项目的记忆、上下文、工具、规划、观测和评测实现。
 > 每题给出「想听」「项目落点」「追问」或「边界」。回答时必须区分已经运行在生产路径中的机制和路线图能力。
 > 核心入口：`app/api/chat/route.ts`、`lib/agent/runtime/index.ts`、`lib/agent/runtime/plan-execution.ts`、`lib/agent/tools/`、`lib/agent/context/`、`lib/agent/memory/`、`lib/agent/eval/`。
 
@@ -363,7 +363,7 @@ Harness 不是模型，也不是某个 SDK。在本项目中，它是包围模�
 | 记忆状态 | `lib/agent/memory/`、`route.ts` | 推理前召回、显式忘记、完整 transcript 后沉淀；普通写入仍 best-effort |
 | 观测 | `lib/agent/runtime/trace.ts`、Langfuse/OTel | 本地 Agent 语义 trace + 外层 observation；尚未统一 durable AgentRun |
 | Eval | `lib/agent/eval/`、`scripts/langfuse-eval.ts` | mock/live 分轨；当前核心 runner 绕过生产 Route |
-| Replay | `docs/agent/enterprise-agent-roadmap.md` | 只有设计目标，`lib/agent/harness/*` 尚未实现 |
+| Replay | `docs/agent/roadmap/enterprise-agent-roadmap.md` | 只有设计目标，`lib/agent/harness/*` 尚未实现 |
 
 ---
 

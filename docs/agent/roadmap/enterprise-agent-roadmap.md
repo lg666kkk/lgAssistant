@@ -26,7 +26,7 @@
 
 | 问题 | 证据 | 严重度 |
 |---|---|---|
-| 工具确认接口 = 任意工具执行接口 | [confirm/route.ts](../../app/api/tools/confirm/route.ts) 直接接收客户端 `toolCall.name + input`，带 `approved: true` 执行——「确认」是客户端自我声明，登录用户可绕过风险分级执行任何工具 | **最高** |
+| 工具确认接口 = 任意工具执行接口 | [confirm/route.ts](../../../app/api/tools/confirm/route.ts) 直接接收客户端 `toolCall.name + input`，带 `approved: true` 执行——「确认」是客户端自我声明，登录用户可绕过风险分级执行任何工具 | **最高** |
 | cron 鉴权可伪造 | 已由 `lib/scheduler/cron-auth.ts` 统一改为 Bearer/x-cron-secret 严格校验，伪造 UA 不再放行 | 已修复 |
 | webhook SSRF | `scheduler/handlers/` reminder 向用户提供的 webhook 地址发请求，无内网/metadata endpoint 防护 | 高 |
 
@@ -103,7 +103,7 @@ P0 ──> P1 ──> P2 ──┐
 
 ### E0.1 工具审批改服务端绑定 — M / 最高优先级
 
-- **缺口**：[confirm/route.ts](../../app/api/tools/confirm/route.ts) 接收客户端传来的完整 `toolCall` 并以 `approved: true` 执行。任何登录用户可构造请求执行任意工具、任意参数，`riskLevel` 分级形同虚设。
+- **缺口**：[confirm/route.ts](../../../app/api/tools/confirm/route.ts) 接收客户端传来的完整 `toolCall` 并以 `approved: true` 执行。任何登录用户可构造请求执行任意工具、任意参数，`riskLevel` 分级形同虚设。
 - **改法**：
   1. loop 内工具返回 `pending_confirmation` 时（`tool-router.ts:92`），服务端把 pending 调用落库：`pending_actions(id, user_id, session_id, tool_name, input_hash, input_ref, risk, expires_at, status)`；
   2. 前端只拿到 `pendingActionId`，确认时仅提交这个 id（一次性 approval token）；

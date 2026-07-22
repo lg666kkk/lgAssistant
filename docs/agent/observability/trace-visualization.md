@@ -30,10 +30,10 @@ trace 之前只有两种存在形式：终端里一闪而过的 `formatTraceTree
 
 ### 关键代码走读
 
-**[trace.ts](../../lib/agent/runtime/trace.ts) — 给 model step 加 systemPrompt**
+**[trace.ts](../../../lib/agent/runtime/trace.ts) — 给 model step 加 systemPrompt**
 `ModelTraceStep` 新增 `systemPrompt?` / `systemPromptTruncated?` / `systemPromptOriginalChars?`，全部可选——旧 trace 没有这些字段，类型上也兼容。复用已有的 `summarizeText`（即 `truncateToolContent(text, 500)`）截断，不引新的截断逻辑。
 
-**[index.ts](../../lib/agent/runtime/index.ts) `runAgentLoop`**
+**[index.ts](../../../lib/agent/runtime/index.ts) `runAgentLoop`**
 ```ts
 const systemSummary = system ? summarizeText(system) : undefined;
 // modelStep 里：
@@ -41,10 +41,10 @@ systemPrompt: systemSummary?.content,
 ```
 整个 loop 的 `system` 不变，但仍逐 step 记录——这样单看任意一步就知道当时注入的上下文，不必回溯到请求开头。
 
-**[api/traces/route.ts](../../app/api/traces/route.ts) vs [[id]/route.ts](../../app/api/traces/[id]/route.ts)**
+**[api/traces/route.ts](../../../app/api/traces/route.ts) vs [[id]/route.ts](../../../app/api/traces/[id]/route.ts)**
 列表 `.select("id,request_id,...,metrics,created_at")` 显式列字段、跳过 `steps`；详情 `.select("*").eq("id",id).maybeSingle()`。`maybeSingle` 在查不到时返回 `null` 而非抛错，方便返回 404。
 
-**[traces/[id]/page.tsx](../../app/traces/[id]/page.tsx) — Collapsible 优雅降级**
+**[traces/[id]/page.tsx](../../../app/traces/[id]/page.tsx) — Collapsible 优雅降级**
 `Collapsible` 在 `body` 为空串时 `return null`。所以旧 trace（没有 `systemPrompt`）不会渲染出空的「查看注入的 system prompt」开关，新 trace 才显示。无需对新旧数据分支判断，空即隐藏。
 
 ### 技术选型与决策
