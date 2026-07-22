@@ -6,6 +6,32 @@
 
 ---
 
+## 当前模块功能总结
+
+本项目的 RAG 已经不是固定的“向量 TopK 后前置注入”，而是由离线摄取、在线路由、受控检索和答案校验组成的完整链路：
+
+```text
+离线：Notion → 结构/Token 感知切块 → 批量 Embedding 完整性校验
+    → PostgreSQL 原子替换 → Index Snapshot / Rollback
+
+在线：用户问题 → RetrievalAnchor / Standalone Query → RetrievalPlan
+    → knowledge / web / both / no_retrieval 路由
+    → Query Rewrite → Vector + Keyword 并行召回
+    → RRF 或校准加权 → Rule/Cross-Encoder Rerank → Vector MMR
+    → Evidence Grader → EvidenceBundle
+    → Claim-level Citation / Groundedness Guard → Trace / Eval
+```
+
+当前实现中值得在面试时重点讲清的边界：
+
+- `evidenceRequired=true` 表示用户明确要求私有知识或实时公开证据，检索失败时不能用模型参数知识伪装成已检索答案；知识画像软命中则允许降级。
+- Knowledge Cache 按租户和索引版本隔离；Web Cache 不跟随私有知识索引版本失效，但按搜索深度隔离。
+- Ingestion 使用数据库 lease、有限重试和 dead 状态；同一页面的文档替换通过数据库事务和 advisory lock 保证一致性。
+- 最终回答已经执行基于 Evidence ID 的 Claim-level 检查，但当前支撑关系使用词面重叠启发式，不等于经过校准的 NLI/LLM Verifier。
+- `web_fetch` 已限制协议、字面内网地址、重定向次数、响应大小和类型，但尚未做到 DNS 解析后 IP 校验，不能把它描述成完整 SSRF 防护。
+
+---
+
 ## 使用方式
 
 每题先练 60-90 秒主回答，再练 2-3 个追问。项目题不要只说“业界一般怎么做”，推荐固定使用下面的五段结构：
@@ -384,8 +410,38 @@
 
 - **想听**：有来源列表不代表回答中的每个事实都被来源支持。成熟链路会把答案拆成原子 claim，为每条 claim 绑定 source span，再用 NLI/LLM judge 或规则检查 entailment、矛盾和引用完整性；无证据 claim 删除、改写为不确定表达或触发补充检索。
 - **冲突处理**：多个来源互相矛盾时不能让模型静默平均。应保留 `source authority + version + valid time + retrieval score`，区分「来源冲突」和「证据不足」；无法自动裁决时把冲突明确展示给用户。Verifier 也不是绝对真相，需要用人工标注集校准并监控误拒绝率。
-- **项目落点**：当前 Trace 能展示检索分数和来源，运行时也会发送 sources 事件，但生成阶段没有强制 claim-citation 映射和 entailment 校验。下一步可先定义 `claimEvidence[]` 结构并做离线 citation precision/recall，再决定是否在线增加 verifier 模型调用。
+- **项目落点**：当前生成策略要求模型使用 `[ev_xxx]` Evidence ID，`verifyGroundedAnswer` 会按句拆分 claim，检查未知引用、引用覆盖、词面支持、citation precision 和 groundedness；失败时 `applyGroundednessGuard` 会拒答或追加风险提示。它已经是在线 Claim-level Guard，但词面重叠不能可靠判断同义支持、否定和矛盾，因此下一步应引入可校准的 NLI/LLM Verifier，并保留当前规则作为低成本第一层。
 - **追问**：Verifier 应该阻断回答还是只打分？（低风险场景先旁路打分收集分布；高风险领域或明确无证据 claim 才阻断，避免未经校准的 judge 造成大面积误拒绝）
+
+### Q60. `evidenceRequired` 为什么是 RAG 路由中的关键字段？
+
+- **回答思路**：路由不只决定“用不用检索”，还要表达检索失败后的正确性语义。用户明确要求“查我的笔记”“联网看最新官网”时，证据是硬需求；知识画像只是推测相关时，检索属于软优化。把两者混在一起，会导致硬需求下无证据乱答，或软命中失败时无谓拒答。
+- **项目落点**：`buildRetrievalPlan` 对显式 private/web/both 意图设置 `evidenceRequired=true`，知识画像 overlap 路由保持 false；最终 `verifyGroundedAnswer` 在硬需求且零证据时返回 fail。
+- **追问**：`webEnabled=false` 时用户明确问最新信息怎么办？（不能保留不可用 Web 工具；应明确能力受限，不能把旧参数知识描述成已联网结果）
+
+### Q61. Query Cache 为什么必须同时考虑租户、索引版本和数据源？
+
+- **回答思路**：只按 query 缓存会造成跨用户泄漏；知识库更新后旧结果会变陈旧；Web 搜索与私有知识有不同的失效条件，不能共用同一个版本键。缓存键要覆盖所有影响结果的维度，同时对返回值做 defensive clone，避免调用方修改缓存对象。
+- **项目落点**：Knowledge Cache 按 tenant、indexVersion、query 和 filters 隔离；Web Cache 使用独立版本并区分 search depth，不会因为某个用户的私有索引升级而全量失效。
+- **追问**：索引切换后是否应该立即删除旧缓存？（版本化 key 可让旧缓存自然失效；再通过 TTL/容量清理，避免同步删除成为发布阻塞点）
+
+### Q62. RAG Ingestion Worker 如何防止两个 Worker 同时处理一条任务？
+
+- **回答思路**：用数据库 RPC 原子 claim，写入 `worker_id`、`lease_until`、`status=running` 和 attempts；完成或失败更新时再次校验 worker/status，lease 丢失就不能覆盖新 Worker 的结果。失败采用有界指数退避，耗尽后进入 dead 状态。
+- **项目落点**：`claim_rag_ingestion_jobs` 负责领取；应用完成更新使用 `id + worker_id + running` 条件。页面索引替换内部还使用事务级 advisory lock，解决“任务唯一”和“同页写入串行”两个不同层次的问题。
+- **追问**：Worker 执行超过 lease 怎么办？（长任务需要 heartbeat 续租；没有续租时应把 lease 设为最坏耗时并监控 lease_lost，不能无限加大 lease 掩盖问题）
+
+### Q63. `web_fetch` 当前做了哪些 SSRF 防护？还缺什么？
+
+- **回答思路**：已有 URL 解析、仅允许 HTTP(S)、字面 localhost/私网/云元数据地址拦截、手动重定向逐跳校验、响应类型/大小限制和超时。缺口是 DNS 解析后未检查实际 IP，也没有把连接固定到已验证地址，仍可能被 DNS rebinding 或特殊地址表示绕过。
+- **项目落点**：安全判断位于 `lib/agent/tools/web-fetch.ts`；生产强化应使用安全 DNS resolver，拒绝 private/reserved CIDR，逐次重定向重新解析，或让受控 egress proxy 统一执行外连。
+- **追问**：为什么只判断 hostname 字符串不够？（合法域名可以解析到内网地址，并可在校验与连接之间改变解析结果）
+
+### Q64. RAG 失败时如何设计“可观测降级”而不是静默 fallback？
+
+- **回答思路**：区分路由失败、embedding、keyword RPC、reranker、cache、超时、证据不足和回答校验失败；每种降级都写入 Trace 的 reason、attempt、timing 和 evidence 状态。只有不破坏用户证据承诺的路径才能降级。
+- **项目落点**：RetrievalTrace 已包含 route、evidenceRequired、attempts、cacheHits、thresholdFallback、scoreGap、degradationReason 和 timings；Langfuse summary 避免上传原始 query。下一步应按 reason 建低基数 Metrics 和告警。
+- **追问**：为什么“返回一个空数组”不是合格降级？（调用方无法区分真实无结果与系统故障，线上 no-result 率也会被基础设施错误污染）
 
 ### 前沿术语速查
 
@@ -429,6 +485,10 @@
 | 关键词 SQL | `docs/schemas/migrations/20260704-rag-keyword-search.sql` | Postgres FTS、LIKE/overlap 中文兜底、用户过滤 |
 | 多租户 | `docs/schemas/migrations/20260628-rag-multitenant.sql` | user_id、RPC pre-filter、HNSW、级联删除 |
 | Agent 工具 | `lib/agent/tools/search-notes.ts` | 固定阈值检索、有限 query retry、EvidenceBundle 与 RAG debug metadata |
+| Retrieval Router | `lib/agent/rag/retrieval-router.ts` | hard/soft evidence、knowledge/web/both/no_retrieval、工具过滤和步骤级收窄 |
+| Evidence Guard | `lib/agent/rag/answer-verifier.ts` | Evidence ID、claim 拆分、引用精度/覆盖率和 groundedness guard |
+| Query Cache | `lib/agent/rag/query-cache.ts` | tenant/index/source/depth 隔离、TTL 与 defensive clone |
+| Ingestion Queue | `lib/knowledge/ingestion-queue.ts` | 数据库 lease、指数退避、dead 状态和 worker 所有权校验 |
 | 知识库画像 | `lib/agent/tools/knowledge-profile.ts` | wiki summary 压缩、source hash 缓存和持久化 |
 | 评测数据 | `lib/agent/eval/rag-cases.ts` | 六类 case 结构、当前规模限制 |
 | 评测脚本 | `scripts/rag-eval.ts` | Recall@K/MRR/no-result、RRF/weighted、multi-query 和 Cross-Encoder 消融 |
@@ -436,4 +496,4 @@
 
 ## 一句话复习版
 
-这套项目的亮点不是“用了向量数据库”，而是已经形成 **版本化且原子化的摄取 + standalone/multi-query 并行召回 + RRF + 条件精排 + 向量 MMR + parent-child 上下文 + Agent 工具路由 + 可消融评测 + Trace** 的完整骨架；面试时最重要的是既能讲清这条链路，也能诚实指出 **评测规模、真实 provider/数据库集成、parent 存储模型和语义切块** 仍需继续工程化。
+这套项目的亮点不是“用了向量数据库”，而是已经形成 **版本化且原子化的摄取 + standalone/multi-query 并行召回 + RRF + 条件精排 + 向量 MMR + parent-child 上下文 + hard/soft evidence 路由 + Claim-level Guard + 可消融评测 + Trace** 的完整骨架；面试时最重要的是既能讲清这条链路，也能诚实指出 **评测规模、真实 provider/数据库集成、词面 Verifier、DNS 级 SSRF 防护、parent 存储模型和语义切块** 仍需继续工程化。

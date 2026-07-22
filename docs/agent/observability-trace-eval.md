@@ -1,6 +1,6 @@
 # 可观测性：Trace 与 Eval
 
-> 对应 [agent-core-capabilities-roadmap.md](./agent-core-capabilities-roadmap.md) 能力 3（⭐⭐⭐）。
+> 后续完善项见 [Agent 可观测性现状评估与完善方案](./agent-observability-improvement-plan.md)。
 
 ## 这个功能解决什么问题
 

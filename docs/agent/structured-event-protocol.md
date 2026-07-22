@@ -1,6 +1,6 @@
 # 结构化事件协议（能力 4）
 
-> 对应 [agent-core-capabilities-roadmap.md](./agent-core-capabilities-roadmap.md) 能力 4。
+> 当前建设优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
 > 从文本 marker 协议升级为 SSE 事件流。
 
 ## 这个功能解决什么问题
@@ -141,4 +141,4 @@ data:{"type":"done"}\n\n
 - [MDN: Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
 - [@microsoft/fetch-event-source](https://github.com/Azure/fetch-event-source)
 - 同款判别联合：[Anthropic content block types](https://docs.anthropic.com/en/api/messages)
-- 下一步：[能力 5 Planning](./agent-core-capabilities-roadmap.md)——`{type:"plan_step"}` 等新事件类型可直接加入联合，switch 加一个 case 即可
+- Planning 已落地；新增事件仍需同步扩展事件联合类型、SSE 序列化和前端 `switch` 分支。

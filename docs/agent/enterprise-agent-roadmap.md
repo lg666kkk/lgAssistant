@@ -1,10 +1,8 @@
 # 企业级 Agent 路线图（2026-07 整合版 · 当前主文档）
 
-> 本文整合了两个来源：
-> - [agent-roadmap-final.md](./agent-roadmap-final.md) —— 能力成熟度对标（mem0 / Zep / Claude Code / LangSmith），其未完成条目沿用 C/M/H 编号。
-> - [enterprise-agent-platform-roadmap.md](./enterprise-agent-platform-roadmap.md) —— 独立评估版平台路线图，贡献了 P0 安全阻断项（已逐条代码验证）、AgentRun 状态机、模型网关、SLO、非目标与完成定义，现存档为架构北极星来源。
->
-> 分工：**本文是执行主文档**（file:line 锚点 + 条目级验收，回答「下一步改哪个文件」）；平台版存档保留系统级视角原文。
+> 本文是唯一的 Agent 建设主路线图，已整合早期成熟度对标、架构蓝图和平台评估。
+> 历史版本不再留在 `docs`，需要时从 Git 追溯。
+> 本文以 file:line 锚点和条目级验收回答「下一步改哪个文件」。
 > 新增企业级条目用 E 系列编号。成本口径：S（半天）/ M（1-2 天）/ L（3 天+）。
 
 ---
@@ -120,7 +118,7 @@ P0 ──> P1 ──> P2 ──┐
 
 ### E0.3 webhook / 外发请求统一 SSRF 防护 — S~M / 高
 
-- **缺口**：reminder handler 向用户提供的 webhook 地址直接发请求；web_fetch 的 SSRF 防护（见 `web-fetch-implementation-plan.md`）未覆盖 scheduler 出口。
+- **缺口**：reminder handler 向用户提供的 webhook 地址直接发请求；`lib/agent/tools/web-fetch.ts` 的 SSRF 防护未覆盖 scheduler 出口。
 - **改法**：抽公共 `safeOutboundFetch`：协议白名单（https）、DNS 解析后校验 IP 非 loopback/私网/link-local/metadata 段、重定向后复检、超时与响应大小上限；webhook 与 web_fetch 共用。
 - **验收**：webhook 指向 `127.0.0.1`、`10.x`、`169.254.169.254` 均被拒绝并记录。
 

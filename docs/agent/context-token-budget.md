@@ -1,6 +1,6 @@
 # 上下文与 Token 预算管理
 
-> 对应 [agent-core-capabilities-roadmap.md](./agent-core-capabilities-roadmap.md) 能力 1（⭐⭐⭐ 地基）。
+> 当前建设优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
 
 ## 这个功能解决什么问题
 
@@ -75,4 +75,4 @@ const olderMessages = messages.slice(1, -keepRecentMessages);  // 中间的摘�
 ## 延伸阅读
 
 - Anthropic: Effective context engineering / context management
-- 下一步：[agent-core-capabilities-roadmap.md](./agent-core-capabilities-roadmap.md) 能力 3（可观测性/Eval）——本次已在 [route.ts](../../app/api/chat/route.ts) 打了 `[AgentLoopMetrics]` 日志，正是 trace 的引子。
+- 关联实现：[可观测性：Trace 与 Eval](./observability-trace-eval.md)。

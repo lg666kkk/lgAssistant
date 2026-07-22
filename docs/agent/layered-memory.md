@@ -1,6 +1,6 @@
 # 分层记忆系统（能力 2）
 
-> 对应 [agent-core-capabilities-roadmap.md](./agent-core-capabilities-roadmap.md) 能力 2。
+> 后续治理优先级见 [企业级 Agent 路线图](./enterprise-agent-roadmap.md)。
 > 本笔记随实现逐课追加，当前进度：**第 1~5 课（架构设计 / 长期记忆 / 语义记忆 / 记忆流动 / 会话记忆）均已完成。记忆系统完整。**
 
 ## 这个功能解决什么问题

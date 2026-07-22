@@ -2,7 +2,7 @@
 
 > 评估日期：2026-07-16（同日整合代码审查执行清单，原 observability-quick-wins.md 已并入本文）  
 > 评估依据：当前仓库 Trace、Langfuse/OTel、SSE、Usage、RAG 观测和 Eval 实现。  
-> 上下文专项分析：[Agent 上下文管理现状评估](./context-management-review.md)、[上下文管理问题清单](./context-management-issues.md)  
+> 上下文专题参考：[Agent 上下文管理面试题库](./context-management-interview-questions.md)
 > 整合新增：关键缺口的 file:line 锚点、P1-5 降级路径上报、§9.0 快速落地批次（映射企业路线图 E9/E11）、§12 面试视角。
 
 ## 1. 结论
@@ -178,7 +178,7 @@ Trace 没有记录：
 
 ### P1-3 Context Trace 只展示结果，不展示决策
 
-当前能看到最终 system segments 和压缩结果，但看不到候选来源、淘汰原因、段预算、历史来源和工具 schema token。具体设计见 [上下文管理评估](./context-management-review.md#6-目标-contextplan)。
+当前能看到最终 system segments 和压缩结果，但看不到候选来源、淘汰原因、段预算、历史来源和工具 schema token。目标契约以 `lib/agent/context/plan.ts` 和 `lib/agent/context/types.ts` 为准。
 
 ### P1-4 大量非结构化日志无法聚合
 
@@ -208,7 +208,7 @@ Agent 相关路径至少存在数十处 `console.log/warn/error`。日志格式�
 
 | 降级点 | 现状 | 位置 |
 |---|---|---|
-| 语义压缩 → 确定性回退 | `fallbackReason` 只进 trace step，Langfuse 无感知；此回退意味着压缩质量骤降（联动 [context-management-issues.md](./context-management-issues.md) P0-B） | `compaction.ts:428` |
+| 语义压缩 → 确定性回退 | `fallbackReason` 只进 trace step，Langfuse 无感知；此回退意味着压缩质量骤降 | `compaction.ts:428` |
 | RAG keyword RPC 缺失 → 纯向量 | 只 console | `retriever.ts:250` |
 | 模型 usage 缺失 → 本地估算记账 | 静默发生，记账口径变化不可见 | `runtime/index.ts:1224` |
 | 工具限流/超时 | tool step 有 error 字符串，无分类聚合 | `tool-router.ts` |
@@ -519,4 +519,3 @@ agent.run
 - 「双层可观测（领域 trace + Langfuse）各有职责，但必须能互跳——一个 id 两行代码的事，排障体验差一个数量级。」
 - 「abort 时 `stopReason="completed"` 会污染完成率——状态和终止原因必须是两个独立字段，这是把可观测数据当统计口径用时才会暴露的设计问题。」
 - 「『trace 即评测断言载体』是这套系统最大的观测资产，所有改进都建立在它之上而不是另起炉灶。」
-
