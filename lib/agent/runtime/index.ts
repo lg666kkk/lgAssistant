@@ -1,5 +1,8 @@
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
+import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
+import { missingToolPrerequisites } from "@/lib/agent/tools/orchestration";
+import type { ToolGroundingMode } from "@/lib/agent/tools/types";
 import {
   TokenBudget,
   estimateTokens,
@@ -28,10 +31,7 @@ import {
 } from "@/lib/agent/models";
 import Anthropic from "@anthropic-ai/sdk";
 import { ragConfig } from "@/lib/platform/config";
-import {
-  applyGroundednessGuard,
-  verifyGroundedAnswer,
-} from "@/lib/agent/rag/answer-verifier";
+import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import {
   isEvidenceBundle,
@@ -40,6 +40,7 @@ import {
 } from "@/lib/agent/rag/types";
 import type { ContextPlan } from "@/lib/agent/context/types";
 import { getActiveTraceId, startActiveObservation } from "@langfuse/tracing";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 
 // Anthropic SDK 真实类型——替代原来的 any，编译器现在能帮你检查每个字段
 type ModelMessage = Anthropic.MessageParam;
@@ -89,6 +90,9 @@ export type AgentLoopResult = {
   metrics: AgentLoopMetrics;
   trace: AgentTrace;
   evidenceBundles?: EvidenceBundle[];
+  usedGroundingModes?: ToolGroundingMode[];
+  toolEvidenceRequired?: boolean;
+  usedCapabilities?: string[];
 };
 
 export interface ToolSourceType {
@@ -507,6 +511,9 @@ export async function executeTools(
   const toolCalls: ToolCallEventData[] = [];
   const toolSteps: ToolTraceStep[] = [];
   const evidenceBundles: EvidenceBundle[] = [];
+  const usedGroundingModes = new Set<ToolGroundingMode>();
+  const usedCapabilities = new Set<string>();
+  let toolEvidenceRequired = false;
   const toolMetrics: Array<{
     name: string;
     durationMs?: number;
@@ -567,6 +574,24 @@ export async function executeTools(
   );
 
   for (const { toolUse, toolResult } of executionResults) {
+    const toolDefinition = toolRegistry.get(toolUse.name);
+    const evidenceBundle =
+      toolResult.data
+      && typeof toolResult.data === "object"
+      && "evidenceBundle" in toolResult.data
+      && isEvidenceBundle(toolResult.data.evidenceBundle)
+        ? toolResult.data.evidenceBundle
+        : undefined;
+    if (evidenceBundle) evidenceBundles.push(evidenceBundle);
+    if (toolResult.ok && toolDefinition) {
+      usedGroundingModes.add(toolDefinition.outputPolicy.grounding);
+      // 判据是“本轮拿到了必须被引用的证据”，不是“调用过要求引用的工具”。
+      // 检索工具查不到内容时同样返回 ok:true（内容是“没有找到…”），若按调用
+      // 成功计，会让一次空检索把整篇回答判成无据可依并整体替换掉。
+      toolEvidenceRequired ||= toolDefinition.outputPolicy.citationRequired
+        && (evidenceBundle?.evidences.length ?? 0) > 0;
+      for (const capability of toolDefinition.capabilities) usedCapabilities.add(capability);
+    }
     const durationMs =
       typeof toolResult.metadata?.durationMs === "number"
         ? toolResult.metadata.durationMs
@@ -582,14 +607,6 @@ export async function executeTools(
       durationMs,
       costPerUse,
     });
-    if (
-      toolResult.data
-      && typeof toolResult.data === "object"
-      && "evidenceBundle" in toolResult.data
-      && isEvidenceBundle(toolResult.data.evidenceBundle)
-    ) {
-      evidenceBundles.push(toolResult.data.evidenceBundle);
-    }
     if (
       toolUse.name === "search_notes" &&
       toolResult.ok &&
@@ -717,6 +734,9 @@ export async function executeTools(
         error: toolResult.error,
         metadata: {
           ...toolResult.metadata,
+          capabilities: toolDefinition?.capabilities,
+          grounding: toolDefinition?.outputPolicy.grounding,
+          citationRequired: toolDefinition?.outputPolicy.citationRequired,
           artifactId: artifactResult?.artifact.id,
           artifactStored: Boolean(artifactResult),
           modelContentCompressed: truncated.content !== rawPreview.content,
@@ -744,6 +764,9 @@ export async function executeTools(
       error: toolResult.error,
       metadata: {
         ...toolResult.metadata,
+        capabilities: toolDefinition?.capabilities,
+        grounding: toolDefinition?.outputPolicy.grounding,
+        citationRequired: toolDefinition?.outputPolicy.citationRequired,
         artifactId: artifactResult?.artifact.id,
         artifactStored: Boolean(artifactResult),
       },
@@ -757,6 +780,9 @@ export async function executeTools(
     toolMetrics,
     toolSteps,
     evidenceBundles,
+    usedGroundingModes: Array.from(usedGroundingModes),
+    toolEvidenceRequired,
+    usedCapabilities: Array.from(usedCapabilities),
   };
 }
 
@@ -968,6 +994,7 @@ export async function runAgentLoop(
   retrievalPlan?: RetrievalPlan,
   initialEvidenceBundles: EvidenceBundle[] = [],
   contextPlan?: ContextPlan,
+  initialSatisfiedCapabilities: Iterable<string> = [],
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -976,6 +1003,12 @@ export async function runAgentLoop(
   trace.contextPlan = contextPlan;
   let stepIndex = 0; // model/tool step 共享的全局递增序号
   const evidenceBundles: EvidenceBundle[] = [...initialEvidenceBundles];
+  const usedGroundingModes = new Set<ToolGroundingMode>();
+  const satisfiedCapabilities = new Set(initialSatisfiedCapabilities);
+  let toolEvidenceRequired = mergeEvidenceBundles(initialEvidenceBundles).length > 0;
+  if (mergeEvidenceBundles(initialEvidenceBundles).length > 0) {
+    usedGroundingModes.add("cited_evidence");
+  }
   const retrievalToolCalls = new Map<string, number>();
   if (retrievalPlan) {
     trace.steps.push({
@@ -987,6 +1020,7 @@ export async function runAgentLoop(
       route: retrievalPlan.route,
       reason: retrievalPlan.reason,
       confidence: retrievalPlan.confidence,
+      freshnessRequired: retrievalPlan.freshnessRequired,
       evidenceRequired: retrievalPlan.evidenceRequired,
       maxAttempts: retrievalPlan.maxAttempts,
       indexVersion: retrievalPlan.indexVersion,
@@ -1052,6 +1086,7 @@ export async function runAgentLoop(
     return startActiveObservation("context.compaction", async (observation) => {
       const result = await runCompaction();
       observation.update({
+        metadata: withSpanLabel("context.compaction", { requestId, sessionId }),
         input: { messageCount, force },
         output: {
           compacted: result.compacted,
@@ -1204,17 +1239,16 @@ export async function runAgentLoop(
     );
     const modelStartedAt = Date.now();
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
-    const evidenceRequired = retrievalPlan?.evidenceRequired === true;
-    const shouldBufferEvidenceAnswer = evidenceRequired
+    const evidenceRequired = requiresCitedEvidence({
+      sourceEvidenceRequired: retrievalPlan?.evidenceRequired,
+      toolEvidenceRequired,
+    });
+    // 校验只负责生成 Trace/Eval 指标，不参与输出决策。无论 evidenceRequired
+    // 或最终 status 是什么，模型文本都按原始流发送，不缓冲、不替换、不追加提示。
+    const shouldVerifyEvidence = evidenceRequired
       || mergeEvidenceBundles(evidenceBundles).length > 0;
-    let bufferedEvidenceText = "";
-    const onTextDelta = (text: string) => {
-      if (shouldBufferEvidenceAnswer) {
-        bufferedEvidenceText += text;
-        return true;
-      }
-      return enqueueEvent({ type: "text", content: text }, enqueueText);
-    };
+    const onTextDelta = (text: string) =>
+      enqueueEvent({ type: "text", content: text }, enqueueText);
     const loopTelemetry = buildAgentLoopTelemetry({
       messages: loopMessages,
     });
@@ -1343,26 +1377,19 @@ export async function runAgentLoop(
       };
     }
     if (toolUses.length === 0) {
-      let finalText = directText;
-      if (shouldBufferEvidenceAnswer) {
+      const finalText = directText;
+      if (shouldVerifyEvidence) {
         const validationStartedAt = Date.now();
-        const report = verifyGroundedAnswer(
-          finalText || bufferedEvidenceText,
-          evidenceBundles,
-          { evidenceRequired },
-        );
-        const guardedText = applyGroundednessGuard(finalText || bufferedEvidenceText, report);
-        const guarded = guardedText !== (finalText || bufferedEvidenceText);
-        finalText = guardedText;
+        const report = verifyGroundedAnswer(finalText, evidenceBundles, { evidenceRequired });
         trace.steps.push({
           type: "answer_validation",
           index: stepIndex++,
           startedAt: validationStartedAt,
           durationMs: Date.now() - validationStartedAt,
           report,
-          guarded,
+          // 校验结果仅上报；输出策略明确禁止据此修改模型回答。
+          guarded: false,
         });
-        enqueueEvent({ type: "text", content: finalText }, enqueueText);
       }
       if (allToolSources.length > 0) {
         enqueueSources(allToolSources, enqueueText);
@@ -1371,7 +1398,7 @@ export async function runAgentLoop(
         ...loopMessages,
         {
           role: "assistant" as const,
-          content: shouldBufferEvidenceAnswer ? finalText : initialResponse.content,
+          content: initialResponse.content,
         },
       ];
       return {
@@ -1381,23 +1408,52 @@ export async function runAgentLoop(
         metrics,
         trace: finalizeTrace("completed", true),
         evidenceBundles,
+        usedGroundingModes: Array.from(usedGroundingModes),
+        toolEvidenceRequired,
+        usedCapabilities: Array.from(satisfiedCapabilities),
       };
     }
-    const budgetSkippedResults = new Map<
+    // 依赖缺失和预算跳过都表现为“有结构化 tool_result，但不执行工具”。
+    // 统一放进 precomputedResults，后面的 executeTools 仍能按原调用顺序把结果
+    // 回灌给模型，同时避免这些未执行调用污染 grounding/capability 统计。
+    const precomputedResults = new Map<
       string,
       Awaited<ReturnType<typeof executeToolCall>>
     >();
     for (const toolUse of toolUses) {
-      if (
-        toolUse.name !== "search_notes"
-        && toolUse.name !== "web_search"
-        && toolUse.name !== "web_fetch"
-      ) continue;
+      const tool = toolRegistry.get(toolUse.name);
+      if (!tool) continue;
+      // prerequisites 按“上一轮已成功完成的 capability”判断。即使模型在同一批
+      // 同时请求 time 和 web，也必须先阻止 web；只有时间结果已经返回给模型后，
+      // 下一轮的 web 调用才允许执行，保证依赖确实是有序而非仅仅同时出现。
+      const missingCapabilities = missingToolPrerequisites(
+        tool,
+        satisfiedCapabilities,
+        retrievalPlan,
+      );
+      if (missingCapabilities.length === 0) continue;
+      precomputedResults.set(toolUse.id, {
+        ok: false,
+        toolName: toolUse.name,
+        toolCallId: toolUse.id,
+        content: `调用 ${toolUse.name} 前缺少前置能力：${missingCapabilities.join(", ")}。请先调用具备这些能力的工具，并等待结果。`,
+        error: "Tool orchestration prerequisites are not satisfied",
+        metadata: {
+          status: "orchestration_prerequisite_missing",
+          missingCapabilities,
+        },
+      });
+    }
+    for (const toolUse of toolUses) {
+      if (precomputedResults.has(toolUse.id)) continue;
+      const retrievalPolicy = toolRegistry.get(toolUse.name)?.outputPolicy.retrieval;
+      if (!retrievalPolicy) continue;
+      // 编排拦截发生在预算计数之前。缺少 prerequisite 的调用从未执行，不能提前
+      // 消耗检索额度，否则模型补齐依赖后会被误判为已经用完预算。
       const used = retrievalToolCalls.get(toolUse.name) ?? 0;
-      // search_notes/web_search 自身执行最多两条计划 query；同一工具只允许模型调用一次。
-      const limit = toolUse.name === "web_fetch" ? 2 : 1;
+      const limit = retrievalPolicy.maxCallsPerRun;
       if (used >= limit) {
-        budgetSkippedResults.set(toolUse.id, {
+        precomputedResults.set(toolUse.id, {
           ok: true,
           toolName: toolUse.name,
           toolCallId: toolUse.id,
@@ -1412,7 +1468,7 @@ export async function runAgentLoop(
       retrievalToolCalls.set(toolUse.name, used + 1);
     }
     const executableToolUses = toolUses.filter((toolUse) =>
-      !budgetSkippedResults.has(toolUse.id));
+      !precomputedResults.has(toolUse.id));
     const toolCallKeys = executableToolUses.map(getToolCallKey);
     const hasRepeatedToolCall = toolCallKeys.some((key) =>
       seenToolCalls.has(key),
@@ -1446,6 +1502,9 @@ export async function runAgentLoop(
       toolMetrics,
       toolSteps,
       evidenceBundles: newEvidenceBundles,
+      usedGroundingModes: newGroundingModes,
+      toolEvidenceRequired: newToolEvidenceRequired,
+      usedCapabilities: newCapabilities,
     } = await executeTools(
       toolUses,
       toolRegistry,
@@ -1453,7 +1512,7 @@ export async function runAgentLoop(
       userId,
       requestId,
       buildToolConversationContext(loopMessages),
-      budgetSkippedResults,
+      precomputedResults,
     );
     if (shouldStop()) {
       return {
@@ -1480,6 +1539,11 @@ export async function runAgentLoop(
       trace.steps.push(step);
     }
     evidenceBundles.push(...newEvidenceBundles);
+    for (const mode of newGroundingModes) usedGroundingModes.add(mode);
+    toolEvidenceRequired ||= newToolEvidenceRequired;
+    // 只合并 executeTools 从 ok=true 的真实执行中提取出的 capability；依赖缺失、
+    // 重复跳过和预算跳过都不能声明已满足 prerequisite。
+    for (const capability of newCapabilities) satisfiedCapabilities.add(capability);
     for (const bundle of newEvidenceBundles) {
       const thresholds = bundle.attempts.flatMap((attempt) =>
         typeof attempt.threshold === "number" ? [attempt.threshold] : []);
@@ -1544,6 +1608,9 @@ export async function runAgentLoop(
         stopReason: "awaiting_tool_confirmation",
         metrics,
         trace: finalizeTrace("awaiting_tool_confirmation", true),
+        usedGroundingModes: Array.from(usedGroundingModes),
+        toolEvidenceRequired,
+        usedCapabilities: Array.from(satisfiedCapabilities),
       };
     }
     const userQuestion = toolCalls.find(
@@ -1565,6 +1632,9 @@ export async function runAgentLoop(
         stopReason: "awaiting_user_input",
         metrics,
         trace: finalizeTrace("awaiting_user_input", true),
+        usedGroundingModes: Array.from(usedGroundingModes),
+        toolEvidenceRequired,
+        usedCapabilities: Array.from(satisfiedCapabilities),
       };
     }
   }
@@ -1574,6 +1644,10 @@ export async function runAgentLoop(
     stopReason: "max_iterations",
     metrics,
     trace: finalizeTrace("max_iterations", false),
+    evidenceBundles,
+    usedGroundingModes: Array.from(usedGroundingModes),
+    toolEvidenceRequired,
+    usedCapabilities: Array.from(satisfiedCapabilities),
   };
 }
 

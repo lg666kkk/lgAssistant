@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
+import type { ToolOutputPolicy } from "@/lib/agent/tools/types";
 import {
   AGENTIC_RAG_VERSION,
   type RetrievalFilters,
@@ -11,7 +12,10 @@ import {
 } from "./types";
 
 const KNOWLEDGE_CUES = /(?:我的|个人|之前|过去|曾经).{0,8}(?:笔记|文档|记录|资料|收藏|整理|写过)|(?:知识库|Notion|笔记里|文档里|记录里)|\b(?:my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|(?:in|from|according\s+to)\s+my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|what\s+did\s+i\s+(?:write|note|save|bookmark)|i\s+(?:wrote|noted|saved|bookmarked))\b/i;
-const WEB_CUES = /(?:最新|今天|实时|新闻|价格|政策|发布|官网|公开资料|网上|联网|web|internet|近期(?:新闻|动态|政策|版本)|当前(?:价格|政策|版本|状态|排名|天气|汇率)|现在(?:价格|时间|天气|版本))|https?:\/\/|\b(?:latest|today|current|real[- ]?time|recent\s+(?:news|updates?)|news|price|policy|release|official\s+(?:site|docs?)|online|internet|search\s+the\s+web|look\s+up)\b/i;
+// freshness 与显式来源必须分开："今天几号"需要新鲜时间，但不要求网页引用；
+// "联网查官网"明确要求 Web 来源，即使内容不随时间变化，也必须有检索证据。
+const PUBLIC_FRESHNESS_CUES = /(?:最新|今天|实时|新闻|价格|政策|发布|近期(?:新闻|动态|政策|版本)|当前(?:价格|政策|版本|状态|排名|天气|汇率)|现在(?:价格|时间|天气|版本))|\b(?:latest|today|current|real[- ]?time|recent\s+(?:news|updates?)|news|price|policy|release)\b/i;
+const EXPLICIT_WEB_SOURCE_CUES = /(?:官网|公开资料|网上|联网|(?:搜索|查找|查询)(?:一下)?(?:网页|网络|互联网)|web|internet)|https?:\/\/|\b(?:official\s+(?:site|docs?)|online|internet|search\s+the\s+web|look\s+up)\b/i;
 const BOTH_CUES = /(?:结合|对比|比较|核对).{0,16}(?:我的|知识库|笔记|文档).{0,16}(?:最新|公开|网上|官网|新闻)|(?:我的|知识库|笔记|文档).{0,16}(?:和|与|以及).{0,16}(?:最新|公开|网上|官网|新闻)|\b(?:compare|combine|cross[- ]?check).{0,40}(?:my\s+(?:notes?|documents?|knowledge\s*base)).{0,40}(?:latest|public|official|web|news)|\b(?:my\s+(?:notes?|documents?|knowledge\s*base)).{0,40}(?:and|with|against).{0,40}(?:latest|public|official|web|news)\b/i;
 
 export type BuildRetrievalPlanInput = {
@@ -92,6 +96,7 @@ export function buildRetrievalPlan(input: BuildRetrievalPlanInput): RetrievalPla
     queryType,
     reason: routeDecision.reason,
     confidence: routeDecision.confidence,
+    freshnessRequired: routeDecision.freshnessRequired,
     evidenceRequired: routeDecision.evidenceRequired,
     maxAttempts: 2,
     indexVersion,
@@ -100,36 +105,54 @@ export function buildRetrievalPlan(input: BuildRetrievalPlanInput): RetrievalPla
   };
 }
 
-export function retrievalToolsForRoute(route: RetrievalRoute) {
-  if (route === "no_retrieval") return new Set<string>();
-  if (route === "knowledge") return new Set(["search_notes"]);
-  if (route === "web") return new Set(["web_search", "web_fetch"]);
-  return new Set(["search_notes", "web_search", "web_fetch"]);
+function retrievalSourcesForRoute(route: RetrievalRoute) {
+  if (route === "knowledge") return new Set<RetrievalSource>(["knowledge"]);
+  if (route === "web") return new Set<RetrievalSource>(["web"]);
+  if (route === "both") return new Set<RetrievalSource>(["knowledge", "web"]);
+  return new Set<RetrievalSource>();
 }
 
-export function filterToolsForRetrievalRoute<T extends { name: string }>(
+// 按工具声明的 retrieval.source 过滤，不再维护检索工具名白名单。
+// 非检索工具始终保留，因此 no_retrieval 表示“未预选检索源”，不是“禁用所有工具”。
+//
+// webEnabled 与 route 是两种不同强度的约束，不能混为一谈：
+//   webEnabled === false → 产品级权限边界，Web 工具必须彻底不可见（硬过滤）。
+//   webEnabled === true  → 用户已显式开启联网。此时 route 只表达“优先查哪儿”，
+//     不能把 Web 工具摘掉——否则按钮亮着，模型却在知识库证据过期时无路可走。
+//     优先级由 Prompt 的检索计划段和编排策略段表达，不靠削减工具集实现。
+export function filterToolsForRetrievalRoute<
+  T extends { name: string; outputPolicy: ToolOutputPolicy },
+>(
   tools: T[],
   route: RetrievalRoute,
   options: { webEnabled?: boolean } = {},
 ) {
-  const enabledTools = options.webEnabled === false
-    ? tools.filter((tool) => tool.name !== "web_search" && tool.name !== "web_fetch")
-    : tools;
+  const webEnabled = options.webEnabled !== false;
+  const enabledTools = webEnabled
+    ? tools
+    : tools.filter((tool) => tool.outputPolicy.retrieval?.source !== "web");
   if (route === "no_retrieval") return enabledTools;
-  const retrievalTools = new Set(["search_notes", "web_search", "web_fetch"]);
-  const allowed = retrievalToolsForRoute(route);
-  return enabledTools.filter((tool) => !retrievalTools.has(tool.name) || allowed.has(tool.name));
+  const allowedSources = retrievalSourcesForRoute(route);
+  return enabledTools.filter((tool) => {
+    const source = tool.outputPolicy.retrieval?.source;
+    if (source === undefined) return true;
+    if (source === "web" && webEnabled) return true; // 软偏好：保留兜底能力
+    return allowedSources.has(source);
+  });
 }
 
 export function scopeRetrievalPlanToTools(
   plan: RetrievalPlan | undefined,
-  toolNames: Iterable<string>,
+  tools: Iterable<{ outputPolicy: ToolOutputPolicy }>,
 ): RetrievalPlan | undefined {
   if (!plan) return undefined;
-  const names = new Set(toolNames);
+  // 单个 Plan step 只暴露全局工具集的一部分。局部检索计划必须按该 step
+  // 实际可见的来源收窄，不能向模型注入一个当前步骤无法执行的检索来源。
   const sources = new Set<RetrievalSource>();
-  if (names.has("search_notes")) sources.add("knowledge");
-  if (names.has("web_search") || names.has("web_fetch")) sources.add("web");
+  for (const tool of Array.from(tools)) {
+    const source = tool.outputPolicy.retrieval?.source;
+    if (source) sources.add(source);
+  }
   if (sources.size === 0) return undefined;
 
   const route: RetrievalRoute = sources.size === 2
@@ -170,10 +193,13 @@ function routeQuery(input: {
   route: RetrievalRoute;
   reason: string;
   confidence: number;
+  freshnessRequired: boolean;
   evidenceRequired: boolean;
 } {
   const explicitKnowledge = KNOWLEDGE_CUES.test(input.query);
-  const explicitWeb = WEB_CUES.test(input.query);
+  const freshnessRequired = PUBLIC_FRESHNESS_CUES.test(input.query);
+  const explicitWebSource = EXPLICIT_WEB_SOURCE_CUES.test(input.query);
+  const explicitWeb = freshnessRequired || explicitWebSource;
   const profileMatch = profileOverlap(input.query, input.knowledgeProfile) >= 0.18;
 
   if ((BOTH_CUES.test(input.query) || (explicitKnowledge && explicitWeb)) && input.webEnabled) {
@@ -181,6 +207,7 @@ function routeQuery(input: {
       route: "both",
       reason: "query_requires_private_and_public_evidence",
       confidence: 0.95,
+      freshnessRequired,
       evidenceRequired: true,
     };
   }
@@ -189,6 +216,7 @@ function routeQuery(input: {
       route: "knowledge",
       reason: "explicit_private_knowledge_intent",
       confidence: 0.94,
+      freshnessRequired: false,
       evidenceRequired: true,
     };
   }
@@ -197,7 +225,10 @@ function routeQuery(input: {
       route: "web",
       reason: "fresh_or_public_information_required",
       confidence: 0.92,
-      evidenceRequired: true,
+      freshnessRequired,
+      // 新鲜度只激活工具编排；只有用户明确指定 Web 来源才构成请求级硬约束。
+      // 实际调用 cited_evidence 工具时，outputPolicy 仍会在执行期要求引用。
+      evidenceRequired: explicitWebSource,
     };
   }
   if (profileMatch) {
@@ -205,6 +236,7 @@ function routeQuery(input: {
       route: "knowledge",
       reason: "knowledge_profile_match",
       confidence: 0.72,
+      freshnessRequired: false,
       evidenceRequired: false,
     };
   }
@@ -212,6 +244,7 @@ function routeQuery(input: {
     route: "no_retrieval",
     reason: "no_retrieval_signal",
     confidence: 0.78,
+    freshnessRequired: false,
     evidenceRequired: false,
   };
 }

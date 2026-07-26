@@ -20,6 +20,8 @@ function isSafeExpression(expression: string): boolean {
 }
 
 export const calculatorTool: ToolDefinition = {
+  capabilities: ["math.calculate"],
+  outputPolicy: { grounding: "authoritative_result", citationRequired: false },
   runtime: {
     ...defaultToolRuntimePolicy,
     rateLimit: 10,

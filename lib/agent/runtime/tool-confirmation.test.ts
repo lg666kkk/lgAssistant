@@ -10,6 +10,8 @@ describe("工具确认暂停", () => {
     registry.register({
       name: "create_todo",
       description: "create todo",
+      capabilities: ["todo.create"],
+      outputPolicy: { grounding: "action_receipt", citationRequired: false },
       input_schema: { type: "object", properties: {} },
       riskLevel: "confirm",
       runtime: {

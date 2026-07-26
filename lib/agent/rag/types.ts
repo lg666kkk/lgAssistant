@@ -35,6 +35,9 @@ export type RetrievalPlan = {
   queryType: RetrievalQueryType;
   reason: string;
   confidence: number;
+  // 控制条件化工具编排（例如实时公开信息先获取当前时间），不等同于必须引用。
+  freshnessRequired?: boolean;
+  // 请求是否明确要求外部来源；实际工具也可通过 outputPolicy 追加引用要求。
   evidenceRequired: boolean;
   maxAttempts: number;
   indexVersion: string;
@@ -119,6 +122,10 @@ export type ClaimEvidenceCheck = {
   unknownCitationIds: string[];
   supported: boolean;
   lexicalSupport: number;
+  /** 同一节内被引用过的证据序号，用于定位继承来源。 */
+  scope: number;
+  /** 自身没有引用，但被同节已引用证据以最低词面支持线覆盖。 */
+  inherited: boolean;
 };
 
 export type GroundednessReport = {
@@ -126,7 +133,11 @@ export type GroundednessReport = {
   evidenceRequired: boolean;
   evidenceCount: number;
   claimCount: number;
+  /** 自身写了引用的 claim 数，不含作用域继承。 */
   citedClaimCount: number;
+  /** citationCoverage 的分子：自身有引用，或被同节引用证据覆盖。 */
+  coveredClaimCount: number;
+  /** groundedness 的分子：自身或继承达到最低词面支持线。 */
   supportedClaimCount: number;
   citationPrecision: number;
   citationCoverage: number;

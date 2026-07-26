@@ -3,6 +3,7 @@ import { enqueueKnowledgeProfileRefresh } from "@/lib/agent/tools/knowledge-prof
 import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 
 export const runtime = "nodejs";
 
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
       await startActiveObservation("knowledge-sync", async (langfuseTrace) => {
         langfuseTrace.update({
           input: traceInput,
-          metadata: traceInput,
+          metadata: withSpanLabel("knowledge-sync", traceInput),
         });
         langfuseTrace.setTraceIO({ input: traceInput });
 
@@ -59,12 +60,12 @@ export async function POST(req: Request) {
           userId: user.id,
           traceName: "knowledge-sync",
           tags: ["knowledge", "notion-sync"],
-          metadata: {
+          metadata: withSpanLabel("knowledge-sync", {
             requestId,
             pageId,
             tree: String(syncTree),
             force: String(force),
-          },
+          }),
         }, async () => {
           try {
             streamEvent(controller, encoder, {

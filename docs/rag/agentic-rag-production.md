@@ -32,11 +32,18 @@ flowchart LR
 | Route | 可见检索工具 | 典型条件 |
 |---|---|---|
 | `no_retrieval` | 保留受限 fallback；关闭联网时不暴露 Web 工具 | 写作、翻译、普通推理、无需外部证据 |
-| `knowledge` | `search_notes` | 明确个人笔记/知识库意图，或命中持久化知识库画像 |
+| `knowledge` | `search_notes`；联网开启时 Web 工具保留为兜底 | 明确个人笔记/知识库意图，或命中持久化知识库画像 |
 | `web` | `web_search`、`web_fetch` | 最新、实时、官网或公开网络信息 |
 | `both` | 知识库与 Web 工具 | 需要对比私有资料和公开/实时资料 |
 
-Router 在 `app/api/chat/route.ts` 中先于 Agent Loop 执行。明确的 knowledge/web/both 路线会约束对应工具；`no_retrieval` 是软路由，保留检索 fallback，避免语言或表达变化造成不可恢复的漏检。`RetrievalPlan.evidenceRequired` 只在用户明确要求私有知识或实时/公开证据时为 true，画像重合仅推荐检索，不会把零证据直接变成拒答。
+Router 在 `app/api/chat/route.ts` 中先于 Agent Loop 执行。`no_retrieval` 是软路由，保留检索 fallback，避免语言或表达变化造成不可恢复的漏检。`RetrievalPlan.evidenceRequired` 只在用户明确要求私有知识或实时/公开证据时为 true，画像重合仅推荐检索，不会把零证据直接变成拒答。
+
+**联网开关与 route 是两种强度不同的约束，不要混用**（`filterToolsForRetrievalRoute`）：
+
+- `webEnabled === false` 是产品级权限边界，任何 route 下 Web 工具都硬过滤，彻底不可见。
+- `webEnabled === true` 表示用户已显式开启联网。此时 route 只表达「优先查哪儿」，**不会摘除 Web 工具**——否则「联网搜索」按钮亮着，模型却在知识库无结果或证据过期时无路可走。先后顺序由 Prompt 的检索计划段声明（`route=knowledge` + 联网开启时追加「Web 仅作兜底，必须先查知识库」），不靠削减工具集实现。
+
+反向的 `route=web` 仍会收窄掉知识库工具：公开信息查询命中的是显式线索，误判成本低于「联网按钮默认开启」那一侧。
 
 ### 2.2 Query Planner
 

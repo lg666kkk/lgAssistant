@@ -39,6 +39,8 @@ function parseInput(input: unknown): ReadToolArtifactInput {
 
 export const readToolArtifactTool: ToolDefinition = {
   name: "read_tool_artifact",
+  capabilities: ["tool_artifact.read"],
+  outputPolicy: { grounding: "authoritative_result", citationRequired: false },
   description:
     "按 token 分页读取之前工具调用保存到服务端本地 artifact 存储里的完整结果。当上下文中的工具结果只给出了 artifact_id、摘要或引用，而你需要查看完整原文、完整网页正文、完整搜索结果或完整知识库检索结果时使用。第一次从 offset=0 开始；若结果返回 has_more=true，使用 next_offset 继续读取下一段。不要一次请求过大的 limit。只能读取当前用户当前会话范围内的 artifact。",
   input_schema: {

@@ -325,7 +325,7 @@ async function withSearchAttemptTimeout<T>(input: {
 }
 
 const BASE_SEARCH_NOTES_DESCRIPTION =
-  "在用户个人知识库中检索内容。调用受显式 Retrieval Router、Query Planner 和 Evidence Grader 约束；最多执行两次同阈值 query。会回传通过最低接受线的证据并标记整体充分性，回答时使用 [evidenceId] 引用。公开实时信息请使用 web_search。";
+  "在用户个人知识库中检索内容。这不是默认检索步骤：只有用户明确要求查知识库、笔记、文档、Notion、过往记录（含“我之前写的/记的/整理的/收藏的”这类说法），或当前问题的实体与主题明显命中本描述中的知识库画像时才调用；普通事实、编程、计算、写作、翻译和公开实时信息问题不要调用。不确定是否命中画像时，优先直接回答或向用户澄清，不要为了保险而检索。调用时把 query 写成当前问题的核心主题和关键实体，不要使用过宽泛的词。调用受显式 Retrieval Router、Query Planner 和 Evidence Grader 约束；最多执行两次同阈值 query。会回传通过最低接受线的证据并标记整体充分性，回答时使用 [evidenceId] 引用。公开实时信息请使用 web_search。";
 
 export function createSearchNotesTool(options: {
   knowledgeProfile?: string;
@@ -335,6 +335,12 @@ export function createSearchNotesTool(options: {
 } = {}): ToolDefinition {
   return {
     name: "search_notes",
+    capabilities: ["private.knowledge.search"],
+    outputPolicy: {
+      grounding: "cited_evidence",
+      citationRequired: true,
+      retrieval: { source: "knowledge", maxCallsPerRun: 1 },
+    },
     description: options.knowledgeProfile
       ? `${BASE_SEARCH_NOTES_DESCRIPTION}\n\n${options.knowledgeProfile}`
       : BASE_SEARCH_NOTES_DESCRIPTION,

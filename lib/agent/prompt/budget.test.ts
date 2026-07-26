@@ -30,7 +30,6 @@ describe("prompt hard budget", () => {
   it("counts rendered separators in the global budget", () => {
     const prompt = buildPromptPipe({
       memory: "memory ".repeat(500),
-      webSearchEnabled: true,
       maxTokens: 120,
     });
     expect(countTokensFromText(prompt.systemPrompt)).toBeLessThanOrEqual(120);
@@ -55,5 +54,84 @@ describe("prompt hard budget", () => {
       source: "runtime",
       trust: "trusted",
     }));
+  });
+
+  it("does not inject tool-specific routing instructions", () => {
+    const prompt = buildPromptPipe({
+      retrievalPlan: {
+        id: "retrieval-test",
+        version: "agentic-rag-v2",
+        route: "web",
+        originalQuery: "最新版本",
+        standaloneQuery: "最新版本",
+        queryType: "balanced",
+        reason: "fresh_or_public_information_required",
+        confidence: 0.9,
+        evidenceRequired: false,
+        maxAttempts: 2,
+        indexVersion: "web-live",
+        steps: [],
+        createdAt: "2026-07-26T00:00:00.000Z",
+      },
+      maxTokens: 1_000,
+    });
+
+    expect(prompt.systemPrompt).not.toContain("调用 web_search 前");
+    expect(prompt.systemPrompt).not.toContain("如果 get_current_time");
+    expect(prompt.systemPrompt).not.toContain("search_notes 是用户个人知识库检索工具");
+    expect(prompt.segments.map((segment) => segment.kind)).toEqual([
+      "identity",
+      "evidence-policy",
+      "retrieval-plan",
+    ]);
+  });
+
+  it("injects registry-generated orchestration when web search is enabled", () => {
+    const prompt = buildPromptPipe({
+      webSearchEnabled: true,
+      toolOrchestration: "调用 web_search 前必须先完成 time.current。",
+      maxTokens: 1_000,
+    });
+
+    expect(prompt.systemPrompt).toContain("time.current");
+    expect(prompt.segments).toContainEqual(expect.objectContaining({
+      kind: "tool-orchestration",
+      source: "runtime",
+      trust: "trusted",
+    }));
+  });
+
+  it("states web retrieval is fallback-only when knowledge route runs with web enabled", () => {
+    const knowledgePlan = {
+      id: "retrieval-knowledge",
+      version: "agentic-rag-v2" as const,
+      route: "knowledge" as const,
+      originalQuery: "我之前写的 RAG 笔记",
+      standaloneQuery: "我之前写的 RAG 笔记",
+      queryType: "balanced" as const,
+      reason: "knowledge_profile_match",
+      confidence: 0.72,
+      evidenceRequired: false,
+      maxAttempts: 2,
+      indexVersion: "index-1",
+      steps: [],
+      createdAt: "2026-07-26T00:00:00.000Z",
+    };
+
+    const withWeb = buildPromptPipe({
+      retrievalPlan: knowledgePlan,
+      webSearchEnabled: true,
+      maxTokens: 1_000,
+    });
+    expect(withWeb.systemPrompt).toContain("仅作兜底");
+    expect(withWeb.systemPrompt).toContain("必须先查个人知识库");
+
+    // 联网关闭时 Web 工具本就不可见，不需要也不应该提兜底顺序。
+    const withoutWeb = buildPromptPipe({
+      retrievalPlan: knowledgePlan,
+      webSearchEnabled: false,
+      maxTokens: 1_000,
+    });
+    expect(withoutWeb.systemPrompt).not.toContain("仅作兜底");
   });
 });

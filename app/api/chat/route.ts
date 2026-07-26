@@ -36,11 +36,11 @@ import { requireUser } from "@/lib/auth/server";
 import { getSupabase } from "@/lib/platform/supabase";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
+import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
+import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
 import { redactSensitiveValue } from "@/lib/agent/rag/governance";
-import {
-  applyGroundednessGuard,
-  verifyGroundedAnswer,
-} from "@/lib/agent/rag/answer-verifier";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
+import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import type { AgentTrace } from "@/lib/agent/runtime/trace";
 import { reportOnlineScores } from "@/lib/agent/eval/online-scores";
@@ -370,11 +370,14 @@ export async function POST(req: Request) {
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
   // 给模型看的工具说明
-  const routeTools = filterToolsForRetrievalRoute(
-    toolRegistry.listForModel(),
+  // 先在完整 ToolDefinition 上按元数据过滤，再投影成模型 schema。若先调用
+  // listForModel，会丢失 outputPolicy/orchestration，路由只能退回硬编码工具名。
+  const routeToolDefinitions = filterToolsForRetrievalRoute(
+    toolRegistry.list(),
     retrievalPlan.route,
     { webEnabled: enableWebSearch },
   );
+  const routeTools = toolRegistry.listForModel(routeToolDefinitions);
   const latestUserQuery = [...modelMessages]
     .reverse()
     .find((message) => message.role === "user")?.content ?? "";
@@ -463,27 +466,27 @@ export async function POST(req: Request) {
         const traceDisplayInput = safeTraceInput.query || "(空消息)";
         langfuseTrace.update({
           input: traceDisplayInput,
-          metadata: {
+          metadata: withSpanLabel("agent-chat", {
             requestId,
             sessionId,
             userId: user.id,
             model: selectedModel,
             traceInput: safeTraceInput,
             retrievalPlan: safeRetrievalPlan,
-          },
+          }),
         });
         langfuseTrace.setTraceIO({ input: traceDisplayInput });
         const projectTraceObservations = (trace: AgentTrace) => {
           for (const step of trace.steps) {
             if (step.type === "retrieval" && step.phase === "graded") {
               const observation = langfuseTrace.startObservation("rag.retrieve", {
-                metadata: { requestId, planId: step.planId },
+                metadata: withSpanLabel("rag.retrieve", { requestId, planId: step.planId }),
               }, { asType: "retriever" });
               observation.update({ output: summarizeRetrieval(step) });
               observation.end();
             } else if (step.type === "answer_validation") {
               const observation = langfuseTrace.startObservation("rag.evidence_validation", {
-                metadata: { requestId },
+                metadata: withSpanLabel("rag.evidence_validation", { requestId }),
               }, { asType: "evaluator" });
               observation.update({ output: summarizeAnswerValidation(step) });
               observation.end();
@@ -496,14 +499,14 @@ export async function POST(req: Request) {
           sessionId,
           traceName: "agent-chat",
           tags: ["api-chat", "agent"],
-          metadata: {
+          metadata: withSpanLabel("agent-chat", {
             requestId,
             model: selectedModel,
-          },
+          }),
         }, async () => {
       try {
         const routeObservation = langfuseTrace.startObservation("rag.route", {
-          metadata: { requestId, planId: retrievalPlan.id },
+          metadata: withSpanLabel("rag.route", { requestId, planId: retrievalPlan.id }),
         }, { asType: "retriever" });
         routeObservation.update({ output: summarizeRagRoute(retrievalPlan) });
         routeObservation.end();
@@ -523,7 +526,10 @@ export async function POST(req: Request) {
         if (lastUser) {
           const observation = langfuseTrace.startObservation("memory.explicit_forget", {
             input: { messageChars: lastUser.content.length },
-            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
+            metadata: withSpanLabel("memory.explicit_forget", {
+              requestId,
+              sessionIdPresent: Boolean(sessionId),
+            }),
           });
           try {
             explicitForgetResult = await handleExplicitForgetRequest({
@@ -556,7 +562,10 @@ export async function POST(req: Request) {
         if (lastUser) {
           const observation = langfuseTrace.startObservation("memory.recall", {
             input: { queryChars: lastUser.content.length },
-            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
+            metadata: withSpanLabel("memory.recall", {
+              requestId,
+              sessionIdPresent: Boolean(sessionId),
+            }),
           }, { asType: "retriever" });
           try {
             const recall = await recallForPromptWithStats(lastUser.content, { userId: user.id });
@@ -591,7 +600,10 @@ export async function POST(req: Request) {
               messageCount: conversation.length,
               userMessageCount: conversation.filter((message) => message.role === "user").length,
             },
-            metadata: { requestId, sessionIdPresent: Boolean(sessionId) },
+            metadata: withSpanLabel("memory.consolidate", {
+              requestId,
+              sessionIdPresent: Boolean(sessionId),
+            }),
           });
           let outcome: Record<string, unknown> | undefined;
           void consolidate(conversation, {
@@ -623,10 +635,12 @@ export async function POST(req: Request) {
           userMessage: lastUser?.content ?? "",
           memoryOperation: renderMemoryOperationContext(explicitForgetResult),
           memory: memorySystem,
-          webSearchEnabled:
-            retrievalPlan.route === "web" || retrievalPlan.route === "both",
+          webSearchEnabled: enableWebSearch,
+          toolOrchestration: renderToolOrchestrationPolicy(
+            routeToolDefinitions,
+            retrievalPlan,
+          ),
           retrievalPlan,
-          currentDate: new Date().toISOString(),
           maxTokens: 4200,
         });
         const systemPrompt = prompt.systemPrompt;
@@ -800,7 +814,14 @@ export async function POST(req: Request) {
         }
         let finalAssistantText = "";
         const evidenceBundles = agentLoopResult.evidenceBundles ?? [];
-        const evidenceRequired = retrievalPlan.evidenceRequired;
+        // 请求级约束负责“用户明确要求来源但模型漏调工具”的情况；工具级约束
+        // 负责“实际拿到了 cited_evidence 工具证据”的情况。这里只决定 Trace
+        // 报告里的 evidenceRequired，不再据此缓冲或修改最终回答。
+        const evidenceRequired = requiresCitedEvidence({
+          sourceEvidenceRequired: retrievalPlan.evidenceRequired,
+          toolEvidenceRequired: agentLoopResult.toolEvidenceRequired,
+        });
+        // 有硬要求或本轮拿到过证据时生成校验报告；报告只进入 Trace/Eval。
         const shouldValidateEvidence = evidenceRequired
           || mergeEvidenceBundles(evidenceBundles).length > 0;
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
@@ -819,7 +840,7 @@ export async function POST(req: Request) {
           stream,
           (text) => {
             finalAssistantText += text;
-            return shouldValidateEvidence ? true : enqueueTextEvent(text);
+            return enqueueTextEvent(text);
           },
           () => req.signal.aborted || closed,
         );
@@ -855,17 +876,15 @@ export async function POST(req: Request) {
             evidenceBundles,
             { evidenceRequired },
           );
-          const guardedText = applyGroundednessGuard(finalAssistantText, report);
           agentLoopResult.trace.steps.push({
             type: "answer_validation",
             index: agentLoopResult.trace.steps.length,
             startedAt: validationStartedAt,
             durationMs: Date.now() - validationStartedAt,
             report,
-            guarded: guardedText !== finalAssistantText,
+            // 校验结果仅上报；用户始终收到上面已经流式发送的原始回答。
+            guarded: false,
           });
-          finalAssistantText = guardedText;
-          enqueueTextEvent(finalAssistantText);
         }
         if (allToolSources.length > 0) {
           enqueueSources(allToolSources, enqueueText);

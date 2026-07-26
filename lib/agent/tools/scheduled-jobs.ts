@@ -93,6 +93,8 @@ function describeSchedule(input: {
 
 export const createScheduledJobTool: ToolDefinition = {
   name: "create_scheduled_job",
+  capabilities: ["schedule.create"],
+  outputPolicy: { grounding: "action_receipt", citationRequired: false },
   description:
     "创建一个定时任务。适合用户要求定时提醒、每天/每周周期执行、定时生成 LeetCode 练习、或让 Agent 在指定时间执行一段 prompt 时使用。相对时间要先结合当前时间换算成 ISO 时间；周期任务使用 5 段 cron 表达式，并通过 timezone 表示用户时区。",
   runtime: {

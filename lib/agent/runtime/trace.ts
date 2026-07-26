@@ -107,6 +107,7 @@ export type RetrievalTraceStep = TraceStepBase & {
   route: RetrievalRoute;
   reason: string;
   confidence?: number;
+  freshnessRequired?: boolean;
   evidenceRequired?: boolean;
   maxAttempts: number;
   indexVersion: string;

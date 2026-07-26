@@ -33,6 +33,7 @@
 | 文档 | 用途 |
 |---|---|
 | [structured-event-protocol.md](./agent/runtime/structured-event-protocol.md) | Agent 到 UI 的结构化事件协议 |
+| [model-stream-parsing.md](./agent/runtime/model-stream-parsing.md) | 模型流式输出的四层解析链路与 DEBUG_AI_STREAM 观测开关 |
 
 ## Agent 工具
 
@@ -64,6 +65,7 @@
 | [observability-trace-eval.md](./agent/observability/observability-trace-eval.md) | Trace 与 Eval 基础实现 |
 | [trace-visualization.md](./agent/observability/trace-visualization.md) | Trace UI |
 | [usage-metrics-data-flow.md](./agent/observability/usage-metrics-data-flow.md) | Usage 数据来源与费用口径 |
+| [span-chinese-labels.md](./agent/observability/span-chinese-labels.md) | Langfuse span 的中文作用标识 spanLabel |
 
 ## 定时任务
 
@@ -80,6 +82,7 @@
 | [rag-retrieval-quality.md](./rag/rag-retrieval-quality.md) | 混合检索、RRF、MMR 与 Parent-Child |
 | [agentic-rag-production.md](./rag/agentic-rag-production.md) | Agentic RAG、治理与运维边界 |
 | [rag-eval.md](./rag/rag-eval.md) | RAG 评估闭环 |
+| [web-toggle-vs-route.md](./rag/web-toggle-vs-route.md) | 联网开关是权限边界，route 只表达优先级 |
 
 ## 数据库与 Schema
 

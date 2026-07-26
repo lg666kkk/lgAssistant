@@ -19,7 +19,10 @@ import { ToolRegistry } from "@/lib/agent/tools/registry";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 import { scopeRetrievalPlanToTools } from "@/lib/agent/rag/retrieval-router";
 import type { EvidenceBundle } from "@/lib/agent/rag/types";
+import type { ToolGroundingMode } from "@/lib/agent/tools/types";
+import { expandToolNamesWithPrerequisites } from "@/lib/agent/tools/orchestration";
 import { startActiveObservation } from "@langfuse/tracing";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 import type { ContextPlan } from "@/lib/agent/context/types";
 import { truncateTextByTokens } from "@/lib/agent/runtime/tokenizer";
 
@@ -278,6 +281,10 @@ export async function createPlanProposal(input: PlanAndExecuteInput): Promise<Ex
         input: plannerInput,
         model,
         modelParameters: { maxOutputTokens: 900 },
+        metadata: withSpanLabel("plan-and-execute-planner", {
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+        }),
       });
       try {
         const raw = await generateTextWithProvider({
@@ -454,6 +461,9 @@ export async function executePlan(
   const skipStepIds = new Set(control.skipStepIds ?? []);
   const priorStepResults = control.priorStepResults ?? [];
   const evidenceBundles: EvidenceBundle[] = [];
+  const usedGroundingModes = new Set<ToolGroundingMode>();
+  let toolEvidenceRequired = false;
+  const usedCapabilities = new Set<string>();
   const evidenceBundleIds = new Set<string>();
   const usedRetrievalTools = new Map<string, number>();
 
@@ -530,15 +540,24 @@ export async function executePlan(
     };
     emit("running");
     const started = Date.now();
-    const allowedTools = input.tools.filter((tool) =>
-      step.allowedTools.includes(tool.name)
-      && !(
-        (tool.name === "search_notes" || tool.name === "web_search" || tool.name === "web_fetch")
-        && (usedRetrievalTools.get(tool.name) ?? 0) >= (tool.name === "web_fetch" ? 2 : 1)
-      ));
+    // 模型生成的 step 可能只列出依赖工具（如 web_search），没有列出它需要的
+    // provider（如 time.current）。先按 orchestration 元数据扩展可见工具，确保
+    // executor 被 Runtime 拦截后确实有工具可以补齐 prerequisite。
+    const stepToolNames = expandToolNamesWithPrerequisites(
+      step.allowedTools,
+      input.toolRegistry.list(),
+      input.retrievalPlan,
+    );
+    const allowedTools = input.tools.filter((tool) => {
+      if (!stepToolNames.has(tool.name)) return false;
+      const retrievalPolicy = input.toolRegistry.get(tool.name)?.outputPolicy.retrieval;
+      return !retrievalPolicy
+        || (usedRetrievalTools.get(tool.name) ?? 0) < retrievalPolicy.maxCallsPerRun;
+    });
+    const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
     const stepRetrievalPlan = scopeRetrievalPlanToTools(
       input.retrievalPlan,
-      allowedTools.map((tool) => tool.name),
+      input.toolRegistry.list().filter((tool) => allowedToolNames.has(tool.name)),
     );
     const result = await runAgentLoop(
       loopMessages,
@@ -558,6 +577,9 @@ export async function executePlan(
       stepRetrievalPlan,
       stepRetrievalPlan ? evidenceBundles : [],
       input.contextPlan,
+      // capability 跨 step 传递：前一步已经成功获取时间时，后续 Web step 不应
+      // 再次调用时间工具。runAgentLoop 只信任这份成功执行集合，不从文本猜测。
+      usedCapabilities,
     );
     loopMessages = result.loopMessages;
     addMetrics(metrics, result.metrics);
@@ -566,14 +588,13 @@ export async function executePlan(
       evidenceBundleIds.add(bundle.bundleId);
       evidenceBundles.push(bundle);
     }
+    for (const mode of result.usedGroundingModes ?? []) usedGroundingModes.add(mode);
+    toolEvidenceRequired ||= result.toolEvidenceRequired === true;
+    for (const capability of result.usedCapabilities ?? []) usedCapabilities.add(capability);
     for (const traceStep of result.trace.steps) {
       if (
         traceStep.type === "tool"
-        && (
-          traceStep.name === "search_notes"
-          || traceStep.name === "web_search"
-          || traceStep.name === "web_fetch"
-        )
+        && input.toolRegistry.get(traceStep.name)?.outputPolicy.retrieval
       ) {
         usedRetrievalTools.set(
           traceStep.name,
@@ -600,11 +621,19 @@ export async function executePlan(
         metrics,
         trace,
         evidenceBundles,
+        usedGroundingModes: Array.from(usedGroundingModes),
+        toolEvidenceRequired,
+        usedCapabilities: Array.from(usedCapabilities),
       };
     }
 
     const output = extractLastAssistantText(loopMessages);
-    const toolFailure = result.trace.steps.some((item) => item.type === "tool" && !item.ok);
+    // prerequisite_missing 是可恢复的调度反馈：模型随后补齐依赖并成功完成时，
+    // 不应仅因 trace 中保留了这次拦截就把整个 Plan step 判为失败。
+    const toolFailure = result.trace.steps.some((item) =>
+      item.type === "tool"
+      && !item.ok
+      && item.metadata?.status !== "orchestration_prerequisite_missing");
     const verified = result.completed && !toolFailure && output.trim().length > 0;
     const failureReason = verified
       ? undefined
@@ -656,5 +685,8 @@ export async function executePlan(
     metrics,
     trace,
     evidenceBundles,
+    usedGroundingModes: Array.from(usedGroundingModes),
+    toolEvidenceRequired,
+    usedCapabilities: Array.from(usedCapabilities),
   };
 }

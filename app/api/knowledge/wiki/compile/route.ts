@@ -1,6 +1,7 @@
 import { compileWiki } from "@/lib/knowledge/wiki-compiler";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 
 export const runtime = "nodejs";
 
@@ -42,12 +43,12 @@ export async function POST(req: Request) {
       await startActiveObservation("knowledge-wiki-compile", async (langfuseTrace) => {
         langfuseTrace.update({
           input: traceInput,
-          metadata: {
+          metadata: withSpanLabel("knowledge-wiki-compile", {
             requestId,
             userId: user.id,
             pageCount: pageIds?.length,
             force,
-          },
+          }),
         });
         langfuseTrace.setTraceIO({ input: traceInput });
 
@@ -55,11 +56,11 @@ export async function POST(req: Request) {
           userId: user.id,
           traceName: "knowledge-wiki-compile",
           tags: ["knowledge", "wiki-compile"],
-          metadata: {
+          metadata: withSpanLabel("knowledge-wiki-compile", {
             requestId,
             pageCount: String(pageIds?.length ?? "all"),
             force: String(force),
-          },
+          }),
         }, async () => {
           try {
             const results = await compileWiki({

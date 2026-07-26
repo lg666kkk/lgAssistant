@@ -81,8 +81,20 @@ export function createWebSearchTool(options: {
 } = {}): ToolDefinition {
   return {
     name: "web_search",
+    capabilities: ["public.search", "fresh.information"],
+    outputPolicy: {
+      grounding: "cited_evidence",
+      citationRequired: true,
+      retrieval: { source: "web", maxCallsPerRun: 1 },
+    },
+    orchestration: {
+      // 该依赖只在 RetrievalPlan.freshnessRequired=true 时激活。普通网页资料查询
+      // 可以直接搜索，不会因为存在 prerequisites 就无条件多调用一次时间工具。
+      prerequisites: ["time.current"],
+      invokeWhen: "public_freshness_required",
+    },
     description:
-      "联网搜索公开网页信息。调用受显式 Retrieval Router 和 Query Planner 约束，最多执行两次计划 query；返回结果会形成带 evidenceId 的 EvidenceBundle。个人笔记请使用 search_notes。",
+      "联网搜索公开网页信息。回答公开或实时问题时以搜索结果为准，不要只依赖模型内部知识。调用前先把用户问题改写成一个精确 query：写出核心实体，并按需要补上时间、地区、语言等限定词；不要把整句原话或过于宽泛的词直接当 query。调用受显式 Retrieval Router 和 Query Planner 约束，最多执行两次计划 query；返回结果会形成带 evidenceId 的 EvidenceBundle。个人笔记请使用 search_notes。",
     input_schema: {
       type: "object",
       properties: {

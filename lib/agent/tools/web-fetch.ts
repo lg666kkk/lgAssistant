@@ -642,8 +642,14 @@ export function createWebFetchTool(options: {
 } = {}): ToolDefinition {
   return {
   name: "web_fetch",
+  capabilities: ["public.document.read"],
+  outputPolicy: {
+    grounding: "cited_evidence",
+    citationRequired: true,
+    retrieval: { source: "web", maxCallsPerRun: 2 },
+  },
   description:
-    "读取一个公开网页 URL 的正文内容。适合在 web_search 找到候选结果后，对最相关网页进行精读；GitHub 文件页会自动改读 raw 原始文件。不要用于本地文件、内网地址、PDF、图片或非网页资源。",
+    "读取一个公开网页 URL 的正文内容。在这些情况下用它对 web_search 的候选结果精读：搜索摘要不足以支撑答案、需要引用原文细节、多个搜索结果互相冲突、用户点名要求分析某个链接；每次只读最相关的 1-2 个页面，不要批量抓取所有搜索结果。GitHub 文件页会自动改读 raw 原始文件。不要用于本地文件、内网地址、PDF、图片或非网页资源。",
   input_schema: {
     type: "object",
     properties: {

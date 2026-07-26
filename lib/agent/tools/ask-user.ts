@@ -35,6 +35,8 @@ function parseInput(input: unknown): AskUserInput {
 
 export const askUserTool: ToolDefinition = {
   name: "ask_user",
+  capabilities: ["user.input.request"],
+  outputPolicy: { grounding: "none", citationRequired: false },
   description:
     "向用户询问完成任务所必需的信息或确认。mode=free_text 用于开放回答；mode=single_choice 用于风险偏好、方案选择等互斥选项；mode=confirmation 用于继续/取消等明确确认。仅在缺少关键输入、且无法从已有上下文或工具获取时使用。调用后当前 Agent 会暂停，等待用户下一条消息回答。",
   input_schema: {

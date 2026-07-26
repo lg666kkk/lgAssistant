@@ -29,6 +29,22 @@ describe("retrieval router and query planner", () => {
     }).evidenceRequired).toBe(true);
   });
 
+  it("separates freshness routing from an explicit source requirement", () => {
+    const timePlan = buildRetrievalPlan({ query: "今天几号", webEnabled: true });
+    const latestPlan = buildRetrievalPlan({
+      query: "Next.js 最新版本发布了什么",
+      webEnabled: true,
+    });
+    const explicitWebPlan = buildRetrievalPlan({
+      query: "联网搜索 Next.js 最新版本",
+      webEnabled: true,
+    });
+
+    expect(timePlan).toMatchObject({ route: "web", evidenceRequired: false });
+    expect(latestPlan).toMatchObject({ route: "web", evidenceRequired: false });
+    expect(explicitWebPlan).toMatchObject({ route: "web", evidenceRequired: true });
+  });
+
   it("decomposes a multi-hop comparison into two bounded queries", () => {
     const plan = buildRetrievalPlan({
       query: "Agentic RAG 和 RAG Agent 有什么区别？",
@@ -64,19 +80,50 @@ describe("retrieval router and query planner", () => {
 
   it("removes retrieval tools that are outside the selected route", () => {
     const tools = [
-      { name: "search_notes" },
-      { name: "web_search" },
-      { name: "web_fetch" },
-      { name: "calculator" },
+      {
+        name: "private_search",
+        outputPolicy: {
+          grounding: "cited_evidence" as const,
+          citationRequired: true,
+          retrieval: { source: "knowledge" as const, maxCallsPerRun: 1 },
+        },
+      },
+      {
+        name: "public_search",
+        outputPolicy: {
+          grounding: "cited_evidence" as const,
+          citationRequired: true,
+          retrieval: { source: "web" as const, maxCallsPerRun: 1 },
+        },
+      },
+      {
+        name: "calculator",
+        outputPolicy: {
+          grounding: "authoritative_result" as const,
+          citationRequired: false,
+        },
+      },
     ];
 
+    // 联网开启时 route 只是优先级：knowledge 路由保留 Web 工具作为兜底，
+    // 先后顺序交给 Prompt 的检索计划段表达，不靠削减工具集实现。
     expect(filterToolsForRetrievalRoute(tools, "knowledge").map((tool) => tool.name))
-      .toEqual(["search_notes", "calculator"]);
+      .toEqual(["private_search", "public_search", "calculator"]);
+    expect(filterToolsForRetrievalRoute(tools, "knowledge", { webEnabled: true })
+      .map((tool) => tool.name))
+      .toEqual(["private_search", "public_search", "calculator"]);
+    // 联网关闭是硬边界：Web 工具在任何 route 下都不可见。
+    expect(filterToolsForRetrievalRoute(tools, "knowledge", { webEnabled: false })
+      .map((tool) => tool.name))
+      .toEqual(["private_search", "calculator"]);
+    // web 路由仍然只保留 Web 检索源，知识库工具按 route 收窄。
+    expect(filterToolsForRetrievalRoute(tools, "web").map((tool) => tool.name))
+      .toEqual(["public_search", "calculator"]);
     expect(filterToolsForRetrievalRoute(tools, "no_retrieval").map((tool) => tool.name))
-      .toEqual(["search_notes", "web_search", "web_fetch", "calculator"]);
+      .toEqual(["private_search", "public_search", "calculator"]);
     expect(filterToolsForRetrievalRoute(tools, "no_retrieval", { webEnabled: false })
       .map((tool) => tool.name))
-      .toEqual(["search_notes", "calculator"]);
+      .toEqual(["private_search", "calculator"]);
   });
 
   it("does not treat a saved webpage link as a web source inside the knowledge index", () => {

@@ -1,13 +1,10 @@
 import {
   IDENTITY_CONTENT,
   EVIDENCE_CITATION_POLICY,
-  KNOWLEDGE_SEARCH_POLICY,
-  SEARCH_QUERY_POLICY,
-  WEB_SEARCH_CONTENT,
 } from "./policies";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
-export type PromptSegmentKind = "identity" | "memory-operation" | "memory" | "retrieval-plan" | "knowledge-search-policy" | "web-search-policy" | "search-query-policy" | "evidence-policy" | "task-context" | "safety";
+export type PromptSegmentKind = "identity" | "memory-operation" | "memory" | "retrieval-plan" | "tool-orchestration" | "evidence-policy" | "task-context" | "safety";
 
 export type PromptSegment = {
   kind: PromptSegmentKind;
@@ -28,7 +25,8 @@ export type BuildSegmentsInput = {
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   knowledgeMetadata?: Record<string, unknown>; // RAG debug summary，写进 trace
-  webSearchEnabled?: boolean; // 开启联网搜索 → 构造策略段
+  webSearchEnabled?: boolean;
+  toolOrchestration?: string;
   retrievalPlan?: RetrievalPlan;
 };
 
@@ -79,16 +77,6 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
     });
   }
 
-  segments.push({
-    kind: "knowledge-search-policy",
-    title: "知识库检索策略",
-    content: KNOWLEDGE_SEARCH_POLICY,
-    priority: 85,
-    tokenBudget: 360,
-    source: "system",
-    dynamic: false,
-  });
-
   if (input.retrievalPlan) {
     const plan = input.retrievalPlan;
     segments.push({
@@ -97,6 +85,7 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       content: [
         `route=${plan.route}`,
         `reason=${plan.reason}`,
+        `freshnessRequired=${plan.freshnessRequired === true}`,
         `evidenceRequired=${plan.evidenceRequired}`,
         `maxAttempts=${plan.maxAttempts}`,
         `indexVersion=${plan.indexVersion}`,
@@ -106,6 +95,11 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
         plan.route === "no_retrieval"
           ? "当前路由未预选检索；若进一步判断用户明确需要个人知识或实时公开证据，可把检索工具作为一次受限 fallback。"
           : "优先使用该 route 对应的检索工具。证据不足时最多按计划重试一次，不得自行无限改写或降低阈值。",
+        // route=knowledge 时 Web 工具依然可见（用户已开启联网），必须说清先后顺序，
+        // 否则模型会把“可用”读成“可以先用”，绕过知识库直接联网。
+        ...(plan.route === "knowledge" && input.webSearchEnabled
+          ? ["用户本轮已开启联网，Web 检索工具可用但仅作兜底：必须先查个人知识库，只有知识库无结果、证据明显过期或用户后续明确要求公开来源时，才允许改用 Web 检索。"]
+          : []),
       ].join("\n"),
       priority: 96,
       tokenBudget: 520,
@@ -130,6 +124,22 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
     }
   }
 
+  const toolOrchestration = input.toolOrchestration?.trim();
+  if (input.webSearchEnabled && toolOrchestration) {
+    // 这段文本由当前 registry + RetrievalPlan 动态生成，不再维护一份写死工具名的
+    // WEB_SEARCH_CONTENT。它帮助模型首次就按正确顺序调用；Runtime 仍独立强制依赖。
+    segments.push({
+      kind: "tool-orchestration",
+      title: "工具编排策略",
+      content: toolOrchestration,
+      priority: 98,
+      tokenBudget: 240,
+      source: "runtime",
+      trust: "trusted",
+      dynamic: true,
+    });
+  }
+
   const knowledge = input.knowledge?.trim();
   if (knowledge) {
     segments.push({
@@ -142,27 +152,6 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       trust: "external",
       dynamic: true,
       metadata: input.knowledgeMetadata,
-    });
-  }
-
-  if (input.webSearchEnabled) {
-    segments.push({
-      kind: "search-query-policy",
-      title: "搜索查询策略",
-      content: SEARCH_QUERY_POLICY,
-      priority: 80,
-      tokenBudget: 300,
-      source: "system",
-      dynamic: false,
-    });
-    segments.push({
-      kind: "web-search-policy",
-      title: "联网搜索策略",
-      content: WEB_SEARCH_CONTENT,
-      priority: 70,
-      tokenBudget: 400,
-      source: "system",
-      dynamic: false,
     });
   }
 

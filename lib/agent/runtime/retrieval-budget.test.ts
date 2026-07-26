@@ -16,6 +16,12 @@ describe("agent retrieval tool budget", () => {
     registry.register({
       name: "search_notes",
       description: "search",
+      capabilities: ["private.knowledge.search"],
+      outputPolicy: {
+        grounding: "cited_evidence",
+        citationRequired: true,
+        retrieval: { source: "knowledge", maxCallsPerRun: 1 },
+      },
       input_schema: {
         type: "object",
         properties: { query: { type: "string" } },

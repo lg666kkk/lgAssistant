@@ -31,6 +31,7 @@ describe("online scores", () => {
           evidenceCount: 1,
           claimCount: 1,
           citedClaimCount: 1,
+          coveredClaimCount: 1,
           supportedClaimCount: 1,
           citationPrecision: 1,
           citationCoverage: 1,

@@ -57,6 +57,8 @@ function parseInput(input: unknown): ParsedLeetCodeWrongBookInput {
 
 export const leetCodeWrongBookTool: ToolDefinition = {
   name: "leetcode_wrong_book",
+  capabilities: ["leetcode.wrong_book.read", "leetcode.wrong_book.write"],
+  outputPolicy: { grounding: "authoritative_result", citationRequired: false },
   description:
     "管理 LeetCode 错题本。支持记录做错的题、查看全部错题、查看今日到期复习题、标记复习结果。适合用户说“这题我做错了”“帮我看看该复习哪些题”“我复习完了”时使用。",
   runtime: {

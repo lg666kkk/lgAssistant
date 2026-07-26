@@ -41,6 +41,8 @@ function parseInput(input: unknown): CreateTodoInput {
 }
 
 export const createTodoTool: ToolDefinition = {
+  capabilities: ["todo.create"],
+  outputPolicy: { grounding: "action_receipt", citationRequired: false },
   runtime: {
     ...defaultToolRuntimePolicy,
     sideEffect: "write",

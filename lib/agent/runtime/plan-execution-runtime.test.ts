@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTrace } from "./trace";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
+import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import {
   AGENTIC_RAG_VERSION,
   type EvidenceBundle,
@@ -113,7 +114,7 @@ describe("Plan-and-Execute runtime integration", () => {
         description: "todo",
         input_schema: { type: "object", properties: {} },
       }],
-      toolRegistry: new ToolRegistry(),
+      toolRegistry: createBuiltinToolRegistry(),
       maxToolIterations: 4,
       allToolSources: [],
       requestId: "request-todo",
@@ -172,7 +173,7 @@ describe("Plan-and-Execute runtime integration", () => {
         description: "search",
         input_schema: { type: "object", properties: {} },
       }],
-      toolRegistry: new ToolRegistry(),
+      toolRegistry: createBuiltinToolRegistry(),
       maxToolIterations: 4,
       allToolSources: [],
       requestId: "request-1",
@@ -216,7 +217,7 @@ describe("Plan-and-Execute runtime integration", () => {
         { name: "get_current_time", description: "time", input_schema: { type: "object", properties: {} } },
         { name: "search_notes", description: "search", input_schema: { type: "object", properties: {} } },
       ],
-      toolRegistry: new ToolRegistry(),
+      toolRegistry: createBuiltinToolRegistry(),
       maxToolIterations: 4,
       allToolSources: [],
       requestId: "request-scoped",

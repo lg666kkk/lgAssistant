@@ -21,6 +21,8 @@ function parseInput(input: unknown): DailyLeetCodeInput {
 
 export const dailyLeetCodeTool: ToolDefinition = {
   name: "get_daily_leetcode_practice",
+  capabilities: ["leetcode.practice.read"],
+  outputPolicy: { grounding: "authoritative_result", citationRequired: false },
   description:
     "获取今天的 LeetCode 热题 100 随机练习清单。每天固定返回 5 道题；同一轮 100 道内不会重复，全部练完后自动开启新一轮。适合用户询问今天刷什么题、每日算法练习、LeetCode 训练计划时使用。",
   input_schema: {

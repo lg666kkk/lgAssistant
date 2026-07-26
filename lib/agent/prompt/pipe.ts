@@ -14,8 +14,10 @@ export type PromptPipeInput = {
   memory?: string;
   knowledge?: string;
   knowledgeMetadata?: Record<string, unknown>;
+  // 产品级联网开关：关闭时不注入任何 Web 编排提示；真正的工具可见性仍由 route 过滤。
   webSearchEnabled?: boolean;
-  currentDate?: string;
+  // Registry 根据当前 ToolDefinition + RetrievalPlan 生成，避免在静态 Prompt 硬编码工具名。
+  toolOrchestration?: string;
   retrievalPlan?: RetrievalPlan;
   maxTokens?: number;
 };
@@ -33,9 +35,7 @@ function renderOrder(segments: PromptSegment[]) {
     identity: 0,
     safety: 10,
     "memory-operation": 15,
-    "knowledge-search-policy": 20,
-    "search-query-policy": 30,
-    "web-search-policy": 40,
+    "tool-orchestration": 45,
     "evidence-policy": 50,
     memory: 60,
     "retrieval-plan": 70,
