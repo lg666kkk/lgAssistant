@@ -39,14 +39,19 @@ import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
 import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
 import { redactSensitiveValue } from "@/lib/agent/rag/governance";
-import { withSpanLabel } from "@/lib/agent/observability/span-labels";
+import {
+  toSharedTraceMetadata,
+  withSpanLabel,
+} from "@/lib/agent/observability/span-labels";
 import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import type { AgentTrace } from "@/lib/agent/runtime/trace";
 import { reportOnlineScores } from "@/lib/agent/eval/online-scores";
 import {
+  retrievalObservationLabel,
+  retrievalObservationName,
   summarizeAnswerValidation,
-  summarizeRagRoute,
+  summarizeRetrievalRoute,
   summarizeRetrieval,
 } from "@/lib/agent/observability/agent-trace-summary";
 import {
@@ -479,14 +484,21 @@ export async function POST(req: Request) {
         const projectTraceObservations = (trace: AgentTrace) => {
           for (const step of trace.steps) {
             if (step.type === "retrieval" && step.phase === "graded") {
-              const observation = langfuseTrace.startObservation("rag.retrieve", {
-                metadata: withSpanLabel("rag.retrieve", { requestId, planId: step.planId }),
+              const observationName = retrievalObservationName(step);
+              const observation = langfuseTrace.startObservation(observationName, {
+                metadata: withSpanLabel(observationName, {
+                  requestId,
+                  planId: step.planId,
+                  source: step.source,
+                  toolName: step.toolName,
+                  spanLabel: retrievalObservationLabel(step),
+                }),
               }, { asType: "retriever" });
               observation.update({ output: summarizeRetrieval(step) });
               observation.end();
             } else if (step.type === "answer_validation") {
-              const observation = langfuseTrace.startObservation("rag.evidence_validation", {
-                metadata: withSpanLabel("rag.evidence_validation", { requestId }),
+              const observation = langfuseTrace.startObservation("evidence.validation", {
+                metadata: withSpanLabel("evidence.validation", { requestId }),
               }, { asType: "evaluator" });
               observation.update({ output: summarizeAnswerValidation(step) });
               observation.end();
@@ -499,16 +511,19 @@ export async function POST(req: Request) {
           sessionId,
           traceName: "agent-chat",
           tags: ["api-chat", "agent"],
-          metadata: withSpanLabel("agent-chat", {
+          // propagateAttributes 的 metadata 会继承到所有后代 observation。spanLabel
+          // 属于当前 observation，不能作为公共属性传播，否则会覆盖每个子 span
+          // 自己通过 withSpanLabel() 设置的标签。
+          metadata: toSharedTraceMetadata({
             requestId,
             model: selectedModel,
           }),
         }, async () => {
       try {
-        const routeObservation = langfuseTrace.startObservation("rag.route", {
-          metadata: withSpanLabel("rag.route", { requestId, planId: retrievalPlan.id }),
+        const routeObservation = langfuseTrace.startObservation("retrieval.route", {
+          metadata: withSpanLabel("retrieval.route", { requestId, planId: retrievalPlan.id }),
         }, { asType: "retriever" });
-        routeObservation.update({ output: summarizeRagRoute(retrievalPlan) });
+        routeObservation.update({ output: summarizeRetrievalRoute(retrievalPlan) });
         routeObservation.end();
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖

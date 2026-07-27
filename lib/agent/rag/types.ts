@@ -106,6 +106,8 @@ export type RetrievalAttempt = {
 export type EvidenceBundle = {
   bundleId: string;
   version: typeof AGENTIC_RAG_VERSION;
+  /** 产生这组证据的工具名；由 Runtime 在接收工具结果时补充，用于 Trace 归因。 */
+  toolName?: string;
   planId?: string;
   route: RetrievalRoute;
   query: string;

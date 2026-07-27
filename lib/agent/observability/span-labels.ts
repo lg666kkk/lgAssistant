@@ -1,4 +1,4 @@
-// Langfuse 上报的 span/generation 名字是英文技术标识（rag.route、memory.recall…），
+// Langfuse 上报的 span/generation 名字是英文技术标识（retrieval.route、memory.recall…），
 // 在 trace 树里不看代码很难一眼说清这一步在干什么。
 // 这里维护「英文 span 名 → 中文作用说明」的唯一映射，所有上报点统一带上
 // metadata.spanLabel 字段，详情页/回放都能直接读到中文语义。
@@ -14,10 +14,14 @@ export const SPAN_LABELS: Record<string, string> = {
   "knowledge-sync": "知识库同步",
   "knowledge-wiki-compile": "Wiki 页面编译请求",
 
-  // ── 检索 / RAG ──
-  "rag.route": "检索路由决策（判断走知识库还是联网）",
-  "rag.retrieve": "知识检索（取回证据片段）",
-  "rag.evidence_validation": "回答证据校验（引用与事实一致性打分）",
+  // ── 检索与证据 ──
+  // 动态检索名使用 retrieval.<source>:<toolName>。resolveSpanLabel 会按冒号
+  // 回退到来源级标签；调用方还会把具体 toolName 写入 spanLabel 和 metadata。
+  "retrieval.route": "检索路由决策（判断走知识库还是联网）",
+  "retrieval.web": "Web 证据检索",
+  "retrieval.knowledge": "个人知识库检索",
+  "retrieval.unknown": "外部证据检索（来源未知）",
+  "evidence.validation": "回答证据校验（引用与事实一致性打分）",
 
   // ── 记忆 ──
   "memory.recall": "记忆召回（把相关长期记忆注入 system）",
@@ -76,4 +80,18 @@ export function withSpanLabel<T extends Record<string, unknown>>(
       ? existing
       : resolveSpanLabel(name),
   };
+}
+
+/**
+ * 构造可以安全传给 propagateAttributes() 的共享 metadata。
+ *
+ * propagateAttributes 会把 metadata 继承给所有后代 observation，而 spanLabel
+ * 描述的是某一个具体 observation，不能继承。即使调用方误传了根标签，这里也
+ * 会将其剥离，避免覆盖 retrieval.route、context.compaction、模型调用等子 span 标签。
+ */
+export function toSharedTraceMetadata<T extends Record<string, unknown>>(
+  metadata: T,
+): Omit<T, typeof SPAN_LABEL_METADATA_KEY> {
+  const { [SPAN_LABEL_METADATA_KEY]: _spanLabel, ...shared } = metadata;
+  return shared;
 }

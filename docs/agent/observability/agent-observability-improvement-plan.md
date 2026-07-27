@@ -310,7 +310,7 @@ agent.run
   |     +-> context.compact
   |     +-> model.call
   |     +-> tool.call
-  |     |     \-> rag.retrieve / external.http / approval.wait
+  |     |     \-> retrieval.* / external.http / approval.wait
   |     \-> step.verify
   +-> final_answer.model
   +-> memory.consolidate

@@ -9,19 +9,22 @@ Langfuse 的 trace 树里，每个 span 的名字是英文技术标识：
 
 ```
 agent-chat
- ├─ rag.route
+ ├─ retrieval.route
  ├─ memory.explicit_forget
  ├─ memory.recall
  ├─ context.compaction
  ├─ agent-loop-initial:ai.streamText
  ├─ agent-loop-after-tools:search_notes:ai.streamText
  ├─ memory.consolidate
- ├─ rag.retrieve
- └─ rag.evidence_validation
+ ├─ retrieval.knowledge:search_notes
+ ├─ retrieval.web:web_search
+ ├─ retrieval.web:web_fetch
+ └─ evidence.validation
 ```
 
 名字对写代码的人是清楚的，但对着面板排查、给别人讲这条链路、或者过几周自己回看时，
-「`rag.route` 到底是决定走哪条检索，还是已经在检索了」这种问题每次都要翻代码确认。
+仍然需要明确区分路由决策、实际证据来源和具体检索工具。`retrieval.*` 直接带上
+`source` 与 `toolName`，避免把 Web 搜索误读成个人知识库 RAG。
 
 做法：给**每一个上报**的 `metadata` 补一个固定字段 `spanLabel`，值是中文的作用说明，
 在 Langfuse 详情页的 Metadata 区块直接可读。
@@ -35,7 +38,9 @@ agent-chat
 
 ```ts
 export const SPAN_LABELS: Record<string, string> = {
-  "rag.route": "检索路由决策（判断走知识库还是联网）",
+  "retrieval.route": "检索路由决策（判断走知识库还是联网）",
+  "retrieval.web": "Web 证据检索",
+  "retrieval.knowledge": "个人知识库检索",
   "memory.recall": "记忆召回（把相关长期记忆注入 system）",
   "context.compaction": "上下文压缩（超预算时裁剪/摘要历史）",
   // …
@@ -96,7 +101,7 @@ function compactMetadata(functionId: string, metadata?: ModelTelemetryMetadata) 
 | --- | --- |
 | [lib/agent/observability/span-labels.ts](../../../lib/agent/observability/span-labels.ts) | 映射表 + `resolveSpanLabel` + `withSpanLabel` |
 | [lib/agent/runtime/model-provider.ts](../../../lib/agent/runtime/model-provider.ts) | `compactMetadata` 增加 functionId 入参，集中注入 |
-| [app/api/chat/route.ts](../../../app/api/chat/route.ts) | `agent-chat` / `rag.*` / `memory.*` 六个 span |
+| [app/api/chat/route.ts](../../../app/api/chat/route.ts) | `agent-chat` / `retrieval.*` / `evidence.validation` / `memory.*` span |
 | [lib/agent/runtime/index.ts](../../../lib/agent/runtime/index.ts) | `context.compaction` |
 | [lib/agent/runtime/plan-execution.ts](../../../lib/agent/runtime/plan-execution.ts) | `plan-and-execute-planner` |
 | [app/api/knowledge/sync/route.ts](../../../app/api/knowledge/sync/route.ts)、[wiki/compile/route.ts](../../../app/api/knowledge/wiki/compile/route.ts) | 两条知识链路的根 trace |

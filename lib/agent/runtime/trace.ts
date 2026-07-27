@@ -103,6 +103,8 @@ export type PlanTraceStep = TraceStepBase & {
 export type RetrievalTraceStep = TraceStepBase & {
   type: "retrieval";
   phase: "routed" | "graded";
+  /** 实际产生 EvidenceBundle 的工具，用于区分 web_search、web_fetch 等检索操作。 */
+  toolName?: string;
   planId: string;
   route: RetrievalRoute;
   reason: string;

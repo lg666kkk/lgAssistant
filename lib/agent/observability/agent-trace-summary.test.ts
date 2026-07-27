@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { summarizeCompaction, summarizeRagRoute } from "./agent-trace-summary";
+import {
+  retrievalObservationLabel,
+  retrievalObservationName,
+  summarizeCompaction,
+  summarizeRetrievalRoute,
+  summarizeRetrieval,
+} from "./agent-trace-summary";
 
 describe("agent trace Langfuse summaries", () => {
-  it("keeps RAG route summaries free of the original query", () => {
-    const summary = summarizeRagRoute({
+  it("keeps retrieval route summaries free of the original query", () => {
+    const summary = summarizeRetrievalRoute({
       id: "retrieval-1",
       version: "agentic-rag-v2",
       route: "knowledge",
@@ -45,5 +51,29 @@ describe("agent trace Langfuse summaries", () => {
 
     expect(summary).toMatchObject({ tokenReduction: 600, tokenReductionRatio: 0.6 });
     expect(JSON.stringify(summary)).not.toContain("private summary text");
+  });
+
+  it("names retrieval observations by source and actual tool", () => {
+    const step = {
+      type: "retrieval" as const,
+      phase: "graded" as const,
+      index: 1,
+      startedAt: 1,
+      toolName: "web_fetch",
+      planId: "retrieval-1",
+      route: "no_retrieval" as const,
+      reason: "acceptable_evidence",
+      maxAttempts: 2,
+      indexVersion: "web-v1",
+      source: "web" as const,
+    };
+
+    expect(retrievalObservationName(step)).toBe("retrieval.web:web_fetch");
+    expect(retrievalObservationLabel(step)).toBe("Web 证据检索（web_fetch）");
+    expect(summarizeRetrieval(step)).toMatchObject({
+      toolName: "web_fetch",
+      route: "no_retrieval",
+      source: "web",
+    });
   });
 });

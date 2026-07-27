@@ -1,7 +1,7 @@
 # 联网开关与检索路由：权限边界 vs 优先级
 
 > 相关：[agentic-rag-production.md](./agentic-rag-production.md#21-retrieval-router)（Router 全貌）、
-> [span-chinese-labels.md](../agent/observability/span-chinese-labels.md)（`rag.route` 上报）。
+> [span-chinese-labels.md](../agent/observability/span-chinese-labels.md)（`retrieval.route` 上报）。
 
 ## 这个改动解决什么问题
 

@@ -3,7 +3,10 @@ import { enqueueKnowledgeProfileRefresh } from "@/lib/agent/tools/knowledge-prof
 import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
 import { requireUser } from "@/lib/auth/server";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
-import { withSpanLabel } from "@/lib/agent/observability/span-labels";
+import {
+  toSharedTraceMetadata,
+  withSpanLabel,
+} from "@/lib/agent/observability/span-labels";
 
 export const runtime = "nodejs";
 
@@ -60,7 +63,8 @@ export async function POST(req: Request) {
           userId: user.id,
           traceName: "knowledge-sync",
           tags: ["knowledge", "notion-sync"],
-          metadata: withSpanLabel("knowledge-sync", {
+          // spanLabel 是 observation 私有标签，不能随公共 metadata 传播给子 span。
+          metadata: toSharedTraceMetadata({
             requestId,
             pageId,
             tree: String(syncTree),

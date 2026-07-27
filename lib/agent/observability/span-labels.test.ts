@@ -4,18 +4,23 @@ import {
   SPAN_LABEL_METADATA_KEY,
   UNKNOWN_SPAN_LABEL,
   resolveSpanLabel,
+  toSharedTraceMetadata,
   withSpanLabel,
 } from "./span-labels";
 
 describe("resolveSpanLabel", () => {
   it("精确命中已登记的 span 名", () => {
     expect(resolveSpanLabel("memory.recall")).toBe(SPAN_LABELS["memory.recall"]);
-    expect(resolveSpanLabel("rag.route")).toBe(SPAN_LABELS["rag.route"]);
+    expect(resolveSpanLabel("retrieval.route")).toBe(SPAN_LABELS["retrieval.route"]);
   });
 
   it("带工具后缀的动态 functionId 回退到前缀标签", () => {
     expect(resolveSpanLabel("agent-loop-after-tools:search_notes+read_tool_artifact"))
       .toBe(SPAN_LABELS["agent-loop-after-tools"]);
+    expect(resolveSpanLabel("retrieval.web:web_search"))
+      .toBe(SPAN_LABELS["retrieval.web"]);
+    expect(resolveSpanLabel("retrieval.knowledge:search_notes"))
+      .toBe(SPAN_LABELS["retrieval.knowledge"]);
   });
 
   it("优先取最长匹配而不是最短前缀", () => {
@@ -54,5 +59,18 @@ describe("withSpanLabel", () => {
   it("调用方显式给了 spanLabel 时不覆盖", () => {
     expect(withSpanLabel("memory.recall", { [SPAN_LABEL_METADATA_KEY]: "自定义说明" }))
       .toEqual({ [SPAN_LABEL_METADATA_KEY]: "自定义说明" });
+  });
+});
+
+describe("toSharedTraceMetadata", () => {
+  it("不把根 observation 的 spanLabel 传播给子 span", () => {
+    expect(toSharedTraceMetadata({
+      requestId: "req-1",
+      model: "deepseek-v4-pro",
+      [SPAN_LABEL_METADATA_KEY]: SPAN_LABELS["agent-chat"],
+    })).toEqual({
+      requestId: "req-1",
+      model: "deepseek-v4-pro",
+    });
   });
 });

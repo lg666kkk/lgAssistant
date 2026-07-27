@@ -27,6 +27,7 @@
 |---|---|
 | [agent-learning-plan.md](./agent/learning/agent-learning-plan.md) | Agent 系统学习路线 |
 | [agent-tool-calling-learning-roadmap.md](./agent/learning/agent-tool-calling-learning-roadmap.md) | Tool Use、Registry、Router 与 Agent Loop 学习路线 |
+| [frontend-to-ai-infra-roadmap.md](./agent/learning/frontend-to-ai-infra-roadmap.md) | 前端转型 Agent Infra / AI Platform 的岗位地图与 24 周实践路线 |
 
 ## Agent Runtime
 

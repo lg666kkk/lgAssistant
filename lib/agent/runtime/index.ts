@@ -582,7 +582,12 @@ export async function executeTools(
       && isEvidenceBundle(toolResult.data.evidenceBundle)
         ? toolResult.data.evidenceBundle
         : undefined;
-    if (evidenceBundle) evidenceBundles.push(evidenceBundle);
+    if (evidenceBundle) {
+      // EvidenceBundle 描述证据本身，工具名由执行器最可靠地掌握。这里补充来源工具，
+      // 后续 Trace 上报即可区分 web_search、web_fetch、search_notes，无需让每个
+      // 工具重复维护一份可观测性字段。
+      evidenceBundles.push({ ...evidenceBundle, toolName: toolUse.name });
+    }
     if (toolResult.ok && toolDefinition) {
       usedGroundingModes.add(toolDefinition.outputPolicy.grounding);
       // 判据是“本轮拿到了必须被引用的证据”，不是“调用过要求引用的工具”。
@@ -1564,6 +1569,7 @@ export async function runAgentLoop(
         phase: "graded",
         index: stepIndex++,
         startedAt: Date.now(),
+        toolName: bundle.toolName,
         planId: bundle.planId ?? retrievalPlan?.id ?? "unplanned",
         route: bundle.route,
         reason: bundle.grade.reason,

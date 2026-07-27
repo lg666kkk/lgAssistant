@@ -6,7 +6,7 @@ import type {
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
 // Keep Langfuse payloads aggregate-only: no user query, evidence text, filters, or compaction summary.
-export function summarizeRagRoute(plan: RetrievalPlan) {
+export function summarizeRetrievalRoute(plan: RetrievalPlan) {
   return {
     route: plan.route,
     confidence: plan.confidence,
@@ -21,6 +21,7 @@ export function summarizeRagRoute(plan: RetrievalPlan) {
 
 export function summarizeRetrieval(step: RetrievalTraceStep) {
   return {
+    toolName: step.toolName,
     route: step.route,
     source: step.source,
     evidenceRequired: step.evidenceRequired,
@@ -36,6 +37,35 @@ export function summarizeRetrieval(step: RetrievalTraceStep) {
     measuredDurationMs: step.durationMs,
     timings: step.timings,
   };
+}
+
+function safeObservationSegment(value: string | undefined) {
+  return value
+    ?.trim()
+    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * 用“证据来源 + 实际工具”命名检索 observation。
+ *
+ * retrieval 是具体操作，RAG 是包含检索、上下文注入和生成的完整模式，因此这里
+ * 不再使用 rag.retrieve。工具名来自 Runtime，不维护中央工具名单；未来新增检索
+ * 工具只要继续返回 EvidenceBundle，就会自动得到可读且可聚合的 observation 名。
+ */
+export function retrievalObservationName(step: RetrievalTraceStep) {
+  const source = safeObservationSegment(step.source) || "unknown";
+  const toolName = safeObservationSegment(step.toolName);
+  return toolName ? `retrieval.${source}:${toolName}` : `retrieval.${source}`;
+}
+
+export function retrievalObservationLabel(step: RetrievalTraceStep) {
+  const sourceLabel = step.source === "web"
+    ? "Web 证据检索"
+    : step.source === "knowledge"
+      ? "个人知识库检索"
+      : "外部证据检索";
+  return step.toolName ? `${sourceLabel}（${step.toolName}）` : sourceLabel;
 }
 
 export function summarizeCompaction(step: ContextCompactionTraceStep) {

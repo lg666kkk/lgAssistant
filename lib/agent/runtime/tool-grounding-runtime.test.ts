@@ -177,6 +177,12 @@ describe("runtime tool grounding", () => {
       guarded: false,
       report: expect.objectContaining({ status: "fail" }),
     }));
+    expect(result.trace.steps).toContainEqual(expect.objectContaining({
+      type: "retrieval",
+      phase: "graded",
+      toolName: "web_search",
+      source: "web",
+    }));
   });
 
   // 检索工具查不到内容时也返回 ok:true。工具级 evidenceRequired 的判据仍应是

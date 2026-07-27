@@ -9,6 +9,7 @@ import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
 import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { createUuid } from "@/lib/platform/uuid";
 export interface Message {
   id?: string;
   role: "user" | "assistant";
@@ -48,7 +49,7 @@ export class ChatSession {
   private isNewSession = true;
 
   constructor(id?: string) {
-    this.id = id ?? crypto.randomUUID();
+    this.id = id ?? createUuid();
   }
 
   /**
