@@ -57,6 +57,7 @@
 |---|---|
 | [layered-memory.md](./agent/memory/layered-memory.md) | 分层记忆架构 |
 | [memory-atomic-dual-write.md](./agent/memory/memory-atomic-dual-write.md) | 长期与语义记忆原子写入 |
+| [memory-conflict-and-recall.md](./agent/memory/memory-conflict-and-recall.md) | 记忆冲突治理：历史表、硬删除、关键词召回通道 |
 
 ## 可观测性与评估
 

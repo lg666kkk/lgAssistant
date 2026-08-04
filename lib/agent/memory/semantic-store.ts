@@ -1,10 +1,12 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { EmbeddingClient } from "@/lib/knowledge/embedding";
+import { purgeMemoryKey } from "./atomic-writer";
 import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
 import type { MemoryRecord, MemoryWriteMetadata, SemanticMemoryStore } from "./types";
 
 const TABLE = "agent_semantic_memories";
 const MATCH_FN = "match_memories";
+const KEYWORD_MATCH_FN = "match_memories_keyword";
 // get/list 用：不取 embedding（1024 维白传），列出其余字段
 const COLS = "id, key, layer, memory_type, source, confidence, importance, status, content, evidence, metadata, created_at, updated_at, valid_from, valid_to, last_accessed_at";
 
@@ -101,19 +103,12 @@ export class SemanticStore implements SemanticMemoryStore {
     return data ? this.toRecord(data) : null;
   }
 
+  /** 同 LongTermStore.forget：走 purge_memory RPC，三张表同事务删除。 */
   async forget(key: string, options: { userId?: string } = {}): Promise<void> {
     if (!hasSupabaseConfig()) return;
     const userId = requireUserId(options, "forget");
     if (!userId) return;
-
-    const { error } = await getSupabase()
-      .from(TABLE)
-      .delete()
-      .eq("key", key)
-      .eq("user_id", userId);
-    if (error) {
-      throw new Error(`[SemanticStore.forget] 删除失败: ${error.message}`);
-    }
+    await purgeMemoryKey(key, userId);
   }
 
   async list(limit = 50, options: { userId?: string } = {}): Promise<MemoryRecord[]> {
@@ -173,5 +168,47 @@ export class SemanticStore implements SemanticMemoryStore {
       return [];
     }
     return (data ?? []).map((row: any) => this.toRecord(row));
+  }
+
+  /**
+   * 关键词通道召回。terms 由 keyword-terms.ts 在应用层切好，这里只透传。
+   *
+   * 与 recall 的关系是并列的两条通道，不是主备：向量分不开数字（「8 万」与
+   * 「5 万」的余弦距离小到可忽略），关键词认不出同义改写。两条结果交给
+   * fusion.ts 合并（并集）。
+   *
+   * 返回记录的 score 是 keyword_rank（命中词数 / 总词数，或受控 key 命中的 1.0），
+   * **与 recall 返回的余弦相似度不同量纲**，不能直接放在一起比大小 ——
+   * 这正是融合器要做校准的原因。
+   *
+   * 查询失败返回空数组而不抛：关键词通道是增强项，迁移还没跑（RPC 不存在）时
+   * 整条召回链路必须仍然可用，退化成纯向量。
+   */
+  async recallByKeyword(
+    input: { terms: string[]; keys: string[] },
+    limit = 12,
+    options: { userId?: string } = {},
+  ): Promise<MemoryRecord[]> {
+    if (!hasSupabaseConfig()) return [];
+    const userId = requireUserId(options, "recallByKeyword");
+    if (!userId) return [];
+    if (input.terms.length === 0 && input.keys.length === 0) return [];
+
+    const { data, error } = await getSupabase().rpc(KEYWORD_MATCH_FN, {
+      p_user_id: userId,
+      p_terms: input.terms,
+      p_keys: input.keys,
+      p_match_count: limit,
+    });
+    if (error) {
+      console.error("[SemanticStore.recallByKeyword] 关键词召回失败:", error.message);
+      return [];
+    }
+    return (data ?? []).map((row: any) => {
+      const record = this.toRecord(row);
+      // record-mapper 只认 similarity 列，keyword_rank 得在这里补进 score。
+      if (row.keyword_rank != null) record.score = Number(row.keyword_rank);
+      return record;
+    });
   }
 }

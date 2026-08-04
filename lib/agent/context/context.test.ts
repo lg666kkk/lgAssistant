@@ -20,6 +20,13 @@ describe("context plan and snapshot", () => {
     expect(JSON.stringify(plan)).not.toContain("candidate memory");
   });
 
+  it("does not let the model claim an asynchronous memory write already succeeded", () => {
+    const prompt = buildPromptPipe({ maxTokens: 500 });
+
+    expect(prompt.systemPrompt).toContain("后台沉淀尚未返回成功回执时");
+    expect(prompt.systemPrompt).toContain("本轮结束后会尝试更新长期记忆");
+  });
+
   it("versions snapshots and preserves the previous id", () => {
     const first = createContextSnapshot({
       userId: "user-1",

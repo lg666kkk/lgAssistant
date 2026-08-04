@@ -10,6 +10,10 @@ import { createScheduledJobTool } from "./scheduled-jobs";
 import { createWebSearchTool } from "./web-search";
 import { createWebFetchTool } from "./web-fetch";
 import { readToolArtifactTool } from "./read-tool-artifact";
+import {
+  createRecallMemoryTool,
+  createSearchMemoryHistoryTool,
+} from "./memory-recall";
 import { askUserTool } from "./ask-user";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
@@ -34,6 +38,11 @@ export function createBuiltinToolRegistry(options: {
   registry.register(createWebFetchTool({ retrievalPlan: options.retrievalPlan }));
   registry.register(readToolArtifactTool);
   registry.register(askUserTool);
+  // 两个工具必须同时注册。只有 recall_memory 时，模型问「以前的预算」会拿当前值
+  // 当历史答；只有 search_memory_history 时，问当前值会翻出一堆失效版本。
+  // 它们的 description 互相指路，缺一个另一个的边界说明就指向不存在的工具。
+  registry.register(createRecallMemoryTool());
+  registry.register(createSearchMemoryHistoryTool());
 
   return registry;
 }

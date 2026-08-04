@@ -137,6 +137,12 @@ export function filterToolsForRetrievalRoute<
     const source = tool.outputPolicy.retrieval?.source;
     if (source === undefined) return true;
     if (source === "web" && webEnabled) return true; // 软偏好：保留兜底能力
+    // 记忆工具不受 route 约束。route 回答的是「去知识库还是去网上找资料」，
+    // 与「这个用户之前告诉过我什么」是两个正交的问题：
+    // 一句「我之前说的预算是多少，帮我查下最新车价」会被判成 web，
+    // 若按 route 过滤，记忆工具就此消失，模型只能凭空编一个预算。
+    // 预算控制由 runtime 的 per-tool maxCallsPerRun 负责，不靠削减工具集。
+    if (source === "memory") return true;
     return allowedSources.has(source);
   });
 }
@@ -151,7 +157,12 @@ export function scopeRetrievalPlanToTools(
   const sources = new Set<RetrievalSource>();
   for (const tool of Array.from(tools)) {
     const source = tool.outputPolicy.retrieval?.source;
-    if (source) sources.add(source);
+    // "memory" 刻意不参与推导。Plan 的 route 只有 knowledge / web / both /
+    // no_retrieval 四态（rag/types.ts 的 RetrievalSource 不含 memory），
+    // 让记忆工具影响 route 会得出荒谬结论：一个只暴露记忆工具的步骤，
+    // sources.size === 1 且不含 knowledge → 被推成 "web"，
+    // 于是模型收到一份要求它去联网的检索计划，而这一步根本没有 Web 工具。
+    if (source === "knowledge" || source === "web") sources.add(source);
   }
   if (sources.size === 0) return undefined;
 

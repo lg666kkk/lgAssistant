@@ -58,7 +58,15 @@ export interface ToolOutputPolicy {
   grounding: ToolGroundingMode;
   citationRequired: boolean;
   retrieval?: {
-    source: "knowledge" | "web";
+    /**
+     * "memory" 刻意不复用 "knowledge"：
+     * knowledge 是用户显式整理的笔记与文档，来源可被用户直接看到和修改；
+     * memory 是系统从对话里自己抽取的个人事实，可能抽错，且引用的是「系统在某时刻
+     * 记下过什么」而不是「这件事为真」。两者的证据强度和用户预期都不同。
+     * 复用同一个 source 还会让路由把两者绑在一起——route 选中 knowledge 时
+     * 记忆工具跟着可见/不可见，那是纯粹的耦合缺陷。
+     */
+    source: "knowledge" | "web" | "memory";
     maxCallsPerRun: number;
   };
 }

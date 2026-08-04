@@ -36,6 +36,12 @@ export interface MemoryRecord {
   validFrom: string;
   validTo: string | null;
   lastAccessedAt: string | null;
+  /**
+   * 乐观并发校验用。可选是因为它只存在于真实行上：
+   * match_memories 之类的 RPC 若没返回该列，就拿不到版本，此时写入放弃版本校验
+   * （退化成 FOR UPDATE 串行化），而不是拿一个猜的数字去校验。
+   */
+  version?: number;
 }
 
 export interface MemoryWriteMetadata extends Record<string, unknown> {

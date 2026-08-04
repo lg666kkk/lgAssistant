@@ -1,4 +1,5 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
+import { purgeMemoryKey } from "./atomic-writer";
 import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
 import type { MemoryRecord, MemoryStore, MemoryWriteMetadata } from "./types";
 
@@ -91,19 +92,16 @@ export class LongTermStore implements MemoryStore {
     return data ? this.toRecord(data) : null;
   }
 
+  /**
+   * 硬删除该 key。改为走 purge_memory RPC，不再只删本表：
+   * 单表 .delete() 会留下另一层的孤儿行，也留下历史表里可被检索的旧版本，
+   * 用户说的「彻底删掉」就没做到。
+   */
   async forget(key: string, options: { userId?: string } = {}): Promise<void> {
     if (!hasSupabaseConfig()) return;
     const userId = requireUserId(options, "forget");
     if (!userId) return;
-
-    const { error } = await getSupabase()
-      .from(TABLE)
-      .delete()
-      .eq("key", key)
-      .eq("user_id", userId);     // WHERE key = $1 AND user_id = $2
-    if (error) {
-      throw new Error(`[LongTermStore.forget] 删除失败: ${error.message}`);
-    }
+    await purgeMemoryKey(key, userId);
   }
 
   async list(limit = 50, options: { userId?: string } = {}): Promise<MemoryRecord[]> {

@@ -98,6 +98,48 @@ describe("记忆写入决策", () => {
     ).toBe("UPDATE");
   });
 
+  it("同一食物的旧版饮食喜好确定性更新，但过敏记录仍拒绝覆盖", () => {
+    const favoriteCilantro = fact({
+      fact: "用户最喜欢吃香菜",
+      key: "diet:preference",
+      type: "preference",
+      evidenceExcerpt: "我最喜欢吃香菜",
+    });
+    const legacyDislike = memory({
+      key: "diet:dislike:cilantro",
+      type: "preference",
+      content: "用户不喜欢吃香菜",
+      score: 0.96,
+    });
+
+    expect(deterministicWriteDecision(favoriteCilantro, [legacyDislike])).toMatchObject({
+      action: "UPDATE",
+      targetKey: "diet:dislike:cilantro",
+      reason: "同一食物的旧版饮食喜好发生变化",
+    });
+    expect(deterministicWriteDecision(favoriteCilantro, [memory({ score: 0.96 })])).toEqual({
+      action: "NOOP",
+      reason: "存在高相似候选但业务身份不明确，拒绝猜测",
+    });
+  });
+
+  it("不同食物不会被旧版饮食喜好兼容分支确定性覆盖", () => {
+    const favoriteHotpot = fact({
+      fact: "用户最喜欢吃火锅",
+      key: "diet:favorite:hotpot",
+      type: "preference",
+      evidenceExcerpt: "我最喜欢吃火锅",
+    });
+    const legacyDislikeCilantro = memory({
+      key: "diet:dislike:cilantro",
+      type: "preference",
+      content: "用户不喜欢吃香菜",
+      score: 0.96,
+    });
+
+    expect(deterministicWriteDecision(favoriteHotpot, [legacyDislikeCilantro])).toBeNull();
+  });
+
   it("忘记请求软失效相关旧记忆", () => {
     expect(
       deterministicWriteDecision(fact({ intent: "forget" }), [memory()]),

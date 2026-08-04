@@ -56,7 +56,11 @@ describe("memory observability", () => {
       extractedFactCount: 0,
       persistedCount: 0,
       invalidatedCount: 0,
+      // 硬删除与软失效分开计数：前者不可恢复，运维上不能混在一个数字里。
+      purgedCount: 0,
       skippedCount: 0,
+      // 版本冲突重试次数，用来观测固化并发是否真的在发生。
+      retriedCount: 0,
       failedCount: 0,
       decisions: {},
     });

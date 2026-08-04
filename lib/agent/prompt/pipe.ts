@@ -12,6 +12,7 @@ export type PromptPipeInput = {
   userMessage?: string;
   memoryOperation?: string;
   memory?: string;
+  memoryRecallHint?: string;
   knowledge?: string;
   knowledgeMetadata?: Record<string, unknown>;
   // 产品级联网开关：关闭时不注入任何 Web 编排提示；真正的工具可见性仍由 route 过滤。
@@ -38,6 +39,8 @@ function renderOrder(segments: PromptSegment[]) {
     "tool-orchestration": 45,
     "evidence-policy": 50,
     memory: 60,
+    // 紧跟在记忆段之后：先给模型看已经预取到什么，再说「还能自己查什么」。
+    "memory-recall-hint": 65,
     "retrieval-plan": 70,
     "task-context": 80,
   };

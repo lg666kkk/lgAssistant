@@ -20,6 +20,7 @@ import {
   consolidate,
   handleExplicitForgetRequest,
   renderMemoryOperationContext,
+  renderMemoryPrefetchHint,
   type ExplicitForgetResult,
 } from "@/lib/agent/memory/memory-flow";
 import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
@@ -291,6 +292,11 @@ export async function POST(req: Request) {
 
   // 校验 messages 字段
   const requestId = crypto.randomUUID();
+  // 请求到达时刻。记忆固化是 fire-and-forget 的（下面的 void consolidate），
+  // 完成时刻可能比这里晚几十秒，两个相邻请求的固化还可能反序完成。
+  // 归档旧版本时截断有效期必须用「用户表达的时刻」而不是「处理的时刻」，
+  // 否则处理延迟会被写进有效时间轴，历史区间从此不可信。
+  const requestReceivedAt = new Date().toISOString();
   const { messages, sessionId } = body;
   const enableWebSearch = body.enableWebSearch !== false;
   const selectedModel = resolveChatModel(body.model);
@@ -574,6 +580,7 @@ export async function POST(req: Request) {
         }
         const explicitForgetHandled = explicitForgetResult.handled;
         let memorySystem = "";
+        let memoryRecallHint = "";
         if (lastUser) {
           const observation = langfuseTrace.startObservation("memory.recall", {
             input: { queryChars: lastUser.content.length },
@@ -585,6 +592,7 @@ export async function POST(req: Request) {
           try {
             const recall = await recallForPromptWithStats(lastUser.content, { userId: user.id });
             memorySystem = recall.context;
+            memoryRecallHint = renderMemoryPrefetchHint(recall);
             observation.update({
               output: {
                 eligible: recall.eligible,
@@ -598,6 +606,17 @@ export async function POST(req: Request) {
             });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
+            // 预取失败不等于「没有记忆」。仍然给出「本轮未预取」这一档提示，
+            // 让模型知道可以自己调 recall_memory 补上——否则一次预取异常
+            // 会静默退化成整轮裸答。
+            memoryRecallHint = renderMemoryPrefetchHint({
+              context: "",
+              eligible: false,
+              candidateCount: 0,
+              selectedCount: 0,
+              selectedTypes: {},
+              selectedSources: {},
+            });
             observation.update({
               level: "ERROR",
               output: { errorClass: e.name ?? "Error" },
@@ -625,6 +644,7 @@ export async function POST(req: Request) {
             sessionId,
             userId: user.id,
             requestId,
+            effectiveAt: requestReceivedAt,
             onOutcome: (result) => {
               outcome = result;
             },
@@ -650,6 +670,7 @@ export async function POST(req: Request) {
           userMessage: lastUser?.content ?? "",
           memoryOperation: renderMemoryOperationContext(explicitForgetResult),
           memory: memorySystem,
+          memoryRecallHint,
           webSearchEnabled: enableWebSearch,
           toolOrchestration: renderToolOrchestrationPolicy(
             routeToolDefinitions,

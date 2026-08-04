@@ -67,5 +67,9 @@ export function memoryRecordFromRow(row: any, fallbackLayer: "longterm" | "seman
     lastAccessedAt: row.last_accessed_at ?? null,
   };
   if (row.similarity != null) record.score = Number(row.similarity);
+  // 只在行里真的有 version 时才带上：缺列时留 undefined，写入侧据此放弃版本校验。
+  if (row.version != null && Number.isFinite(Number(row.version))) {
+    record.version = Number(row.version);
+  }
   return record;
 }

@@ -4,7 +4,7 @@ import {
 } from "./policies";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
-export type PromptSegmentKind = "identity" | "memory-operation" | "memory" | "retrieval-plan" | "tool-orchestration" | "evidence-policy" | "task-context" | "safety";
+export type PromptSegmentKind = "identity" | "memory-operation" | "memory" | "memory-recall-hint" | "retrieval-plan" | "tool-orchestration" | "evidence-policy" | "task-context" | "safety";
 
 export type PromptSegment = {
   kind: PromptSegmentKind;
@@ -23,6 +23,9 @@ export type BuildSegmentsInput = {
   userMessage?: string; // 当前轮用户消息，用来约束模型只回答最新问题
   memoryOperation?: string; // 已执行的记忆写入/失效结果，属于可信 runtime 状态
   memory?: string; // recallForPrompt 的返回（已是成段文本），空串则不构造记忆段
+  // renderMemoryPrefetchHint 的返回：告诉模型预取结果的完整性，以及还能自己调哪个记忆工具。
+  // 与 memory 段分开：memory 是不可信外部数据，这一段是可信的 runtime 说明。
+  memoryRecallHint?: string;
   knowledge?: string; // RAG 知识库召回内容，空串则不构造知识库段
   knowledgeMetadata?: Record<string, unknown>; // RAG debug summary，写进 trace
   webSearchEnabled?: boolean;
@@ -74,6 +77,21 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       source: "memory",
       trust: "external",
       dynamic: false,
+    });
+  }
+
+  const memoryRecallHint = input.memoryRecallHint?.trim();
+  if (memoryRecallHint) {
+    segments.push({
+      kind: "memory-recall-hint",
+      title: "记忆预召回提示",
+      content: memoryRecallHint,
+      // 低于 memory 段：记忆内容本身比「还能去查」更重要，预算紧张时先砍提示。
+      priority: 74,
+      tokenBudget: 160,
+      source: "runtime",
+      trust: "trusted",
+      dynamic: true,
     });
   }
 
