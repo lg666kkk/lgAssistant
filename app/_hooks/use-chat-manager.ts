@@ -15,6 +15,8 @@ export function useChatManager() {
   // 从数据库加载会话列表
   useEffect(() => {
     if (authLoading) return;
+    let cancelled = false;
+
     if (!user) {
       sessionsRef.current = [];
       setActiveId("");
@@ -23,53 +25,57 @@ export function useChatManager() {
       return;
     }
 
+    setLoading(true);
     const loadSessions = async () => {
       try {
-        const sessionManager = new SessionManager();
+        const sessionManager = new SessionManager(user.id);
         const dbSessions = await sessionManager.getSessions();
+        if (cancelled) return;
 
         if (dbSessions.length > 0) {
-          // 加载数据库中的会话
-          const sessions = await Promise.all(
-            dbSessions.map(async (dbSession) => {
-              const session = new ChatSession(dbSession.id);
-              session.title = dbSession.title;
-              session.contextUsage = dbSession.metadata?.contextUsage ?? null;
-              await session.loadFromDatabase();
-              return session;
-            })
-          );
+          const sessions = dbSessions.map((dbSession) => {
+            const session = new ChatSession(dbSession.id, user.id);
+            session.title = dbSession.title;
+            session.contextUsage = dbSession.metadata?.contextUsage ?? null;
+            return session;
+          });
           sessionsRef.current = sessions;
           setActiveId(sessions[0].id);
+          // 首屏只取当前会话最近一页；其余会话在用户切换时再加载。
+          await sessions[0].loadFromDatabase();
         } else {
           // 没有会话，创建一个新的
-          const session = new ChatSession();
+          const session = new ChatSession(undefined, user.id);
           sessionsRef.current = [session];
           setActiveId(session.id);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('加载会话失败:', error);
         // 加载失败，创建一个新会话
-        const session = new ChatSession();
+        const session = new ChatSession(undefined, user.id);
         sessionsRef.current = [session];
         setActiveId(session.id);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    loadSessions();
+    void loadSessions();
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, user?.id, rerender]);
 
   const sessions = sessionsRef.current;
   const activeSession = sessions.find((s) => s.id === activeId) ?? sessions[0];
 
   const createSession = useCallback(() => {
-    const session = new ChatSession();
+    const session = new ChatSession(undefined, user?.id);
     sessionsRef.current = [session, ...sessionsRef.current];
     setActiveId(session.id);
     rerender();
-  }, [rerender]);
+  }, [rerender, user?.id]);
 
   const moveSessionToTop = useCallback(
     (id: string) => {
@@ -86,8 +92,12 @@ export function useChatManager() {
   );
 
   const switchSession = useCallback((id: string) => {
+    const session = sessionsRef.current.find((candidate) => candidate.id === id);
+    if (!session) return;
     setActiveId(id);
-  }, []);
+    rerender();
+    void session.loadFromDatabase().finally(rerender);
+  }, [rerender]);
 
   const deleteSession = useCallback(
     async (id: string) => {
@@ -99,7 +109,7 @@ export function useChatManager() {
 
       // 从数据库删除
       try {
-        const sessionManager = new SessionManager();
+        const sessionManager = new SessionManager(user?.id);
         await sessionManager.deleteSession(id);
       } catch (error) {
         console.error('删除会话失败:', error);
@@ -110,13 +120,13 @@ export function useChatManager() {
       const remainingSessions = list.filter((s) => s.id !== id);
       sessionsRef.current = remainingSessions.length > 0
         ? remainingSessions
-        : [new ChatSession()];
+        : [new ChatSession(undefined, user?.id)];
       if (activeId === id) {
         setActiveId(sessionsRef.current[0].id);
       }
       rerender();
     },
-    [activeId, rerender],
+    [activeId, rerender, user?.id],
   );
   return {
     sessions,

@@ -44,16 +44,22 @@ export interface Message {
 export class SessionManager {
   private supabase = getBrowserSupabase() as any;
 
+  constructor(private userId?: string) {}
+
   private async getUserId(): Promise<string> {
+    if (this.userId) return this.userId;
+
     const {
-      data: { user },
+      data: { session },
       error,
-    } = await this.supabase.auth.getUser();
+    } = await this.supabase.auth.getSession();
+    const user = session?.user;
 
     if (error || !user) {
       throw new Error('请先登录');
     }
 
+    this.userId = user.id;
     return user.id;
   }
 
@@ -64,7 +70,7 @@ export class SessionManager {
     const userId = await this.getUserId();
     const { data, error } = await this.supabase
       .from('sessions')
-      .select('*')
+      .select('id,title,model,system_prompt,metadata,created_at,updated_at')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
 
@@ -153,17 +159,25 @@ export class SessionManager {
   /**
    * 获取会话的所有消息
    */
-  async getMessages(sessionId: string): Promise<Message[]> {
+  async getMessages(
+    sessionId: string,
+    options: { limit?: number; before?: string } = {},
+  ): Promise<Message[]> {
     const userId = await this.getUserId();
-    const { data, error } = await this.supabase
+    const limit = options.limit ?? 50;
+    let query = this.supabase
       .from('messages')
-      .select('*')
+      .select('id,session_id,role,content,sources,model,tokens_used,metadata,created_at')
       .eq('user_id', userId)
-      .eq('session_id', sessionId)
-      .order('created_at', { ascending: true });
+      .eq('session_id', sessionId);
+    if (options.before) query = query.lt('created_at', options.before);
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
     if (error) throw error;
-    return data || [];
+    return (data || []).reverse();
   }
 
   /**

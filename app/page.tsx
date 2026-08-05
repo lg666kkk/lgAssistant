@@ -1,8 +1,8 @@
 "use client";
 import { memo, useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useChatManager } from "./_hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,18 @@ import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
 import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { useAuth } from "@/lib/auth/use-auth";
+
+const SyntaxHighlighter = dynamic(
+  () => import("react-syntax-highlighter").then((module) => module.Prism),
+  {
+    ssr: false,
+    loading: () => (
+      <pre className="overflow-x-auto rounded bg-slate-950 p-3 text-sm text-slate-300">
+        正在加载代码高亮...
+      </pre>
+    ),
+  },
+);
 
 function formatCompactNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
@@ -339,17 +351,19 @@ export default function Home() {
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLDivElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   const { messages, loading, streaming, error, contextUsage } = activeSession || {};
+  const historyLoading = activeSession?.historyLoading ?? false;
   const lastMessageContent = messages?.length
     ? messages[messages.length - 1]?.content
     : "";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, lastMessageContent]);
+  }, [lastMessageContent]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -368,7 +382,7 @@ export default function Home() {
   }, [accountMenuOpen]);
 
   const handleSend = async () => {
-    if (!input.trim() || loading || !activeSession) return;
+    if (!input.trim() || loading || historyLoading || !activeSession) return;
     const text = input;
     setInput("");
     moveSessionToTop(activeSession.id);
@@ -433,6 +447,19 @@ export default function Home() {
     setInput("");
     setAccountMenuOpen(false);
     requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleLoadOlderMessages = async () => {
+    if (!activeSession || historyLoading) return;
+    const container = messagesScrollRef.current;
+    const previousHeight = container?.scrollHeight ?? 0;
+    const loadingPromise = activeSession.loadOlderMessages();
+    rerender();
+    await loadingPromise;
+    rerender();
+    requestAnimationFrame(() => {
+      if (container) container.scrollTop += container.scrollHeight - previousHeight;
+    });
   };
 
   const handleSignOut = async () => {
@@ -716,9 +743,24 @@ export default function Home() {
           <h1 className="text-lg font-semibold text-white">个人知识助手</h1>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-4xl space-y-4">
-            {messages && messages.length === 0 && (
+            {activeSession?.hasOlderMessages && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  disabled={historyLoading}
+                  onClick={() => void handleLoadOlderMessages()}
+                  className="text-xs text-slate-400 hover:text-slate-200 disabled:cursor-wait disabled:text-slate-600"
+                >
+                  {historyLoading ? "正在加载..." : "加载更早消息"}
+                </button>
+              </div>
+            )}
+            {historyLoading && (!messages || messages.length === 0) && (
+              <p className="mt-20 text-center text-slate-500">加载会话...</p>
+            )}
+            {!historyLoading && messages && messages.length === 0 && (
               <p className="mt-20 text-center text-slate-500">
                 发送一条消息开始对话
               </p>
@@ -731,7 +773,7 @@ export default function Home() {
                   i === messages.length - 1;
                 return (
                   <div
-                    key={i}
+                    key={msg.id ?? `${msg.role}-${msg.createdAt ?? i}`}
                     className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
                   <div
@@ -954,7 +996,7 @@ export default function Home() {
           onSelectedModelChange={setSelectedModel}
           onSend={handleSend}
           onStop={handleStop}
-          isRunning={Boolean(loading || streaming)}
+          isRunning={Boolean(loading || streaming || historyLoading)}
           disabled={!input.trim()}
         />
       </main>

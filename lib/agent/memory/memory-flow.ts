@@ -17,6 +17,10 @@ import type {
   MemoryType,
   MemoryWriteMetadata,
 } from "./types";
+import {
+  createMemoryDebugReporter,
+  type MemoryDebugEntry,
+} from "./debug";
 
 const longTerm = new LongTermStore();
 const semantic = new SemanticStore();
@@ -243,8 +247,10 @@ export async function recallRankedMemories(
     threshold?: number;
     userId?: string;
     strategy?: MemoryFusionStrategy;
+    onDebug?: (entry: MemoryDebugEntry) => void;
   } = {},
 ): Promise<RankedMemoryRecall> {
+  const debug = createMemoryDebugReporter(opts.onDebug);
   const limit = opts.limit ?? recallLimit;
   const threshold = opts.threshold ?? recallThreshold;
   const strategy = opts.strategy ?? fusionStrategy;
@@ -283,6 +289,21 @@ export async function recallRankedMemories(
     }),
     semantic.recallByKeyword(keywordInput, poolSize, { userId: opts.userId }),
   ]);
+  debug({
+    phase: "recall.channels_completed",
+    status: "completed",
+    details: {
+      strategy,
+      limit,
+      threshold,
+      candidateThreshold,
+      poolSize,
+      queryTerms: keywordInput.terms,
+      queryKeys: keywordInput.keys,
+      vectorCount: vector.length,
+      keywordCount: keyword.length,
+    },
+  });
 
   const fused = fuseMemoryChannels({ vector, keyword, strategy });
   // 严过滤这一步同时承担了原先那道「冗余防御 filter」的职责：准入判定看的是
@@ -296,6 +317,28 @@ export async function recallRankedMemories(
   // 排序用融合分（admitFusedMemories 之前已写进 record.score），准入用原始分。
   // 两者不能互换：拿融合分做准入等于顺手抬高了召回门槛，见 fusion.ts 的说明。
   const selected = rankMemoryHits(admitted.map((hit) => hit.record)).slice(0, limit);
+  debug({
+    phase: "recall.ranking_completed",
+    status: "completed",
+    details: {
+      fusedCount: fused.length,
+      admittedCount: admitted.length,
+      candidates: fused.map((hit) => ({
+        key: hit.record.key,
+        content: hit.record.content,
+        type: hit.record.type,
+        source: hit.record.source,
+        score: hit.record.score,
+      })),
+      selected: selected.map((hit) => ({
+        key: hit.key,
+        content: hit.content,
+        type: hit.type,
+        source: hit.source,
+        score: hit.score,
+      })),
+    },
+  });
   if (selected.length > 0) {
     await semantic.touch(
       selected.map((hit) => hit.key),
@@ -316,9 +359,20 @@ export async function recallRankedMemories(
 
 export async function recallForPromptWithStats(
   query: string,
-  opts: { limit?: number; threshold?: number; userId?: string } = {},
+  opts: {
+    limit?: number;
+    threshold?: number;
+    userId?: string;
+    onDebug?: (entry: MemoryDebugEntry) => void;
+  } = {},
 ): Promise<MemoryRecallResult> {
+  const debug = createMemoryDebugReporter(opts.onDebug);
   const eligible = Boolean(opts.userId) && shouldRecallLongTermMemory(query);
+  debug({
+    phase: "recall.eligibility_checked",
+    status: eligible ? "completed" : "skipped",
+    details: { eligible, query },
+  });
   if (!eligible) {
     return {
       context: "",
@@ -842,13 +896,29 @@ export async function handleExplicitForgetRequest(input: {
   requestId?: string;
   /** 用户表达忘记的时刻，用作归档区间的 effective_to。 */
   effectiveAt?: string;
+  onDebug?: (entry: MemoryDebugEntry) => void;
 }) {
+  const debug = createMemoryDebugReporter(input.onDebug);
   const subject = extractExplicitForgetSubject(input.message);
   if (!subject) return { handled: false } satisfies ExplicitForgetResult;
 
   const candidates = await semantic.recall(subject, 8, {
     userId: input.userId,
     threshold: 0.25,
+  });
+  debug({
+    phase: "explicit_forget.candidates_loaded",
+    status: "completed",
+    details: {
+      subject,
+      candidateCount: candidates.length,
+      candidates: candidates.map((candidate) => ({
+        key: candidate.key,
+        content: candidate.content,
+        type: candidate.type,
+        score: candidate.score,
+      })),
+    },
   });
   if (candidates.length === 0) {
     console.info("[memory] explicit forget found no candidates", {
@@ -879,6 +949,15 @@ export async function handleExplicitForgetRequest(input: {
       },
       candidates,
     );
+    debug({
+      phase: "explicit_forget.decision_completed",
+      status: "completed",
+      details: {
+        action: decision.action,
+        targetKey: "targetKey" in decision ? decision.targetKey : undefined,
+        reason: decision.reason,
+      },
+    });
     if (decision.action !== "INVALIDATE") {
       console.info("[memory] explicit forget rejected ambiguous candidates", {
         requestId: input.requestId,
@@ -895,6 +974,11 @@ export async function handleExplicitForgetRequest(input: {
     reason = decision.reason;
   }
 
+  debug({
+    phase: "explicit_forget.write_started",
+    status: "started",
+    details: { targetKeys: Array.from(new Set(targetKeys)), reason },
+  });
   await Promise.all(
     Array.from(new Set(targetKeys)).map((key) =>
       writer.invalidate(key, {
@@ -905,6 +989,11 @@ export async function handleExplicitForgetRequest(input: {
       }),
     ),
   );
+  debug({
+    phase: "explicit_forget.write_completed",
+    status: "completed",
+    details: { targetKeys: Array.from(new Set(targetKeys)) },
+  });
   console.info("[memory] explicit forget invalidated", {
     requestId: input.requestId,
     targetKeys,
@@ -958,10 +1047,12 @@ export async function consolidate(
      */
     effectiveAt?: string;
     onOutcome?: (outcome: MemoryConsolidationOutcome) => void;
+    onDebug?: (entry: MemoryDebugEntry) => void;
   } = {},
 ): Promise<MemoryRecord[]> {
   const effectiveAt = opts.effectiveAt ?? new Date().toISOString();
   const report = (outcome: MemoryConsolidationOutcome) => opts.onOutcome?.(outcome);
+  const debug = createMemoryDebugReporter(opts.onDebug);
   const emptyOutcome = (skipReason: MemoryConsolidationOutcome["skipReason"]) => ({
     status: "skipped" as const,
     skipReason,
@@ -974,8 +1065,19 @@ export async function consolidate(
     failedCount: 0,
     decisions: {},
   });
+  debug({
+    phase: "consolidation.started",
+    status: "started",
+    details: {
+      messageCount: conversation.length,
+      userMessageCount: conversation.filter((message) => message.role === "user").length,
+      effectiveAt,
+    },
+  });
   if (conversation.length === 0 || !opts.userId) {
-    report(emptyOutcome("empty_conversation"));
+    const outcome = emptyOutcome("empty_conversation");
+    report(outcome);
+    debug({ phase: "consolidation.completed", status: "skipped", details: outcome });
     return [];
   }
   const userMessages = conversation
@@ -984,7 +1086,9 @@ export async function consolidate(
     .filter(Boolean)
     .slice(-12);
   if (userMessages.length === 0) {
-    report(emptyOutcome("no_user_messages"));
+    const outcome = emptyOutcome("no_user_messages");
+    report(outcome);
+    debug({ phase: "consolidation.completed", status: "skipped", details: outcome });
     return [];
   }
   const latestUserMessage = userMessages[userMessages.length - 1];
@@ -995,9 +1099,12 @@ export async function consolidate(
       sessionId: opts.sessionId,
       requestId: opts.requestId,
       effectiveAt,
+      onDebug: debug,
     })).handled
   ) {
-    report(emptyOutcome("explicit_forget_handled"));
+    const outcome = emptyOutcome("explicit_forget_handled");
+    report(outcome);
+    debug({ phase: "consolidation.completed", status: "skipped", details: outcome });
     return [];
   }
   const executionContext = conversation.slice(-20).flatMap((message) => {
@@ -1007,6 +1114,16 @@ export async function consolidate(
 
   let facts: ExtractedFact[];
   try {
+    debug({
+      phase: "extraction.input_prepared",
+      status: "completed",
+      details: {
+        userMessages,
+        executionContext,
+        model: EXTRACT_MODEL,
+        writeConfidence,
+      },
+    });
     const response = await client.messages.create({
       model: EXTRACT_MODEL,
       max_tokens: 1400,
@@ -1020,9 +1137,14 @@ export async function consolidate(
     facts = parseExtractedFacts(text, userMessages).filter(
       (fact) => fact.confidence >= writeConfidence,
     );
+    debug({
+      phase: "extraction.completed",
+      status: "completed",
+      details: { factCount: facts.length, facts },
+    });
   } catch (error: any) {
     console.error("[consolidate] 抽取失败:", error.message);
-    report({
+    const outcome: MemoryConsolidationOutcome = {
       status: "extraction_failed",
       extractedFactCount: 0,
       persistedCount: 0,
@@ -1032,7 +1154,14 @@ export async function consolidate(
       retriedCount: 0,
       failedCount: 1,
       decisions: {},
+    };
+    report(outcome);
+    debug({
+      phase: "extraction.failed",
+      status: "failed",
+      details: { error: error.message, errorClass: error.name ?? "Error" },
     });
+    debug({ phase: "consolidation.completed", status: "failed", details: outcome });
     return [];
   }
 
@@ -1060,6 +1189,23 @@ export async function consolidate(
       ...(exact ? [exact] : []),
       ...recalled.filter((candidate) => candidate.key !== exact?.key),
     ];
+    debug({
+      phase: "candidates.loaded",
+      status: "completed",
+      details: {
+        factKey: fact.key,
+        retry: isRetry,
+        exactMatch: Boolean(exact),
+        candidates: candidates.map((candidate) => ({
+          key: candidate.key,
+          content: candidate.content,
+          type: candidate.type,
+          source: candidate.source,
+          score: candidate.score,
+          version: candidate.version,
+        })),
+      },
+    });
     const decision = await decideMemoryWrite(fact, candidates);
     if (!isRetry) decisions[decision.action] = (decisions[decision.action] ?? 0) + 1;
     console.info("[memory] write decision", {
@@ -1070,11 +1216,38 @@ export async function consolidate(
       reason: decision.reason,
       retry: isRetry || undefined,
     });
+    debug({
+      phase: "decision.completed",
+      status: "completed",
+      details: {
+        factKey: fact.key,
+        fact: fact.fact,
+        action: decision.action,
+        targetKey: "targetKey" in decision ? decision.targetKey : undefined,
+        reason: decision.reason,
+        retry: isRetry,
+      },
+    });
 
     if (decision.action === "NOOP") {
       skippedCount += 1;
+      debug({
+        phase: "write.completed",
+        status: "skipped",
+        details: { factKey: fact.key, action: decision.action, reason: decision.reason },
+      });
       return;
     }
+    debug({
+      phase: "write.started",
+      status: "started",
+      details: {
+        factKey: fact.key,
+        action: decision.action,
+        targetKey: decision.targetKey,
+        retry: isRetry,
+      },
+    });
     if (decision.action === "INVALIDATE") {
       await writer.invalidate(decision.targetKey, {
         userId,
@@ -1083,6 +1256,11 @@ export async function consolidate(
         requestId: opts.requestId,
       });
       invalidatedCount += 1;
+      debug({
+        phase: "write.completed",
+        status: "completed",
+        details: { action: decision.action, targetKey: decision.targetKey },
+      });
       return;
     }
     if (decision.action === "PURGE") {
@@ -1095,6 +1273,11 @@ export async function consolidate(
         deletedRows: deleted,
       });
       purgedCount += 1;
+      debug({
+        phase: "write.completed",
+        status: "completed",
+        details: { action: decision.action, targetKey: decision.targetKey, deletedRows: deleted },
+      });
       return;
     }
 
@@ -1128,6 +1311,11 @@ export async function consolidate(
       expectedVersion: decision.targetKey === exact?.key ? exact?.version : undefined,
     });
     saved.push(buildSavedRecord(fact, decision.targetKey, metadata));
+    debug({
+      phase: "write.completed",
+      status: "completed",
+      details: { action: decision.action, targetKey: decision.targetKey, fact: fact.fact },
+    });
   };
 
   for (const fact of facts) {
@@ -1146,14 +1334,34 @@ export async function consolidate(
         } catch (retryError: any) {
           console.error(`[consolidate] 记忆 ${fact.key} 重试后仍失败:`, retryError.message);
           failedCount += 1;
+          debug({
+            phase: "write.failed",
+            status: "failed",
+            details: {
+              factKey: fact.key,
+              retry: true,
+              error: retryError.message,
+              errorClass: retryError.name ?? "Error",
+            },
+          });
           continue;
         }
       }
       console.error(`[consolidate] 处理记忆 ${fact.key} 失败:`, error.message);
       failedCount += 1;
+      debug({
+        phase: "write.failed",
+        status: "failed",
+        details: {
+          factKey: fact.key,
+          retry: false,
+          error: error.message,
+          errorClass: error.name ?? "Error",
+        },
+      });
     }
   }
-  report({
+  const outcome: MemoryConsolidationOutcome = {
     status: "completed",
     extractedFactCount: facts.length,
     persistedCount: saved.length,
@@ -1163,6 +1371,8 @@ export async function consolidate(
     retriedCount,
     failedCount,
     decisions,
-  });
+  };
+  report(outcome);
+  debug({ phase: "consolidation.completed", status: "completed", details: outcome });
   return saved;
 }

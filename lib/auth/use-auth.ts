@@ -1,19 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { User } from "@supabase/supabase-js";
 import { getBrowserSupabase } from "./client";
 
-export function useAuth() {
+type AuthContextValue = {
+  user: User | null;
+  loading: boolean;
+  supabase: ReturnType<typeof getBrowserSupabase>;
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const supabase = useMemo(() => getBrowserSupabase(), []);
 
   useEffect(() => {
-    const supabase = getBrowserSupabase();
-
     supabase.auth
-      .getUser()
-      .then(({ data }) => setUser(data.user ?? null))
+      .getSession()
+      .then(({ data }) => setUser(data.session?.user ?? null))
       .finally(() => setLoading(false));
 
     const {
@@ -24,7 +39,18 @@ export function useAuth() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [supabase]);
 
-  return { user, loading, supabase: getBrowserSupabase() };
+  const value = useMemo(
+    () => ({ user, loading, supabase }),
+    [loading, supabase, user],
+  );
+
+  return createElement(AuthContext.Provider, { value }, children);
+}
+
+export function useAuth() {
+  const value = useContext(AuthContext);
+  if (!value) throw new Error("useAuth 必须在 AuthProvider 内使用");
+  return value;
 }

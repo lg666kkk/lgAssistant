@@ -12,6 +12,7 @@ import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { createUuid } from "@/lib/platform/uuid";
 export interface Message {
   id?: string;
+  createdAt?: string;
   role: "user" | "assistant";
   content: string;
   sources?: Array<{
@@ -35,6 +36,8 @@ export interface Message {
 }
 
 export class ChatSession {
+  private static readonly MESSAGE_PAGE_SIZE = 50;
+
   id: string;
   title = "新对话";
   messages: Message[] = [];
@@ -42,36 +45,87 @@ export class ChatSession {
   streaming = false;
   error: string | null = null;
   contextUsage: ContextUsageEventData | null = null;
+  historyLoading = false;
+  historyLoaded: boolean;
+  hasOlderMessages = false;
   private abortController: AbortController | null = null;
   private manuallyAborted = false;
   private currentModel: ChatModelId | null = null;
-  private sessionManager = new SessionManager();
-  private isNewSession = true;
+  private sessionManager: SessionManager;
+  private isNewSession: boolean;
+  private historyLoadPromise: Promise<void> | null = null;
 
-  constructor(id?: string) {
+  constructor(id?: string, userId?: string, sessionManager?: SessionManager) {
     this.id = id ?? createUuid();
+    this.isNewSession = !id;
+    this.historyLoaded = !id;
+    this.sessionManager = sessionManager ?? new SessionManager(userId);
+  }
+
+  private mapDatabaseMessage(msg: import("./session-manager").Message): Message {
+    return {
+      id: msg.id,
+      createdAt: msg.created_at,
+      role: msg.role,
+      content: msg.content,
+      sources: msg.sources,
+      toolCalls: msg.metadata?.toolCalls,
+      modelUsages: msg.metadata?.modelUsages,
+      planSteps: msg.metadata?.planSteps,
+      plan: msg.metadata?.plan,
+    };
   }
 
   /**
    * 从数据库加载会话数据
    */
   async loadFromDatabase(): Promise<void> {
+    if (this.historyLoaded) return;
+    if (this.historyLoadPromise) return this.historyLoadPromise;
+
+    this.historyLoading = true;
+    this.historyLoadPromise = (async () => {
+      try {
+        const dbMessages = await this.sessionManager.getMessages(this.id, {
+          limit: ChatSession.MESSAGE_PAGE_SIZE,
+        });
+        this.messages = dbMessages.map((message) => this.mapDatabaseMessage(message));
+        this.hasOlderMessages = dbMessages.length === ChatSession.MESSAGE_PAGE_SIZE;
+        this.historyLoaded = true;
+      } catch (error) {
+        console.error("加载会话失败:", error);
+      } finally {
+        this.historyLoading = false;
+        this.historyLoadPromise = null;
+      }
+    })();
+    return this.historyLoadPromise;
+  }
+
+  async loadOlderMessages(): Promise<void> {
+    if (this.historyLoading || !this.historyLoaded || !this.hasOlderMessages) return;
+    const before = this.messages.find((message) => message.createdAt)?.createdAt;
+    if (!before) {
+      this.hasOlderMessages = false;
+      return;
+    }
+
+    this.historyLoading = true;
     try {
-      const dbMessages = await this.sessionManager.getMessages(this.id);
-      this.messages = dbMessages.map((msg) => ({
-        id: msg.id,
-        role: msg.role,
-        content: msg.content,
-        sources: msg.sources,
-        toolCalls: msg.metadata?.toolCalls,
-        modelUsages: msg.metadata?.modelUsages,
-        planSteps: msg.metadata?.planSteps,
-        plan: msg.metadata?.plan,
-      }));
-      this.isNewSession = false;
+      const dbMessages = await this.sessionManager.getMessages(this.id, {
+        limit: ChatSession.MESSAGE_PAGE_SIZE,
+        before,
+      });
+      const knownIds = new Set(this.messages.flatMap((message) => message.id ? [message.id] : []));
+      const older = dbMessages
+        .filter((message) => !knownIds.has(message.id))
+        .map((message) => this.mapDatabaseMessage(message));
+      this.messages = [...older, ...this.messages];
+      this.hasOlderMessages = dbMessages.length === ChatSession.MESSAGE_PAGE_SIZE;
     } catch (error) {
-      console.error("加载会话失败:", error);
-      // 如果加载失败，可能是新会话，继续使用内存数据
+      console.error("加载更早消息失败:", error);
+    } finally {
+      this.historyLoading = false;
     }
   }
 
@@ -107,7 +161,9 @@ export class ChatSession {
 
     // 保存用户消息到数据库
     try {
-      await this.sessionManager.saveUserMessage(this.id, input);
+      const savedUserMessage = await this.sessionManager.saveUserMessage(this.id, input);
+      userMessage.id = savedUserMessage.id;
+      userMessage.createdAt = savedUserMessage.created_at;
     } catch (error) {
       console.error("保存用户消息失败:", error);
     }
@@ -170,6 +226,16 @@ export class ChatSession {
           case "plan_proposal":
             last().plan = evt.plan;
             break;
+          case "memory_debug": {
+            const memory = evt.memory;
+            const requestLabel = memory.requestId.slice(0, 8);
+            const label =
+              `[memory-debug][${requestLabel}][${memory.phase}][${memory.status}]`;
+            if (memory.status === "failed") console.error(label, memory);
+            else if (memory.status === "skipped") console.warn(label, memory);
+            else console.info(label, memory);
+            break;
+          }
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");
           case "done":
@@ -292,8 +358,8 @@ export class ChatSession {
           },
         },
       );
-      console.log("xxxx", save);
       lastMessage.id = save.id;
+      lastMessage.createdAt = save.created_at;
       return true;
     } catch (error) {
       console.error("保存 AI 回复失败:", error);

@@ -1,5 +1,6 @@
 import type { ToolSourceType } from "@/lib/agent/runtime";
 import type { ChatModelId, ModelUsageBreakdown } from "@/lib/agent/models";
+import type { MemoryDebugEventData } from "@/lib/agent/memory/debug";
 export interface ToolCallEventData {
     name: string;
     input?: unknown;
@@ -108,6 +109,11 @@ export interface DoneEvent {
     type: "done";
 }
 
+export interface MemoryDebugEvent {
+  type: "memory_debug";
+  memory: MemoryDebugEventData;
+}
+
 export type AgentEvent =
   | TextEvent
   | ToolCallEvent
@@ -116,6 +122,7 @@ export type AgentEvent =
   | ContextUsageEvent
   | PlanProposalEvent
   | PlanProgressEvent
+  | MemoryDebugEvent
   | ErrorEvent
   | DoneEvent;
 

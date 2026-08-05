@@ -24,6 +24,12 @@ import {
   type ExplicitForgetResult,
 } from "@/lib/agent/memory/memory-flow";
 import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
+import {
+  createMemoryDebugEvent,
+  isMemoryDebugEnabled,
+  logMemoryDebugEvent,
+  type MemoryDebugEntry,
+} from "@/lib/agent/memory/debug";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
@@ -300,6 +306,7 @@ export async function POST(req: Request) {
   const { messages, sessionId } = body;
   const enableWebSearch = body.enableWebSearch !== false;
   const selectedModel = resolveChatModel(body.model);
+  const memoryDebugEnabled = isMemoryDebugEnabled();
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(
@@ -446,6 +453,12 @@ export async function POST(req: Request) {
           closed = true;
         }
       };
+      const emitMemoryDebug = (entry: MemoryDebugEntry) => {
+        if (!memoryDebugEnabled) return;
+        const memory = createMemoryDebugEvent({ requestId, sessionId, entry });
+        logMemoryDebugEvent(memory);
+        enqueueEvent({ type: "memory_debug", memory }, enqueueText);
+      };
       const savePendingTrace = async () => {
         const trace = pendingTrace;
         pendingTrace = undefined;
@@ -461,6 +474,18 @@ export async function POST(req: Request) {
             console.error("[langfuse] 在线评分失败，跳过:", error.message));
         }
       };
+
+      emitMemoryDebug({
+        phase: "request.started",
+        status: "started",
+        details: {
+          model: selectedModel,
+          requestMessageCount: modelMessages.length,
+          hydratedMessageCount: hydratedLoopMessages.length,
+          historySource: hydratedContext.source,
+          waitsForConsolidation: memoryDebugEnabled,
+        },
+      });
 
       await startActiveObservation("agent-chat", async (langfuseTrace) => {
         // 必须在 active observation 内读取，才能拿到本次请求对应的 Langfuse trace ID。
@@ -553,11 +578,22 @@ export async function POST(req: Request) {
             }),
           });
           try {
+            emitMemoryDebug({
+              phase: "explicit_forget.started",
+              status: "started",
+              details: { message: lastUser.content },
+            });
             explicitForgetResult = await handleExplicitForgetRequest({
               message: lastUser.content,
               userId: user.id,
               sessionId,
               requestId,
+              onDebug: emitMemoryDebug,
+            });
+            emitMemoryDebug({
+              phase: "explicit_forget.completed",
+              status: explicitForgetResult.handled ? "completed" : "skipped",
+              details: explicitForgetResult,
             });
             observation.update({
               output: {
@@ -570,6 +606,11 @@ export async function POST(req: Request) {
             });
           } catch (error: any) {
             console.error("[memory] 显式忘记处理失败:", error.message);
+            emitMemoryDebug({
+              phase: "explicit_forget.failed",
+              status: "failed",
+              details: { error: error.message, errorClass: error.name ?? "Error" },
+            });
             observation.update({
               level: "ERROR",
               output: { errorClass: error.name ?? "Error" },
@@ -590,9 +631,30 @@ export async function POST(req: Request) {
             }),
           }, { asType: "retriever" });
           try {
-            const recall = await recallForPromptWithStats(lastUser.content, { userId: user.id });
+            emitMemoryDebug({
+              phase: "recall.started",
+              status: "started",
+              details: { query: lastUser.content },
+            });
+            const recall = await recallForPromptWithStats(lastUser.content, {
+              userId: user.id,
+              onDebug: emitMemoryDebug,
+            });
             memorySystem = recall.context;
             memoryRecallHint = renderMemoryPrefetchHint(recall);
+            emitMemoryDebug({
+              phase: "recall.completed",
+              status: recall.eligible ? "completed" : "skipped",
+              details: {
+                eligible: recall.eligible,
+                candidateCount: recall.candidateCount,
+                selectedCount: recall.selectedCount,
+                injected: Boolean(recall.context),
+                injectedChars: recall.context.length,
+                selectedTypes: recall.selectedTypes,
+                selectedSources: recall.selectedSources,
+              },
+            });
             observation.update({
               output: {
                 eligible: recall.eligible,
@@ -606,6 +668,11 @@ export async function POST(req: Request) {
             });
           } catch (e: any) {
             console.error("[memory] 召回失败，跳过注入:", e.message);
+            emitMemoryDebug({
+              phase: "recall.failed",
+              status: "failed",
+              details: { error: e.message, errorClass: e.name ?? "Error" },
+            });
             // 预取失败不等于「没有记忆」。仍然给出「本轮未预取」这一档提示，
             // 让模型知道可以自己调 recall_memory 补上——否则一次预取异常
             // 会静默退化成整轮裸答。
@@ -625,10 +692,11 @@ export async function POST(req: Request) {
             observation.end();
           }
         }
-        const consolidateWithObservation = (
+        const consolidateWithObservation = async (
           conversation: Array<{ role: string; content: unknown }>,
         ) => {
-          // Consolidation stays asynchronous, but its span is created while the root trace is active.
+          // 普通模式仍由调用方 fire-and-forget；调试模式会 await 这个 Promise，
+          // 让 write.completed / consolidation.completed 能在 done 前送到浏览器。
           const observation = langfuseTrace.startObservation("memory.consolidate", {
             input: {
               messageCount: conversation.length,
@@ -640,29 +708,37 @@ export async function POST(req: Request) {
             }),
           });
           let outcome: Record<string, unknown> | undefined;
-          void consolidate(conversation, {
-            sessionId,
-            userId: user.id,
-            requestId,
-            effectiveAt: requestReceivedAt,
-            onOutcome: (result) => {
-              outcome = result;
-            },
-          })
-            .then((records) => observation.update({
+          try {
+            const records = await consolidate(conversation, {
+              sessionId,
+              userId: user.id,
+              requestId,
+              effectiveAt: requestReceivedAt,
+              onOutcome: (result) => {
+                outcome = result;
+              },
+              onDebug: memoryDebugEnabled ? emitMemoryDebug : undefined,
+            });
+            observation.update({
               output: {
                 ...(outcome ?? {}),
                 persistedRecords: summarizeMemoryConsolidation(records),
               },
-            }))
-            .catch((error: any) => {
-              console.error("[consolidate] 失败:", error.message);
-              observation.update({
-                level: "ERROR",
-                output: { errorClass: error.name ?? "Error" },
-              });
-            })
-            .finally(() => observation.end());
+            });
+          } catch (error: any) {
+            console.error("[consolidate] 失败:", error.message);
+            emitMemoryDebug({
+              phase: "consolidation.failed",
+              status: "failed",
+              details: { error: error.message, errorClass: error.name ?? "Error" },
+            });
+            observation.update({
+              level: "ERROR",
+              output: { errorClass: error.name ?? "Error" },
+            });
+          } finally {
+            observation.end();
+          }
         };
         // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
@@ -831,10 +907,17 @@ export async function POST(req: Request) {
           await persistSnapshot(loopMessages).catch((error: any) =>
             console.error("[context-snapshot] 保存失败:", error.message));
           if (!explicitForgetHandled) {
-            consolidateWithObservation(loopMessages);
+            const consolidation = consolidateWithObservation(loopMessages);
+            if (memoryDebugEnabled) await consolidation;
+            else void consolidation;
           }
           projectTraceObservations(agentLoopResult.trace);
           await savePendingTrace();
+          emitMemoryDebug({
+            phase: "request.completed",
+            status: "completed",
+            details: { explicitForgetHandled },
+          });
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
@@ -945,7 +1028,9 @@ export async function POST(req: Request) {
         await persistSnapshot(completedMessages).catch((error: any) =>
           console.error("[context-snapshot] 保存失败:", error.message));
         if (!explicitForgetHandled) {
-          consolidateWithObservation(completedMessages);
+          const consolidation = consolidateWithObservation(completedMessages);
+          if (memoryDebugEnabled) await consolidation;
+          else void consolidation;
         }
         langfuseTrace.update({
           output: {
@@ -967,10 +1052,20 @@ export async function POST(req: Request) {
           finalStopReason === "max_tokens" ? "max_tokens" : "completed";
         projectTraceObservations(agentLoopResult.trace);
         await savePendingTrace();
+        emitMemoryDebug({
+          phase: "request.completed",
+          status: "completed",
+          details: { explicitForgetHandled },
+        });
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();
       } catch (error: any) {
+        emitMemoryDebug({
+          phase: "request.failed",
+          status: "failed",
+          details: { error: error.message, errorClass: error.name ?? "Error" },
+        });
         if (pendingTrace) {
           // 保留已完成的步骤，并用终态覆盖循环中的临时 stopReason，供线上评分正确归类。
           pendingTrace.completed = false;

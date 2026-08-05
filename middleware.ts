@@ -45,7 +45,9 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  // 中间件只负责读取/刷新会话 cookie，不承担授权决策，避免首页 HTML 被一次
+  // 远程 getUser 请求阻塞。API Route 仍通过 requireUser() 验证用户，数据库仍由 RLS 隔离。
+  await supabase.auth.getSession();
   return response;
 }
 
