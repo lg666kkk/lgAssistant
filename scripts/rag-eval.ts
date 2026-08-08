@@ -162,7 +162,6 @@ function parseArgs(argv: string[], config: RagCliConfig): CliOptions {
       continue;
     }
     if (arg === "--help" || arg === "-h") {
-      printUsage(config);
       process.exit(0);
     }
     throw new Error(`未知参数: ${arg}`);
@@ -198,32 +197,6 @@ function parseScore(value: string | undefined, name: string) {
     throw new Error(`${name} 必须是 0 到 1 之间的数字`);
   }
   return parsed;
-}
-
-function printUsage(config: RagCliConfig) {
-  console.log(
-    [
-      "用法: npm run test:rag -- [options]",
-      "",
-      "Options:",
-      `  --limit ${config.maxResults}               每个 case 返回 top K，硬上限 ${config.maxResults}`,
-      "  --threshold 0.5         向量相似度阈值，默认 0.5",
-      "  --user-id <uuid>        指定用户知识库；默认 DEFAULT_USER_ID",
-      "  --case id1,id2          只跑指定 case",
-      "  --out <path>            写 JSON 报告",
-      "  --json                  在 stdout 输出 JSON",
-      "  --no-mmr                关闭 MMR",
-      "  --no-rerank             关闭规则 rerank",
-      "  --no-query-rewrite      关闭 query rewrite",
-      "  --no-multi-query-vector 仅对第一个改写 query 做向量召回",
-      "  --no-keyword            关闭 keyword search",
-      "  --fusion rrf|weighted   选择 RRF 或校准加权融合",
-      "  --cross-encoder         启用条件式 Cross-Encoder（需要配置 provider）",
-      `  --experiment <version>  实验/策略版本，默认 ${AGENTIC_RAG_VERSION}`,
-      "  --baseline <path>       与历史 JSON 报告比较并启用 CI 回归门禁",
-      "  --max-regression 0.02   指标允许的最大绝对回退，默认 0.02",
-    ].join("\n"),
-  );
 }
 
 function normalizeText(text: string) {
@@ -414,50 +387,6 @@ function compareWithBaseline(
   });
 }
 
-function printCaseReport(report: CaseReport) {
-  const status = report.passed ? "PASS" : "FAIL";
-  const sourceRank = report.sourceRank === null ? "n/a" : report.sourceRank || "-";
-  const noResult = report.noResultExpected
-    ? ` noResult=${report.noResultPassed ? "ok" : "miss"}`
-    : "";
-
-  console.log(`\n[${status}] ${report.id} ${report.category ? `(${report.category})` : ""}`);
-  console.log(`  Q: ${report.question}`);
-  console.log(
-    `  sourceRank=${sourceRank} relevance=${report.relevanceMode} keywordCoverage=${report.keywordCoverage.toFixed(2)} latency=${report.latencyMs}ms${noResult}`,
-  );
-  if (report.debug.rewrittenQueries.length > 1) {
-    console.log(`  rewrites=${report.debug.rewrittenQueries.join(" | ")}`);
-  }
-  if (report.debug.standaloneQuery !== report.debug.originalQuery) {
-    console.log(`  standalone=${report.debug.standaloneQuery.replace(/\s+/g, " ")}`);
-  }
-  console.log(
-    `  recall fusion=${report.debug.fusionStrategy} type=${report.debug.queryType} vectorQueries=${report.debug.vectorQueryCount} candidates=${report.debug.candidateCount}/${report.debug.candidateLimit}`,
-  );
-  console.log(
-    `  candidates vector=${report.debug.vectorCandidateCount} keyword=${report.debug.keywordCandidateCount} merged=${report.debug.mergedCandidateCount}`,
-  );
-  console.log(
-    `  rerank mmr=${report.debug.mmrSimilarityMode} crossEncoder=${report.debug.crossEncoderUsed ? "used" : report.debug.crossEncoderReason}`,
-  );
-  console.log(
-    `  timings embedding=${report.debug.timings.embeddingMs}ms vector=${report.debug.timings.vectorSearchMs}ms keyword=${report.debug.timings.keywordSearchMs}ms parallel=${report.debug.timings.parallelRecallMs}ms fusion=${report.debug.timings.fusionMs}ms rule=${report.debug.timings.ruleRerankMs}ms cross=${report.debug.timings.crossEncoderMs}ms mmr=${report.debug.timings.mmrMs}ms total=${report.debug.timings.totalMs}ms`,
-  );
-  for (const result of report.topResults.slice(0, 5)) {
-    const advancedScores = [
-      result.rrfScore !== undefined ? `rrf=${result.rrfScore.toFixed(3)}` : undefined,
-      result.crossEncoderScore !== undefined
-        ? `cross=${result.crossEncoderScore.toFixed(3)}`
-        : undefined,
-    ].filter(Boolean).join(" ");
-    console.log(
-      `  ${result.rank}. ${result.pageTitle} score=${result.rerankScore.toFixed(3)} vector=${result.vectorScore.toFixed(3)} keyword=${result.keywordScore.toFixed(3)} ${advancedScores} source=${result.retrievalSources.join("+")}`,
-    );
-    console.log(`     ${result.excerpt}`);
-  }
-}
-
 async function main() {
   const [{ RAGRetriever }, { ragConfig }] = await Promise.all([
     import("../lib/knowledge/retriever"),
@@ -496,9 +425,6 @@ async function main() {
       latencyMs: Date.now() - startedAt,
     });
     reports.push(report);
-    if (!options.json) {
-      printCaseReport(report);
-    }
   }
 
   const summary = summarize(reports);
@@ -532,34 +458,6 @@ async function main() {
     const outPath = path.resolve(options.out);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, `${JSON.stringify(output, null, 2)}\n`);
-  }
-
-  if (options.json) {
-    console.log(JSON.stringify(output, null, 2));
-  } else {
-    console.log("\n=== RAG Eval Summary ===");
-    console.log(`cases=${summary.cases} passed=${summary.passed} failed=${summary.failed}`);
-    console.log(`passRate=${summary.passRate.toFixed(3)}`);
-    console.log(
-      `recall@${options.limit}=${summary.recallAtK === null ? "n/a" : summary.recallAtK.toFixed(3)}`,
-    );
-    console.log(`mrr=${summary.mrr === null ? "n/a" : summary.mrr.toFixed(3)}`);
-    console.log(`nDCG@${options.limit}=${summary.ndcgAtK === null ? "n/a" : summary.ndcgAtK.toFixed(3)}`);
-    console.log(
-      `keywordCoverage=${summary.avgKeywordCoverage === null ? "n/a" : summary.avgKeywordCoverage.toFixed(3)}`,
-    );
-    console.log(
-      `noResultAccuracy=${summary.noResultAccuracy === null ? "n/a" : summary.noResultAccuracy.toFixed(3)}`,
-    );
-    console.log(`avgLatencyMs=${Math.round(summary.avgLatencyMs)}`);
-    if (options.out) {
-      console.log(`report=${path.resolve(options.out)}`);
-    }
-    for (const regression of regressions) {
-      console.log(
-        `REGRESSION ${regression.metric}: baseline=${regression.baseline.toFixed(3)} current=${regression.current.toFixed(3)} delta=-${regression.regression.toFixed(3)}`,
-      );
-    }
   }
 
   if (summary.failed > 0 || regressions.length > 0) {

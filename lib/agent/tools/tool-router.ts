@@ -128,12 +128,6 @@ export async function executeToolCall(
     tool.runtime.rateLimit,
     options.scopeId,
   );
-  console.log("[RateLimit]", {
-    toolName: tool.name,
-    scopeId: options.scopeId,
-    rateLimit: tool.runtime.rateLimit,
-    result: rateLimitCheck,
-  });
   if (!rateLimitCheck.ok) {
     return {
       ok: false,

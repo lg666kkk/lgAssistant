@@ -116,24 +116,11 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
     if (arg === "--help" || arg === "-h") {
-      printUsage();
       process.exit(0);
     }
     throw new Error(`未知参数: ${arg}`);
   }
   return options;
-}
-
-function printUsage() {
-  console.log(`用法: tsx scripts/memory-fusion-eval.ts --user-id <uuid> [选项]
-
-  --user-id <uuid>     必填。跑分用的隔离用户；脚本会写入并硬删除该用户名下的记忆。
-  --limit <n>          进 prompt 的记忆条数，默认 3（与线上一致）。
-  --threshold <0-1>    严过滤阈值；省略则用 MEMORY_RECALL_THRESHOLD 的线上值。
-  --out <file>         把完整报告写成 JSON。
-  --json               只打印 JSON，不打印表格。
-  --keep-seeds         跑完不清理种子数据（调试用；正常跑必须清理）。
-`);
 }
 
 /** 只有单轮提问型 case 能进 A/B；多步 probe 的 case 显式列出跳过原因。 */
@@ -255,8 +242,7 @@ function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function printReport(reports: StrategyReport[], skipped: string[]) {
-  console.log("\n=== 融合策略三方对照 ===\n");
+function printReport(reports: StrategyReport[]) {
   console.table(
     reports.map((report) => ({
       策略: report.strategy,
@@ -268,46 +254,6 @@ function printReport(reports: StrategyReport[], skipped: string[]) {
       负例数: report.negativeCases,
     })),
   );
-
-  for (const report of reports) {
-    console.log(`\n--- ${report.strategy} 逐条 ---`);
-    for (const result of report.cases) {
-      const mark = result.passed ? "✅" : result.expectation === "known_red" ? "🟡" : "❌";
-      const expected = result.expectedKeys.length === 0
-        ? "（应当为空）"
-        : result.expectedKeys.join(",");
-      console.log(
-        `${mark} ${result.id}  期望=${expected}  实际=[${result.gotKeys.join(",") || "空"}]`
-        + `  通道 向量=${result.vectorCount} 关键词=${result.keywordCount}`
-        + `  ${result.latencyMs}ms`,
-      );
-    }
-  }
-
-  const baseline = reports.find((report) => report.strategy === "vector_only");
-  if (baseline) {
-    console.log("\n--- 相对 vector_only 的增量 ---");
-    for (const report of reports) {
-      if (report.strategy === "vector_only") continue;
-      const delta = report.hitAt1 - baseline.hitAt1;
-      console.log(
-        `${report.strategy}: hit@1 ${delta >= 0 ? "+" : ""}${percent(delta)}`
-        + `  MRR ${(report.mrr - baseline.mrr >= 0 ? "+" : "")}${(report.mrr - baseline.mrr).toFixed(3)}`
-        + `  负例干净率 ${percent(report.negativeCleanRate)}（基线 ${percent(baseline.negativeCleanRate)}）`,
-      );
-    }
-    console.log(
-      "\n判读纪律：case 数只有个位数，一条 case 的翻转就是十几个百分点。"
-      + "\n增量小于「一条 case 的权重」时不能算赢——那时应当保留 vector_only，"
-      + "\n或者先把 A/B 集扩到能分辨的规模再下结论。",
-    );
-  }
-
-  if (skipped.length > 0) {
-    console.log("\n--- 未参与 A/B 的 retrieval_quality case ---");
-    // 静默漏掉等于把「没覆盖」读成「覆盖了且通过」。
-    for (const item of skipped) console.log(`⏭️  ${item}`);
-  }
 }
 
 async function main() {
@@ -332,16 +278,11 @@ async function main() {
   }
 
   const payload = { runAt: new Date().toISOString(), options, reports, skipped };
-  if (options.json) {
-    console.log(JSON.stringify(payload, null, 2));
-  } else {
-    printReport(reports, skipped);
-  }
+  if (!options.json) printReport(reports);
   if (options.out) {
     const target = path.resolve(options.out);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, JSON.stringify(payload, null, 2), "utf8");
-    console.log(`\n报告已写入 ${target}`);
   }
 }
 

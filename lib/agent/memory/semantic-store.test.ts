@@ -46,12 +46,6 @@ describe("SemanticStore 语义召回", () => {
     expect(hits[0].content).toContain("简洁");
     // 语义层的记录应带 score（相似度），且在合理范围
     expect(hits[0].score).toBeGreaterThan(0.3);
-
-    // 打印出来，肉眼看排序效果（vitest 会显示）
-    console.log(
-      "召回排序:",
-      hits.map((h) => `${h.score?.toFixed(3)} | ${h.content.slice(0, 20)}`),
-    );
   });
 
   it.skipIf(!canRun)("get/list 不带 score（只有 recall 才有相似度）", async () => {

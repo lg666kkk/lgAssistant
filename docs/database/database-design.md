@@ -156,15 +156,12 @@ async function incrementalSync() {
     
     // 3. 判断是否需要同步
     if (!existing || page.last_edited_time > existing.last_synced_at) {
-      console.log(`同步页面: ${page.properties.title}`);
       
       // 删除旧 chunks（会级联删除 documents）
       await supabase.from('notion_pages').delete().eq('page_id', page.id);
       
       // 重新同步
       await firstSync(page.id);
-    } else {
-      console.log(`跳过未变化的页面: ${page.properties.title}`);
     }
   }
 }

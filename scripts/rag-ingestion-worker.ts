@@ -5,11 +5,10 @@ dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 
 async function main() {
-  const result = await processRagIngestionBatch({
+  await processRagIngestionBatch({
     workerId: `cli-${process.pid}-${crypto.randomUUID()}`,
     limit: Number(process.env.RAG_INGESTION_BATCH_SIZE ?? 2),
   });
-  console.log(JSON.stringify(result, null, 2));
 }
 
 main().catch((error) => {

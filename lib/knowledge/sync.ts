@@ -356,7 +356,6 @@ async function syncNotionPageOnce(
   attempt = 1,
   maxRetries = SYNC_MAX_RETRIES,
 ): Promise<SyncResult> {
-  console.log(`\n开始同步页面: ${pageId}`);
   emitSyncEvent(options, {
     type: 'page_start',
     pageId,
@@ -369,12 +368,9 @@ async function syncNotionPageOnce(
 
   try {
     // 1. 读取 Notion 页面
-    console.log('  [1/5] 读取 Notion 页面...');
     const notionClient = new NotionClient();
     const page = await notionClient.getPage(pageId);
     const pageContentHash = hashText(page.content);
-    console.log(`  ✓ 页面标题: ${page.title}`);
-    console.log(`  ✓ 内容长度: ${page.content.length} 字符`);
     emitSyncEvent(options, {
       type: 'page_read',
       pageId,
@@ -414,7 +410,6 @@ async function syncNotionPageOnce(
     });
 
     if (!options.force && isSameIndexedVersion(existingPage?.metadata, pageContentHash)) {
-      console.log('  ✓ 内容和索引版本未变化，跳过同步');
       emitSyncEvent(options, {
         type: 'page_skipped',
         pageId,
@@ -447,7 +442,6 @@ async function syncNotionPageOnce(
     }
 
     // 2. 切分文本
-    console.log('  [2/5] 切分文本...');
     emitSyncEvent(options, {
       type: 'chunking_start',
       pageId,
@@ -468,7 +462,6 @@ async function syncNotionPageOnce(
       overlap: 50,
       minChunkSize: 100,
     });
-    console.log(`  ✓ 切分为 ${chunks.length} 个块`);
     emitSyncEvent(options, {
       type: 'page_chunked',
       pageId,
@@ -512,7 +505,6 @@ async function syncNotionPageOnce(
     }
 
     if (chunks.length === 0) {
-      console.log('  ⚠️  页面内容为空，跳过同步');
       return {
         pageId,
         pageTitle: page.title,
@@ -524,7 +516,6 @@ async function syncNotionPageOnce(
     }
 
     // 3. 生成向量
-    console.log('  [3/5] 生成向量...');
     emitSyncEvent(options, {
       type: 'embedding_start',
       pageId,
@@ -557,7 +548,6 @@ async function syncNotionPageOnce(
         ),
       },
     );
-    console.log(`  ✓ 生成 ${embeddings.length} 个向量`);
     emitSyncEvent(options, {
       type: 'page_embedded',
       pageId,
@@ -574,7 +564,6 @@ async function syncNotionPageOnce(
     });
 
     // 4. 原子替换数据库索引
-    console.log('  [4/5] 原子替换数据库索引...');
     const syncStatus = existingPage ? 'updated' : 'created';
     const documents = buildAtomicDocumentPayload({
       chunks,
@@ -646,7 +635,6 @@ async function syncNotionPageOnce(
       },
     });
 
-    console.log(`  ✓ 写入 ${documents.length} 个文档块`);
     emitSyncEvent(options, {
       type: 'page_written',
       pageId,
@@ -657,7 +645,6 @@ async function syncNotionPageOnce(
     });
 
     // 5. 完成
-    console.log('  [5/5] 同步完成 ✓');
     emitSyncEvent(options, {
       type: 'page_done',
       pageId,
@@ -706,7 +693,6 @@ export async function syncNotionPages(
   pageIds: string[],
   options: SyncOptions,
 ): Promise<SyncResult[]> {
-  console.log(`\n=== 批量同步 ${pageIds.length} 个页面 ===`);
   emitSyncEvent(options, {
     type: 'batch_start',
     totalPages: pageIds.length,
@@ -739,13 +725,6 @@ export async function syncNotionPages(
   const updatedCount = results.filter((r) => r.status === 'updated').length;
   const totalChunks = results.reduce((sum, r) => sum + r.chunksCount, 0);
 
-  console.log(`\n=== 同步完成 ===`);
-  console.log(`成功: ${successCount} 个页面`);
-  console.log(`失败: ${failCount} 个页面`);
-  console.log(`新增: ${createdCount} 个页面`);
-  console.log(`更新: ${updatedCount} 个页面`);
-  console.log(`跳过: ${skippedCount} 个页面`);
-  console.log(`总计: ${totalChunks} 个文档块`);
   emitSyncEvent(options, {
     type: 'batch_done',
     totalPages: pageIds.length,
@@ -854,10 +833,6 @@ export async function syncNotionPageTree(
   });
   const pageIds = pages.map((page) => page.id);
 
-  console.log(`\n=== 找到 ${pages.length} 个页面 ===`);
-  for (const page of pages) {
-    console.log(`${'  '.repeat(page.depth)}- ${page.title} (${page.id})`);
-  }
   emitSyncEvent(options, {
     type: 'tree_scan_done',
     pageId,

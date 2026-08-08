@@ -42,18 +42,6 @@ function parseArgs(argv: string[]): CliOptions {
       if (kind !== "agent" && kind !== "routing") throw new Error("--kind 必须是 agent 或 routing");
       options.kind = kind;
     } else if (arg === "--help" || arg === "-h") {
-      console.log([
-        "用法:",
-        "  npm run eval:langfuse -- --sync",
-        "  npm run eval:langfuse -- --run --kind routing",
-        "  npm run eval:langfuse -- --run --kind agent --live",
-        "",
-        "--sync                 同步本地 case 到 Langfuse Dataset",
-        "--run                  创建并执行一次 Dataset Run",
-        "--live                 允许 agent 用例调用真实模型",
-        "--kind agent|routing   只执行一种用例",
-        "--run-name <name>      指定 Langfuse Dataset Run 名称",
-      ].join("\n"));
       process.exit(0);
     } else {
       throw new Error(`未知参数: ${arg}`);
@@ -89,7 +77,6 @@ async function syncDataset(langfuse: Langfuse, datasetName: string) {
       status: "ACTIVE",
     });
   }
-  console.log(JSON.stringify({ dataset: datasetName, synced: cases.length }, null, 2));
 }
 
 function agentChecks(result: EvalRunResult, expected: EvalCase["expect"]) {
@@ -149,8 +136,6 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
   );
   if (items.length === 0) throw new Error("没有找到可执行的 Dataset Item；请先运行 --sync。");
 
-  let passed = 0;
-  const failedCaseIds: string[] = [];
   for (const item of items) {
     const input = item.input as LangfuseEvalInput;
     const executionBoundary = input.kind === "routing" ? "retrieval-router" : "runAgentLoop";
@@ -174,12 +159,9 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
 
     try {
       const evaluation = await evaluateItem(input, item.expectedOutput, options.live);
-      passed += evaluation.score;
-      if (evaluation.score === 0) failedCaseIds.push(input.caseId);
       trace.update({ output: evaluation.output });
       trace.score({ name: evaluation.scoreName, value: evaluation.score, dataType: "NUMERIC" });
     } catch (error: any) {
-      failedCaseIds.push(input.caseId);
       trace.update({
         output: { error: error.message || "未知错误" },
       });
@@ -193,17 +175,6 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
   }
 
   await langfuse.flushAsync();
-  console.log(JSON.stringify({
-    dataset: options.dataset,
-    runName: options.runName,
-    cases: items.length,
-    passed,
-    failedCaseIds,
-    passRate: passed / items.length,
-    executionBoundary: options.kind === "routing"
-      ? "retrieval-router"
-      : options.kind === "agent" ? "runAgentLoop" : "mixed",
-  }, null, 2));
 }
 
 async function main() {

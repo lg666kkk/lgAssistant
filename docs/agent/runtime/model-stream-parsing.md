@@ -91,64 +91,16 @@ const parseResult = toolCall.input.trim() === ""
 
 ```ts
 for await (const part of result.fullStream) {
-  debug.log(part);
   if (part.type === "text-delta") { text += part.text; input.onTextDelta?.(part.text); }
   else if (part.type === "tool-call") { toolCalls.push(part); }   // input 已是 object
   else if (part.type === "finish") { finishReason = ...; usage = ...; }
-  else if (part.type === "error") { debug.flush(); throw part.error; }
+  else if (part.type === "error") { throw part.error; }
 }
 ```
 
 然后重新包成 Anthropic 风格的 `tool_use` content block，让上层 agent loop 只面对一种消息格式（Anthropic 是本项目的内部规范格式，provider 可换）。
 
 **`tool-input-start` / `tool-input-delta` 目前被丢弃**。它们正是"工具名已知、参数正在生成"的信号。当前 UI 是工具执行完才一次性出卡片（`tool_call` 事件在 [runtime/index.ts](../../../lib/agent/runtime/index.ts) 里于 `executeTools` 之后才 enqueue，payload 含结果），如果要做"正在调用 web_search…"的中间态，只需在这个 switch 补两个 case 转成新 SSE 事件，不用动 provider 层。参数半成品若要渲染，AI SDK 导出了 `parsePartialJson`。
-
-### 两层输出的观测开关
-
-`DEBUG_AI_STREAM` 环境变量，`createStreamDebugger` 实现：
-
-| 值 | 打印内容 |
-|---|---|
-| 不设 / `off` / `0` | 关闭（`includeRawChunks` 也不开，无额外开销） |
-| `raw` | 第①层：模型原始 SSE 帧 |
-| `parts` / `1` | 第③④层：AI SDK 处理后的 part |
-| `all` | 两层交替，可直接对照 |
-
-```bash
-DEBUG_AI_STREAM=all npm run dev
-```
-
-两个设计点：
-
-- **`includeRawChunks` 按需开**。这是 provider 内置的开关（`if (options.includeRawChunks) controller.enqueue({ type: 'raw', rawValue })`），关闭时连 raw part 都不入队，所以生产环境零成本。
-- **`text-delta` 只累计不逐条打**。每 token 一条会把工具调用的日志淹掉，改成结束时汇总 `textDeltas` / `textChars`。
-
-最终回答阶段（`streamTextWithProvider`）返回的是 `textStream`，拿不到完整 part 流，所以借 `onChunk` / `onFinish` 观测，不改调用方拿到的返回结构。
-
-### 实测输出
-
-用伪造的 SSE 帧跑真实 SDK 管道（参数被切成 4 段），`all` 模式下的输出：
-
-```
-02 RAW    {"role":"assistant","content":""}
-04 RAW    {"content":"我来查一下。"}
-05 PART   text-delta       {"id":"0","text":"我来查一下。"}
-06 RAW    {"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"web_search","arguments":""}}]}
-07 PART   tool-input-start {"id":"call_abc123","toolName":"web_search","dynamic":false}
-08 RAW    {"tool_calls":[{"index":0,"function":{"arguments":"{\"qu"}}]}
-09 PART   tool-input-delta {"id":"call_abc123","delta":"{\"qu"}
-10 RAW    {"tool_calls":[{"index":0,"function":{"arguments":"ery\":\"Vercel A"}}]}
-...
-16 PART   tool-input-end   {"id":"call_abc123"}
-17 PART   tool-call        {"toolCallId":"call_abc123","toolName":"web_search","input":{"query":"Vercel AI SDK 流式","topK":3}}
-22 PART   finish           {"finishReason":"tool-calls","rawFinishReason":"tool_calls",...}
-```
-
-三处值得注意：
-
-1. **RAW 和 PART 严格交替**——`TransformStream` 是同步逐帧转换，没有内部缓冲队列。
-2. **第 17 行是唯一一处 string → object 的跃变**：前面所有 `tool-input-delta` 的 `delta` 都是文本碎片，`tool-call` 的 `input` 已是 `{query, topK}` 对象，且 `topK` 是 number（schema 校验的产物，不是 JSON.parse 的）。
-3. **`finishReason` 有两份**：`rawFinishReason: "tool_calls"` 是 OpenAI 原值，`finishReason: "tool-calls"` 是 SDK 归一化后的值。本项目的 `toStopReason` 消费的是后者，再翻译成 Anthropic 的 `tool_use`——三套命名，改这块时容易错。
 
 ## 踩坑记录
 

@@ -60,5 +60,4 @@ fs.writeFileSync(
   path.join(outputDir, "manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
-console.log(`Ablation reports: ${outputDir}`);
 if (runs.some((run) => run.exitCode !== 0)) process.exitCode = 1;

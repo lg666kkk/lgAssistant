@@ -44,8 +44,6 @@ async function main() {
   }
 
   await enqueueKnowledgeProfileRefresh({ userId });
-
-  console.log("\n所有页面同步成功");
 }
 
 main().catch((error) => {

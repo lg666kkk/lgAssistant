@@ -71,7 +71,6 @@ async function main() {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, `${JSON.stringify(output, null, 2)}\n`);
   }
-  console.log(JSON.stringify(output, null, 2));
   if (
     summary.citationPrecision < scoreOption("--min-citation-precision", 0.8)
     || summary.groundedness < scoreOption("--min-groundedness", 0.75)

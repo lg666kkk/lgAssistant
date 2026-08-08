@@ -852,12 +852,6 @@ async function executeToolUsesWithScheduler(
     );
     for (let i = 0; i < items.length; i += maxConcurrency) {
       const batch = items.slice(i, i + maxConcurrency);
-      console.log("[ToolScheduler]", {
-        mode: "parallel",
-        group,
-        maxConcurrency,
-        tools: batch.map((item) => item.toolUse.name),
-      });
       results.push(
         ...(await Promise.all(
           batch.map(async (item) => ({
@@ -878,18 +872,6 @@ async function executeToolUsesWithScheduler(
   }
 
   for (const item of serial) {
-    console.log("[ToolScheduler]", {
-      mode: "serial",
-      tool: item.toolUse.name,
-      reason: item.tool
-        ? {
-            riskLevel: item.tool.riskLevel,
-            sideEffect: item.tool.runtime.sideEffect,
-            requiresConfirmation: item.tool.runtime.requiresConfirmation,
-            dangerous: item.tool.runtime.dangerous,
-          }
-        : "unknown_tool",
-    });
     results.push({
       index: item.index,
       toolUse: item.toolUse,
@@ -1125,22 +1107,8 @@ export async function runAgentLoop(
     const compressionModel: ChatModelId = "deepseek-v4-flash";
     const compacted = await compactWithObservation();
     loopMessages = compacted.messages;
-    if (!compacted.compacted) {
-      console.log("[AgentLoopCompactionSkipped]", {
-        reason: compacted.skippedReason,
-        beforeTokens: compacted.beforeTokens,
-        triggerTokens: compacted.triggerTokens,
-        messageCount: loopMessages.length,
-        lastCompactedMessageCount,
-      });
-    }
     if (compacted.compacted) {
       lastCompactedMessageCount = loopMessages.length;
-      console.log("[AgentLoopCompaction]", {
-        beforeTokens: compacted.beforeTokens,
-        afterTokens: compacted.afterTokens,
-        middleMessageCount: compacted.middleMessageCount,
-      });
       const compactionStep: ContextCompactionTraceStep = {
         type: "context_compaction",
         index: stepIndex++,
@@ -1306,9 +1274,6 @@ export async function runAgentLoop(
           cacheCreationTokens: rawUsage.cache_creation_input_tokens ?? undefined,
         })
       : undefined;
-    if (rawUsage) {
-      console.log("[ModelUsageRaw]", rawUsage);
-    }
     if (modelUsage) {
       metrics.actualInputTokens += modelUsage.inputTokens;
       metrics.actualOutputTokens += modelUsage.outputTokens;

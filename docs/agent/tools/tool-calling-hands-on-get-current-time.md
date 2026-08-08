@@ -344,7 +344,6 @@ scripts/test-tool-call.ts
 1. 创建内置工具注册表
 2. 构造 ToolCall
 3. 调用 executeToolCall
-4. console.log 输出结果
 ```
 
 正常测试输入：

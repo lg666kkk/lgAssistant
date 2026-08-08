@@ -34,7 +34,7 @@
 | 文档 | 用途 |
 |---|---|
 | [structured-event-protocol.md](./agent/runtime/structured-event-protocol.md) | Agent 到 UI 的结构化事件协议 |
-| [model-stream-parsing.md](./agent/runtime/model-stream-parsing.md) | 模型流式输出的四层解析链路与 DEBUG_AI_STREAM 观测开关 |
+| [model-stream-parsing.md](./agent/runtime/model-stream-parsing.md) | 模型流式输出的四层解析链路 |
 
 ## Agent 工具
 

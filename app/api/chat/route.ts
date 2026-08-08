@@ -83,22 +83,6 @@ type SessionHistoryMessage = {
   content: string;
 };
 
-function previewLoopMessages(messages: Array<{ role: string; content: unknown }>) {
-  return messages.map((message, index) => {
-    const content =
-      typeof message.content === "string"
-        ? message.content
-        : JSON.stringify(message.content);
-
-    return {
-      index,
-      role: message.role,
-      chars: content.length,
-      preview: content.slice(0, 300),
-    };
-  });
-}
-
 async function persistSessionTurn(input: {
   userId: string;
   sessionId?: string;
@@ -559,8 +543,6 @@ export async function POST(req: Request) {
         // ② 会话记忆：前端只传了一条消息时，从 Redis 补回历史
         // 前端传完整历史时（messages.length > 1）直接用，不覆盖
         let loopMessages = [...hydratedLoopMessages];
-
-        console.log("[chat] loopMessages 实际发送给 Agent:", previewLoopMessages(loopMessages));
 
         let allToolSources: ToolSourceType[] = [];
 

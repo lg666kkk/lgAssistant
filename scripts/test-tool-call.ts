@@ -10,8 +10,7 @@ async function main() {
       locale: "zh-CN",
     },
   };
-  const result = await executeToolCall(registry, toolCall);
-  console.log(result);
+  await executeToolCall(registry, toolCall);
 }
 
 main().catch((error) => {

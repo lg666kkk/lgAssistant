@@ -17,12 +17,9 @@ async function callTick() {
   };
   if (secret) headers["x-cron-secret"] = secret;
 
-  const response = await fetch(url, { headers });
-  const text = await response.text();
-  console.log(`[scheduler-dev] ${new Date().toISOString()} ${response.status} ${text}`);
+  await fetch(url, { headers });
 }
 
-console.log(`[scheduler-dev] ticking ${target} every minute`);
 void callTick().catch((error) => console.error("[scheduler-dev] tick failed:", error));
 
 cron.schedule("* * * * *", () => {

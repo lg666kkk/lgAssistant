@@ -1,8 +1,5 @@
 import dotenv from "dotenv";
-import {
-  cleanupMemoryHistory,
-  resolveRetentionTiers,
-} from "../lib/agent/memory/history-cleanup";
+import { cleanupMemoryHistory } from "../lib/agent/memory/history-cleanup";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
@@ -26,16 +23,6 @@ function parseArgs(argv: string[]) {
       continue;
     }
     if (arg === "--help" || arg === "-h") {
-      console.log(`用法: tsx scripts/memory-history-cleanup.ts [--apply] [--json]
-
-  （默认）        只统计将被删除的行数，不做任何删除。
-  --apply        真的删除。历史行删掉不可恢复。
-  --json         输出 JSON。
-
-  分档保留天数可用环境变量覆盖（单位：天，必须 > 0）：
-    MEMORY_HISTORY_RETENTION_DAYS_PROFILE / _CORRECTION / _FACT
-    MEMORY_HISTORY_RETENTION_DAYS_PREFERENCE / _PROJECT / _EPISODIC / _DEFAULT
-`);
       process.exit(0);
     }
     throw new Error(`未知参数: ${arg}`);
@@ -48,15 +35,9 @@ async function main() {
   const result = await cleanupMemoryHistory({ dryRun: !options.apply });
 
   if (options.json) {
-    console.log(JSON.stringify(result, null, 2));
     return;
   }
 
-  console.log(
-    result.dryRun
-      ? "Memory history cleanup (dry-run，未删除任何行；加 --apply 才真删)"
-      : "Memory history cleanup complete",
-  );
   console.table(
     result.tiers.map((tier) => ({
       类型: tier.memoryType,
@@ -65,16 +46,6 @@ async function main() {
       [result.dryRun ? "将删除" : "已删除"]: tier.rows,
     })),
   );
-  console.log(
-    [
-      `tiers=${result.scannedTiers}`,
-      `${result.dryRun ? "wouldDelete" : "deleted"}=${result.deletedRows}`,
-      `remaining=${result.remainingRows ?? "unknown"}`,
-    ].join(" "),
-  );
-  if (result.dryRun && result.deletedRows > 0) {
-    console.log("\n确认无误后重跑：npm run memory:history:cleanup -- --apply");
-  }
 }
 
 main().catch((error) => {

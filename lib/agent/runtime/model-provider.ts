@@ -167,78 +167,6 @@ function compactMetadata(
   return compacted;
 }
 
-// 流式调试：DEBUG_AI_STREAM 控制打印哪一层的输出。
-// raw   = 模型原始 SSE 帧（AI SDK 未加工，含 delta.tool_calls 的参数碎片）
-// parts = AI SDK 处理后的 fullStream part（tool-call 的 input 已 parse 成对象）
-// all   = 两层都打，用来对照同一次调用在两层的形态差异
-type StreamDebugMode = "off" | "raw" | "parts" | "all";
-
-const STREAM_DEBUG_PREVIEW_CHARS = 400;
-
-function resolveStreamDebugMode(): StreamDebugMode {
-  const value = process.env.DEBUG_AI_STREAM?.trim().toLowerCase();
-  if (!value || value === "0" || value === "off" || value === "false") return "off";
-  if (value === "raw") return "raw";
-  if (value === "parts" || value === "1" || value === "true") return "parts";
-  return "all";
-}
-
-function previewStreamDebugValue(value: unknown) {
-  const text = typeof value === "string" ? value : JSON.stringify(value) ?? "";
-  return text.length > STREAM_DEBUG_PREVIEW_CHARS
-    ? `${text.slice(0, STREAM_DEBUG_PREVIEW_CHARS)}…(+${text.length - STREAM_DEBUG_PREVIEW_CHARS} chars)`
-    : text;
-}
-
-// scope 用来区分是工具循环还是最终回答，两个阶段的流会交替出现在同一份日志里。
-function createStreamDebugger(scope: string) {
-  const mode = resolveStreamDebugMode();
-  const logRaw = mode === "raw" || mode === "all";
-  const logParts = mode === "parts" || mode === "all";
-  let index = 0;
-  let rawCount = 0;
-  let partCount = 0;
-  let textDeltaCount = 0;
-  let textDeltaChars = 0;
-
-  return {
-    enabled: mode !== "off",
-    // 只在需要看原始帧时才开，避免平时多走一遍 raw part 的入队开销。
-    includeRawChunks: logRaw,
-    log(part: { type: string; [key: string]: unknown }) {
-      if (mode === "off") return;
-      const position = index++;
-      if (part.type === "raw") {
-        rawCount += 1;
-        if (logRaw) {
-          console.log(`[ai-stream:${scope}] #${position} raw`, previewStreamDebugValue(part.rawValue));
-        }
-        return;
-      }
-      partCount += 1;
-      // text-delta 每 token 一条会淹掉日志，只累计，结束时汇总。
-      if (part.type === "text-delta") {
-        textDeltaCount += 1;
-        textDeltaChars += typeof part.text === "string" ? part.text.length : 0;
-        return;
-      }
-      if (logParts) {
-        console.log(`[ai-stream:${scope}] #${position} ${part.type}`, previewStreamDebugValue(part));
-      }
-    },
-    flush() {
-      if (mode === "off") return;
-      console.log(`[ai-stream:${scope}] end`, {
-        mode,
-        rawChunks: rawCount,
-        parts: partCount,
-        textDeltas: textDeltaCount,
-        textChars: textDeltaChars,
-      });
-    },
-  };
-}
-
 export async function callModelWithProvider(input: {
   messages: ModelMessage[];
   tools: Anthropic.Tool[];
@@ -248,7 +176,6 @@ export async function callModelWithProvider(input: {
   telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<ModelCallResult> {
-  const debug = createStreamDebugger(input.telemetryFunctionId ?? "agent-loop");
   const functionId = input.telemetryFunctionId ?? "agent-loop-model-call";
   const result = streamText({
     model: provider.chat(input.model),
@@ -257,7 +184,6 @@ export async function callModelWithProvider(input: {
     system: input.system,
     messages: toAIMessages(input.messages),
     tools: toAITools(input.tools),
-    includeRawChunks: debug.includeRawChunks,
     experimental_telemetry: {
       isEnabled: true,
       functionId,
@@ -276,7 +202,6 @@ export async function callModelWithProvider(input: {
   const toolCalls: any[] = [];
 
   for await (const part of result.fullStream) {
-    debug.log(part);
     if (part.type === "text-delta") {
       text += part.text;
       input.onTextDelta?.(part.text);
@@ -286,11 +211,9 @@ export async function callModelWithProvider(input: {
       finishReason = part.finishReason;
       usage = part.totalUsage;
     } else if (part.type === "error") {
-      debug.flush();
       throw part.error;
     }
   }
-  debug.flush();
 
   const content: ModelContentBlock[] = [];
   const sanitizedText = sanitizeModelText(text);
@@ -350,18 +273,12 @@ export async function streamTextWithProvider(input: {
   model: ChatModelId;
   telemetryMetadata?: ModelTelemetryMetadata;
 }) {
-  const debug = createStreamDebugger("final-answer");
   const result = streamText({
     model: provider.chat(input.model),
     maxOutputTokens: deepseekConfig.maxTokens,
     temperature: deepseekConfig.temperature,
     system: input.system,
     messages: toAIMessages(input.messages),
-    includeRawChunks: debug.includeRawChunks,
-    // 这里返回的是 textStream（只含文本），拿不到完整 part 流，
-    // 所以借 onChunk/onFinish 观测，不改调用方拿到的返回结构。
-    onChunk: debug.enabled ? ({ chunk }) => debug.log(chunk) : undefined,
-    onFinish: debug.enabled ? () => debug.flush() : undefined,
     experimental_telemetry: {
       isEnabled: true,
       functionId: "final-answer-stream",

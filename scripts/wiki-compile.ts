@@ -26,15 +26,10 @@ async function main() {
   const force = args.includes("--force");
   const pageIds = args.filter((arg) => arg !== "--force");
 
-  const results = await compileWiki({
+  await compileWiki({
     force,
     pageIds: pageIds.length > 0 ? pageIds : undefined,
-    onEvent: (event) => {
-      console.log(`[${event.type}] ${event.message}`);
-    },
   });
-
-  console.log(`\n编译完成：${results.length} 个结果`);
 }
 
 main().catch((error) => {

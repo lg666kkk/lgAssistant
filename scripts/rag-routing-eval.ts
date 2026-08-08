@@ -44,7 +44,6 @@ if (out) {
   fs.writeFileSync(outPath, `${JSON.stringify(output, null, 2)}\n`);
 }
 
-console.log(JSON.stringify(output, null, 2));
 
 const minAccuracy = threshold("--min-accuracy", 0.9);
 const minPrecision = threshold("--min-retrieval-precision", 0.9);
