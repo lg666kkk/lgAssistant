@@ -53,7 +53,7 @@ const MEMORY_TYPES = new Set<MemoryType>([
   "episodic",
 ]);
 const MEMORY_SOURCES = new Set<MemorySource>(["user_explicit", "inferred"]);
-const MEMORY_KEY_PATTERN = /^[a-z0-9][a-z0-9:_-]{2,99}$/;
+const MEMORY_KEY_PATTERN = /^[a-z0-9\u3400-\u9fff][a-z0-9\u3400-\u9fff:_-]{2,99}$/;
 const RESTRICTED_MEMORY_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
   /\b(?:api[_ -]?key|access[_ -]?token|password|密码)\s*[:=：]\s*\S+/i,
@@ -469,6 +469,17 @@ key 的选择规则：下面这些高频槽位**必须**使用清单里给出的
 
 ${renderControlledKeyList()}
 
+饮食喜好是多值集合，不是单值槽位。每种食物必须单独抽取一条事实，key 使用
+「diet:food:<具体食物>」，食物名沿用用户原文并转成小写；中文保持中文。例如：
+- 「我喜欢吃土豆」→ diet:food:土豆
+- 「我喜欢吃香菜和土豆」→ 两条事实：diet:food:香菜、diet:food:土豆
+- 同一种食物从喜欢变成不喜欢，仍使用同一个 key，由更新决策覆盖旧值。
+禁止使用没有食物后缀的 diet:preference。diet:allergy 和 diet:restriction
+不属于普通喜好，不能改写成 diet:food:*。
+
+只有用户原话明确包含喜欢、不喜欢、爱吃、不吃、讨厌、偏好等极性表达时，才能抽取饮食喜好。
+「除了香菜」「还有呢」「别的呢」这类省略、疑问或需要结合 assistant 猜测含义的短句不得抽取。
+
 清单之外的事实自由起 key（稳定的小写业务键，例如 diet:allergy:cilantro）。
 不要为了套进清单而扭曲事实的含义：不确定属于哪个槽位时，用自由 key，不要硬塞。
 
@@ -485,7 +496,11 @@ const DECISION_PROMPT = `你是记忆更新决策器。输入包含一条新事�
 
 UPDATE 的门槛是「同一个槽位」，不是「同一个话题」。内容很像但槽位不同的必须 ADD 或 NOOP，不能 UPDATE：购车预算与首付预算是两笔钱；居住地与工作地是两个地方；「喜欢香菜」与「对香菜过敏」结论相反。判不准是不是同一槽位时输出 NOOP。
 
-兼容旧版饮食喜好 key：当候选 key 是 diet:like:<food>、diet:dislike:<food> 或 diet:favorite:<food> 时，必须比较新旧正文里的具体食物；确为同一种食物从喜欢变不喜欢或从不喜欢变喜欢，属于同一偏好槽位，UPDATE 该候选；不是同一种食物则 NOOP。diet:allergy 和 diet:restriction 永远不适用这条兼容规则。
+饮食喜好使用 diet:food:<具体食物>，每种食物是独立槽位。兼容候选中的旧版
+diet:preference、preference:food:<food>、diet:like:<food>、
+diet:dislike:<food> 和 diet:favorite:<food>：只有正文确认是同一种食物时才能
+UPDATE；不同食物必须 ADD，允许用户同时喜欢土豆和香菜。diet:allergy 和
+diet:restriction 永远不适用这条兼容规则。
 
 只输出 JSON：{"action":"ADD|UPDATE|INVALIDATE|NOOP","targetKey":"必要时填写","reason":"简短理由"}`;
 
@@ -533,7 +548,7 @@ export function parseExtractedFacts(raw: string, userMessages: string[]): Extrac
     if (!item || typeof item !== "object") return [];
     const candidate = item as Record<string, unknown>;
     const fact = typeof candidate.fact === "string" ? candidate.fact.trim() : "";
-    const key = typeof candidate.key === "string" ? candidate.key.trim().toLowerCase() : "";
+    let key = typeof candidate.key === "string" ? candidate.key.trim().toLowerCase() : "";
     const evidenceExcerpt =
       typeof candidate.evidenceExcerpt === "string" ? candidate.evidenceExcerpt.trim() : "";
     const type = candidate.type as MemoryType;
@@ -543,6 +558,14 @@ export function parseExtractedFacts(raw: string, userMessages: string[]): Extrac
     const intent = MEMORY_WRITE_INTENTS.has(candidate.intent as MemoryWriteIntent)
       ? (candidate.intent as MemoryWriteIntent)
       : "upsert";
+
+    const isDietFoodPreference = type === "preference" && isDietFoodPreferenceKey(key);
+    if (isDietFoodPreference) {
+      if (!isExplicitDietPreferenceEvidence(evidenceExcerpt)) return [];
+      const subject = normalizeDietPreferenceSubject(fact);
+      if (!isSingleDietPreferenceSubject(subject)) return [];
+      key = `diet:food:${normalizeDietFoodKeySegment(subject)}`;
+    }
 
     if (
       fact.length < 3 ||
@@ -601,6 +624,38 @@ function normalizeDietPreferenceSubject(value: string) {
     .replace(/\b(?:the user|user|now|currently|really|most|likes?|loves?|prefers?|dislikes?|hates?|eats?)\b/gi, "")
     .replace(/[\s，。！？、,.!?：:；;_-]/g, "")
     .trim();
+}
+
+function normalizeDietFoodKeySegment(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\u3400-\u9fff_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+}
+
+function isDietFoodPreferenceKey(key: string) {
+  return key === "diet:preference"
+    || /^diet:food:[^:]+$/i.test(key)
+    || /^preference:food:[^:]+$/i.test(key)
+    || /^diet:(?:like|dislike|favorite):[^:]+$/i.test(key);
+}
+
+function isSingleDietPreferenceSubject(subject: string) {
+  return subject.length >= 1
+    && subject.length <= 60
+    && !/(?:和|与|以及|还有|、|,|，|\/|\+|\band\b|\bor\b)/i.test(subject);
+}
+
+function isExplicitDietPreferenceEvidence(evidence: string) {
+  const normalized = evidence.trim();
+  if (!normalized || /(?:除了|除外|除此之外|还有呢|别的呢|except\b)/i.test(normalized)) {
+    return false;
+  }
+  if (/[?？]/.test(normalized) || /(?:喜欢|爱吃|偏好).*(?:什么|啥|哪(?:个|些)?)/.test(normalized)) {
+    return false;
+  }
+  return /(?:喜欢|爱吃|爱上|偏好|最爱|讨厌|厌恶|不吃|不爱吃|不喜欢|不再吃|\b(?:like|love|prefer|dislike|hate)\b)/i.test(normalized);
 }
 
 export function extractExplicitForgetSubject(message: string) {
@@ -665,22 +720,21 @@ export function deterministicWriteDecision(
     if (candidates.length === 0) {
       return { action: "ADD", targetKey: fact.key, reason: "没有相关旧记忆" };
     }
-    const legacyDietPreferenceCandidates = candidates.filter(
+    const dietPreferenceCandidates = candidates.filter(
       (candidate) =>
         candidate.status === "active"
         && candidate.type === "preference"
-        && /^diet:(?:like|dislike|favorite):[^:]+$/i.test(candidate.key),
+        && isDietFoodPreferenceKey(candidate.key),
     );
-    if (fact.type === "preference" && legacyDietPreferenceCandidates.length === 1) {
-      // 旧版本曾按「极性 + 食物」自由造 key，例如 diet:dislike:cilantro；新版把
-      // 饮食喜好收敛到新 key。抽取模型偶尔仍会生成带食物后缀的 key，所以不能
-      // 再依赖 fact.key 判定；改为比较去掉偏好极性后的食物主体。主体完全一致时，
-      // “不喜欢香菜” → “最喜欢香菜”就是同一槽位的确定性更新。
-      // allergy / restriction 不在这个兼容分支，仍然禁止被喜好覆盖。
-      const candidate = legacyDietPreferenceCandidates[0];
+    if (fact.type === "preference" && isDietFoodPreferenceKey(fact.key)) {
+      // 饮食喜好按食物分槽位。候选可能仍使用旧版 key，因此用正文食物主体做迁移期
+      // 身份判断；不同食物明确允许并存，不能再交给语义相似度阻止 ADD。
       const newSubject = normalizeDietPreferenceSubject(fact.fact);
-      const previousSubject = normalizeDietPreferenceSubject(candidate.content);
-      if (newSubject.length >= 1 && newSubject === previousSubject) {
+      const sameFoodCandidates = dietPreferenceCandidates.filter(
+        (candidate) => normalizeDietPreferenceSubject(candidate.content) === newSubject,
+      );
+      if (sameFoodCandidates.length === 1) {
+        const candidate = sameFoodCandidates[0];
         return {
           action: "UPDATE",
           targetKey: candidate.key,
@@ -688,9 +742,10 @@ export function deterministicWriteDecision(
           supersedeKind: fact.intent === "correct" ? "correction" : "evolution",
         };
       }
-      // 主体不一致时仍交给受约束的槽位决策器；它只能选择给定候选，无法静默
-      // 覆盖 allergy / restriction，也无法凭空创建第二条 active 记录。
-      return null;
+      if (sameFoodCandidates.length > 1) {
+        return { action: "NOOP", reason: "同一食物存在多条旧版候选，拒绝猜测更新目标" };
+      }
+      return { action: "ADD", targetKey: fact.key, reason: "新增另一种食物偏好" };
     }
     // 精确 key 未命中，但存在高相似的 active 候选。
     //
@@ -1043,13 +1098,23 @@ export async function consolidate(
    */
   const processFact = async (fact: ExtractedFact, isRetry: boolean) => {
     const exact = await longTerm.get(fact.key, { userId });
+    // 新版按食物分 key，但线上可能仍有旧的单槽位 diet:preference。主动精确读取它，
+    // 不能只赌向量召回一定命中；否则同一种食物会在新旧 key 下各留一条 active。
+    const legacyDietPreference = isDietFoodPreferenceKey(fact.key)
+      && fact.key !== "diet:preference"
+      ? await longTerm.get("diet:preference", { userId })
+      : null;
     const recalled = await semantic.recall(fact.fact, 5, {
       userId,
       threshold: WRITE_CANDIDATE_THRESHOLD,
     });
+    const exactCandidates = [exact, legacyDietPreference].filter(
+      (candidate): candidate is MemoryRecord => Boolean(candidate),
+    );
+    const exactCandidateKeys = new Set(exactCandidates.map((candidate) => candidate.key));
     const candidates = [
-      ...(exact ? [exact] : []),
-      ...recalled.filter((candidate) => candidate.key !== exact?.key),
+      ...exactCandidates,
+      ...recalled.filter((candidate) => !exactCandidateKeys.has(candidate.key)),
     ];
     const decision = await decideMemoryWrite(fact, candidates);
     if (!isRetry) decisions[decision.action] = (decisions[decision.action] ?? 0) + 1;
@@ -1099,6 +1164,9 @@ export async function consolidate(
       writeAction: decision.action,
       writeReason: decision.reason,
     };
+    const versionedTarget = exactCandidates.find(
+      (candidate) => candidate.key === decision.targetKey,
+    );
     await writer.upsert(decision.targetKey, fact.fact, metadata, {
       userId,
       effectiveAt,
@@ -1108,7 +1176,7 @@ export async function consolidate(
       // 只有命中同一个 key 的当前行才有可信的 version。目标是语义候选里的另一个
       // key 时拿不到（match_memories 不返回该列），此时放弃版本校验，
       // 靠 RPC 内的 FOR UPDATE 串行化兜底，而不是传一个猜的版本号。
-      expectedVersion: decision.targetKey === exact?.key ? exact?.version : undefined,
+      expectedVersion: versionedTarget?.version,
     });
     saved.push(buildSavedRecord(fact, decision.targetKey, metadata));
   };

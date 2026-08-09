@@ -34,8 +34,9 @@ export const CONTROLLED_MEMORY_KEYS = {
   "profile:language": { label: "偏好使用的语言", type: "preference" },
   "profile:timezone": { label: "所在时区", type: "profile" },
 
-  // ── 饮食：喜好与禁忌必须是两个槽位，结论相反不能互相覆盖 ────────
-  "diet:preference": { label: "饮食偏好（喜欢吃什么）", type: "preference" },
+  // ── 饮食：喜好是多值集合，使用动态 key `diet:food:<具体食物>` ──────
+  // 不能把所有喜欢的食物压进一个 `diet:preference`：那会让土豆和香菜互相覆盖。
+  // 禁忌和过敏仍是独立槽位，绝不能被普通喜好覆盖。
   "diet:restriction": { label: "饮食禁忌（不吃什么）", type: "preference" },
   "diet:allergy": { label: "食物过敏（吃了会出事）", type: "fact" },
 

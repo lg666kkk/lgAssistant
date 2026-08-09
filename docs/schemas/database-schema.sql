@@ -419,9 +419,11 @@ CREATE TABLE IF NOT EXISTS knowledge_profiles (
   profile_type TEXT NOT NULL DEFAULT 'search_notes_tool',
   source_hash TEXT NOT NULL,
   profile TEXT NOT NULL,
+  custom_profile TEXT CHECK (custom_profile IS NULL OR char_length(custom_profile) <= 320),
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
+  custom_updated_at TIMESTAMPTZ,
   UNIQUE (user_id, profile_type)
 );
 
@@ -429,8 +431,22 @@ ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES 
 ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS profile_type TEXT NOT NULL DEFAULT 'search_notes_tool';
 ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS source_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS profile TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS custom_profile TEXT;
 ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE knowledge_profiles ADD COLUMN IF NOT EXISTS custom_updated_at TIMESTAMPTZ;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'knowledge_profiles_custom_profile_length_check'
+  ) THEN
+    ALTER TABLE knowledge_profiles
+      ADD CONSTRAINT knowledge_profiles_custom_profile_length_check
+      CHECK (custom_profile IS NULL OR char_length(custom_profile) <= 320);
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS knowledge_profiles_user_type_unique_idx
 ON knowledge_profiles (user_id, profile_type);
@@ -439,3 +455,5 @@ CREATE INDEX IF NOT EXISTS knowledge_profiles_updated_idx
 ON knowledge_profiles (user_id, updated_at DESC);
 
 COMMENT ON TABLE knowledge_profiles IS '个人知识库画像缓存，用于工具描述和路由提示';
+COMMENT ON COLUMN knowledge_profiles.profile IS '系统根据已编译知识页自动生成的画像';
+COMMENT ON COLUMN knowledge_profiles.custom_profile IS '用户自定义覆盖层；非空时优先于系统画像';

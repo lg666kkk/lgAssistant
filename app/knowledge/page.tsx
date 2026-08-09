@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { RotateCcw, Save } from "lucide-react";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { authFetch } from "@/lib/auth/client";
 
@@ -54,6 +55,19 @@ type KnowledgeResetResult = {
   includeRag: boolean;
   includeCompiledWiki: boolean;
   counts: KnowledgeResetCounts;
+};
+
+type KnowledgeProfile = {
+  exists: boolean;
+  mode: "generated" | "custom";
+  generatedProfile: string;
+  customProfile: string;
+  effectiveProfile: string;
+  sourceHash: string;
+  indexVersion: string;
+  generatedUpdatedAt?: string;
+  customUpdatedAt?: string;
+  maxCustomProfileChars: number;
 };
 
 function formatMetaValue(value: unknown): string {
@@ -129,6 +143,12 @@ export default function KnowledgePage() {
   const [compileForce, setCompileForce] = useState(false);
   const [compileEvents, setCompileEvents] = useState<SyncEvent[]>([]);
   const [compileError, setCompileError] = useState<string | null>(null);
+  const [knowledgeProfile, setKnowledgeProfile] = useState<KnowledgeProfile | null>(null);
+  const [profileDraft, setProfileDraft] = useState("");
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetIncludeRag, setResetIncludeRag] = useState(true);
   const [resetIncludeCompiledWiki, setResetIncludeCompiledWiki] = useState(true);
@@ -160,8 +180,26 @@ export default function KnowledgePage() {
       .finally(() => setLoading(false));
   };
 
+  const loadKnowledgeProfile = () => {
+    setProfileLoading(true);
+    setProfileError(null);
+    authFetch("/api/knowledge/profile", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "加载知识库画像失败");
+        return data as KnowledgeProfile;
+      })
+      .then((profile) => {
+        setKnowledgeProfile(profile);
+        setProfileDraft(profile.customProfile);
+      })
+      .catch((error) => setProfileError(error.message))
+      .finally(() => setProfileLoading(false));
+  };
+
   useEffect(() => {
     loadPages();
+    loadKnowledgeProfile();
   }, []);
 
   async function startSync() {
@@ -212,10 +250,55 @@ export default function KnowledgePage() {
       }
 
       loadPages();
+      loadKnowledgeProfile();
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : "同步失败");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function saveKnowledgeProfile() {
+    if (!knowledgeProfile?.exists || !profileDraft.trim() || profileSaving) return;
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileNotice(null);
+    try {
+      const response = await authFetch("/api/knowledge/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customProfile: profileDraft }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存知识库画像失败");
+      const profile = data as KnowledgeProfile;
+      setKnowledgeProfile(profile);
+      setProfileDraft(profile.customProfile);
+      setProfileNotice("自定义画像已生效");
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "保存知识库画像失败");
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function restoreGeneratedProfile() {
+    if (!knowledgeProfile?.customProfile || profileSaving) return;
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileNotice(null);
+    try {
+      const response = await authFetch("/api/knowledge/profile", { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "恢复自动画像失败");
+      const profile = data as KnowledgeProfile;
+      setKnowledgeProfile(profile);
+      setProfileDraft("");
+      setProfileNotice("已恢复自动画像");
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "恢复自动画像失败");
+    } finally {
+      setProfileSaving(false);
     }
   }
 
@@ -265,6 +348,7 @@ export default function KnowledgePage() {
       }
 
       loadPages();
+      loadKnowledgeProfile();
     } catch (e) {
       setCompileError(e instanceof Error ? e.message : "编译失败");
     } finally {
@@ -302,6 +386,7 @@ export default function KnowledgePage() {
       setResetPreview(data as KnowledgeResetResult);
       if (confirm) {
         loadPages();
+        loadKnowledgeProfile();
       }
     } catch (e) {
       setResetError(e instanceof Error ? e.message : "清空知识库失败");
@@ -619,6 +704,118 @@ export default function KnowledgePage() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </section>
+
+        <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-medium text-zinc-100">知识库画像</h2>
+              <p className="mt-1 text-xs text-zinc-500">检索路由使用的知识范围。</p>
+            </div>
+            {knowledgeProfile?.exists && (
+              <span className={`rounded px-2 py-1 text-xs font-medium ${
+                knowledgeProfile.mode === "custom"
+                  ? "bg-cyan-950 text-cyan-300"
+                  : "bg-zinc-800 text-zinc-400"
+              }`}>
+                {knowledgeProfile.mode === "custom" ? "自定义生效" : "自动生成"}
+              </span>
+            )}
+          </div>
+
+          {profileLoading ? (
+            <div className="px-4 py-8 text-center text-sm text-zinc-500">加载画像...</div>
+          ) : profileError && !knowledgeProfile ? (
+            <div className="px-4 py-4 text-sm text-rose-300">{profileError}</div>
+          ) : knowledgeProfile?.exists ? (
+            <>
+              <div className="border-b border-zinc-800 px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-zinc-500">当前生效</span>
+                  <span className="font-mono text-[11px] text-zinc-600">
+                    {knowledgeProfile.indexVersion.slice(0, 12)}
+                  </span>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-200">
+                  {knowledgeProfile.effectiveProfile}
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2">
+                <div className="border-b border-zinc-800 p-4 md:border-b-0 md:border-r">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="custom-knowledge-profile" className="text-xs font-medium text-zinc-400">
+                      用户覆盖
+                    </label>
+                    <span className="text-xs text-zinc-600">
+                      {profileDraft.length}/{knowledgeProfile.maxCustomProfileChars}
+                    </span>
+                  </div>
+                  <textarea
+                    id="custom-knowledge-profile"
+                    value={profileDraft}
+                    onChange={(event) => {
+                      setProfileDraft(event.target.value);
+                      setProfileNotice(null);
+                      setProfileError(null);
+                    }}
+                    maxLength={knowledgeProfile.maxCustomProfileChars}
+                    placeholder="输入自定义知识范围"
+                    className="mt-2 min-h-32 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-700"
+                    disabled={profileSaving}
+                  />
+                  <div className="mt-3 flex min-h-9 flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs">
+                      {profileError && <span className="text-rose-300">{profileError}</span>}
+                      {profileNotice && <span className="text-emerald-300">{profileNotice}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={restoreGeneratedProfile}
+                        disabled={profileSaving || !knowledgeProfile.customProfile}
+                        className="inline-flex items-center gap-2 rounded-md border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
+                      >
+                        <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                        恢复自动
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveKnowledgeProfile}
+                        disabled={
+                          profileSaving
+                          || !profileDraft.trim()
+                          || profileDraft.trim() === knowledgeProfile.customProfile
+                        }
+                        className="inline-flex items-center gap-2 rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                      >
+                        <Save className="h-4 w-4" aria-hidden="true" />
+                        {profileSaving ? "保存中" : "保存"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-medium text-zinc-400">系统生成</span>
+                    <span className="text-[11px] text-zinc-600">
+                      {knowledgeProfile.generatedUpdatedAt
+                        ? new Date(knowledgeProfile.generatedUpdatedAt).toLocaleString()
+                        : "-"}
+                    </span>
+                  </div>
+                  <p className="mt-2 min-h-32 whitespace-pre-wrap break-words rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm leading-6 text-zinc-400">
+                    {knowledgeProfile.generatedProfile || "暂无自动画像"}
+                  </p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="px-4 py-8 text-center text-sm text-zinc-500">
+              编译知识库后生成画像。
             </div>
           )}
         </section>

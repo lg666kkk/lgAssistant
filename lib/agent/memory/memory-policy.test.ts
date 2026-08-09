@@ -67,6 +67,36 @@ describe("可信记忆抽取校验", () => {
       parseExtractedFacts(JSON.stringify({ facts: [secret] }), ["password: hunter2"]),
     ).toEqual([]);
   });
+
+  it("按具体食物生成独立 key，并拒绝歧义短句", () => {
+    const potato = fact({
+      fact: "用户喜欢吃土豆",
+      key: "diet:preference",
+      type: "preference",
+      evidenceExcerpt: "我喜欢吃土豆",
+    });
+    const cilantro = fact({
+      fact: "用户喜欢吃香菜",
+      key: "diet:food:cilantro",
+      type: "preference",
+      evidenceExcerpt: "我喜欢吃香菜",
+    });
+    const ambiguous = fact({
+      fact: "用户不吃香菜",
+      key: "diet:dislike:cilantro",
+      type: "preference",
+      evidenceExcerpt: "除了香菜",
+    });
+
+    expect(parseExtractedFacts(
+      JSON.stringify({ facts: [potato, cilantro] }),
+      ["我喜欢吃土豆", "我喜欢吃香菜"],
+    ).map((item) => item.key)).toEqual(["diet:food:土豆", "diet:food:香菜"]);
+    expect(parseExtractedFacts(
+      JSON.stringify({ facts: [ambiguous] }),
+      ["除了香菜"],
+    )).toEqual([]);
+  });
 });
 
 describe("记忆写入决策", () => {
@@ -101,7 +131,7 @@ describe("记忆写入决策", () => {
   it("同一食物的旧版饮食喜好确定性更新，但过敏记录仍拒绝覆盖", () => {
     const favoriteCilantro = fact({
       fact: "用户最喜欢吃香菜",
-      key: "diet:preference",
+      key: "diet:food:香菜",
       type: "preference",
       evidenceExcerpt: "我最喜欢吃香菜",
     });
@@ -118,15 +148,16 @@ describe("记忆写入决策", () => {
       reason: "同一食物的旧版饮食喜好发生变化",
     });
     expect(deterministicWriteDecision(favoriteCilantro, [memory({ score: 0.96 })])).toEqual({
-      action: "NOOP",
-      reason: "存在高相似候选但业务身份不明确，拒绝猜测",
+      action: "ADD",
+      targetKey: "diet:food:香菜",
+      reason: "新增另一种食物偏好",
     });
   });
 
   it("不同食物不会被旧版饮食喜好兼容分支确定性覆盖", () => {
     const favoriteHotpot = fact({
       fact: "用户最喜欢吃火锅",
-      key: "diet:favorite:hotpot",
+      key: "diet:food:火锅",
       type: "preference",
       evidenceExcerpt: "我最喜欢吃火锅",
     });
@@ -137,7 +168,32 @@ describe("记忆写入决策", () => {
       score: 0.96,
     });
 
-    expect(deterministicWriteDecision(favoriteHotpot, [legacyDislikeCilantro])).toBeNull();
+    expect(deterministicWriteDecision(favoriteHotpot, [legacyDislikeCilantro])).toEqual({
+      action: "ADD",
+      targetKey: "diet:food:火锅",
+      reason: "新增另一种食物偏好",
+    });
+  });
+
+  it("不同食物偏好并存，不会互相覆盖", () => {
+    const favoriteCilantro = fact({
+      fact: "用户喜欢吃香菜",
+      key: "diet:food:香菜",
+      type: "preference",
+      evidenceExcerpt: "我喜欢吃香菜",
+    });
+    const favoritePotato = memory({
+      key: "diet:preference",
+      type: "preference",
+      content: "用户喜欢吃土豆",
+      score: 0.96,
+    });
+
+    expect(deterministicWriteDecision(favoriteCilantro, [favoritePotato])).toEqual({
+      action: "ADD",
+      targetKey: "diet:food:香菜",
+      reason: "新增另一种食物偏好",
+    });
   });
 
   it("忘记请求软失效相关旧记忆", () => {

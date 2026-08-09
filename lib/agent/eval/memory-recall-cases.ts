@@ -241,6 +241,15 @@ export const memoryWriteDecisionCases: MemoryWriteDecisionCase[] = [
     why: "语义极近、结论相反。误合并的后果不是答错一句话，是给出会让用户过敏的建议。",
   },
   {
+    id: "write-different-food-preferences-coexist",
+    kind: "write_decision",
+    fact: fact({ fact: "用户喜欢吃香菜", key: "diet:food:香菜", type: "preference" }),
+    candidates: [memory("diet:preference", "用户喜欢吃土豆", { score: 0.93, type: "preference" })],
+    expectedActions: ["ADD"],
+    expectedTargetKey: "diet:food:香菜",
+    why: "饮食喜好是多值集合。不同食物必须使用不同 key 并存，语义相似度不能让土豆覆盖香菜。",
+  },
+  {
     id: "write-low-similarity-add",
     kind: "write_decision",
     fact: fact({ fact: "用户是后端工程师", key: "profile:occupation" }),
