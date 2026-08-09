@@ -389,7 +389,7 @@
 
 | 能力 | 当前代码/Schema | 面试表达 |
 |---|---|---|
-| 会话恢复优先级 | `snapshot-store.ts`、`app/api/chat/route.ts` | Redis Snapshot → Supabase Snapshot → client/Redis History → PostgreSQL fallback |
+| 会话恢复优先级 | `snapshot-store.ts`、`app/api/chat/route.ts` | Redis Snapshot → Supabase Snapshot → Redis History → PostgreSQL fallback |
 | Snapshot 缓存 | `lib/agent/context/snapshot-cache.ts` | Redis KV，完整结构校验，2 小时 TTL，Supabase fallback/backfill |
 | 会话存储 | `lib/agent/memory/session-store.ts` | Redis List，key 含 userId，2 小时滑动 TTL |
 | 召回门控与重排 | `lib/agent/memory/memory-flow.ts` | 规则门控 + pgvector + relevance/importance/recency |

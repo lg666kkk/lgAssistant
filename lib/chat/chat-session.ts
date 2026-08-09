@@ -226,16 +226,6 @@ export class ChatSession {
           case "plan_proposal":
             last().plan = evt.plan;
             break;
-          case "memory_debug": {
-            const memory = evt.memory;
-            const requestLabel = memory.requestId.slice(0, 8);
-            const label =
-              `[memory-debug][${requestLabel}][${memory.phase}][${memory.status}]`;
-            if (memory.status === "failed") console.error(label, memory);
-            else if (memory.status === "skipped") console.warn(label, memory);
-            else console.info(label, memory);
-            break;
-          }
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");
           case "done":

@@ -43,13 +43,11 @@ describe("memory observability", () => {
 
   it("reports an aggregate skip outcome without invoking external memory services", async () => {
     let outcome: unknown;
-    const debugEvents: Array<{ phase: string; status: string; details?: unknown }> = [];
 
     await expect(consolidate([], {
       onOutcome: (result) => {
         outcome = result;
       },
-      onDebug: (event) => debugEvents.push(event),
     })).resolves.toEqual([]);
 
     expect(outcome).toEqual({
@@ -66,13 +64,5 @@ describe("memory observability", () => {
       failedCount: 0,
       decisions: {},
     });
-    expect(debugEvents).toEqual([
-      { phase: "consolidation.started", status: "started", details: expect.any(Object) },
-      {
-        phase: "consolidation.completed",
-        status: "skipped",
-        details: expect.objectContaining({ skipReason: "empty_conversation" }),
-      },
-    ]);
   });
 });

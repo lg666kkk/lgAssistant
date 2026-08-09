@@ -151,7 +151,7 @@ SemanticMemoryStore                ← 仅语义层实现
 ### 第 5 课技术选型与决策
 
 - **本地 Redis 而非 Upstash**：学习阶段纯本机跑，本地最省事；接口解耦保证将来换 Upstash 只改实现类。
-- **`messages.length === 1` 才补历史**：前端传完整历史时不覆盖（尊重调用方状态）；只传一条时才从 Redis 补，两种模式都支持。
+- **有 session 时只接受一条当前 user 消息**：历史统一由服务端从 Snapshot、Redis History 或数据库恢复，避免客户端不完整历史绕过恢复或伪造 assistant 消息；无 session 的无状态请求仍可携带多条消息。
 - **助手回复从 `loopMessages` 取**：route 层拿不到流式输出的完整文本，但 `agentLoopResult.loopMessages` 里有最终的 assistant 消息，从那里取再存 Redis。
 
 ## 踩坑记录

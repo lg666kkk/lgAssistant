@@ -14,7 +14,6 @@
 请求进入
   -> Redis ContextSnapshot Cache（优先）
   -> Supabase ContextSnapshot（未命中后回填 Redis）
-  -> 客户端完整历史
   -> Redis Session History
   -> PostgreSQL messages fallback
   -> 当前 messages
@@ -106,22 +105,22 @@ Agent Runtime
 
 ### Q9. 讲一下本项目恢复对话上下文的优先级。
 
-- **项目落点**：有 session 时先读 Redis `ContextSnapshot` Cache，未命中或 Redis 故障时读 Supabase Snapshot 并回填缓存；没有 Snapshot 且客户端已带多条历史时使用 client；只有当前消息时读 Redis Session History，仍为空再回退 PostgreSQL messages 并回填 History；无 session 直接使用 client。
+- **项目落点**：有 session 时只接受一条当前 user 消息；先读 Redis `ContextSnapshot` Cache，未命中或 Redis 故障时读 Supabase Snapshot 并回填缓存；仍无 Snapshot 时读 Redis Session History，再回退 PostgreSQL messages 并回填 History；无 session 时直接使用 client messages。
 
 ### Q10. 为什么 Snapshot 优先于 Redis History 和数据库消息？
 
 - **想听**：Snapshot 保存的是 Runtime 已选择或压缩后的执行上下文，可直接延续摘要和 Artifact 引用；原始消息日志用于审计与重建，两者职责不同。
 - **边界**：Redis 中结构损坏或跨 scope 的 Snapshot 会被删除并回退 Supabase，但当前仍未比较 `policyVersion/contentHash` 判断语义新鲜度。
 
-### Q11. 为什么客户端带完整历史时不再和 Redis 合并？
+### Q11. 为什么有 session 时不接受客户端完整历史？
 
-- **想听**：避免重复消息、顺序冲突和多源合并的不确定性。必须定义一个权威来源，而不是把所有来源盲目拼接。
-- **追问**：客户端历史能否完全信任？不能；需要用户归属、长度、角色和内容校验，服务端状态不应由客户端越权覆盖。
+- **想听**：服务端 Snapshot/History 是会话上下文的权威来源；拒绝客户端完整历史可以避免重复消息、顺序冲突、不完整历史绕过恢复，以及伪造 assistant 消息。
+- **追问**：无 session 的无状态请求仍可携带多条 client messages，但不能覆盖已有会话的服务端状态。
 
-### Q12. 为什么只有一条当前消息时才回退 Redis/数据库？
+### Q12. 为什么会话请求只允许一条当前 user 消息？
 
-- **项目落点**：这对应前端只发送本轮消息、服务端负责恢复历史的协议；若请求已经携带多轮历史，当前实现把 client 视为完整上下文。
-- **风险**：协议没有显式 `historyMode/version`，调用方误传两条不完整消息时会跳过服务端恢复。
+- **项目落点**：这对应前端只发送本轮消息、服务端负责恢复历史的协议；接口用 `400` 拒绝多条消息或 assistant 消息，避免调用方绕过服务端恢复。
+- **风险**：当前仍缺少 `messageId/snapshotVersion`，只能按 role/content 做当前消息去重，无法完成严格的版本校验。
 
 ### Q13. 当前消息如何避免和 Snapshot 或数据库末尾重复？
 
