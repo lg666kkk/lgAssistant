@@ -17,6 +17,11 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1  # 可选，默认使用官方地�
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Local Redis used by the development server
+REDIS_URL=redis://127.0.0.1:6379
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
 ## 开始使用
@@ -26,6 +31,16 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```bash
 npm install
 ```
+
+启动本地 Redis：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml exec redis redis-cli ping
+```
+
+第二条命令返回 `PONG` 后再启动开发服务器。Redis 只绑定到
+`127.0.0.1:6379`，不会暴露到局域网或公网。
 
 启动开发服务器：
 
@@ -46,4 +61,5 @@ npm run dev
 npm run build
 npm run start
 npm run lint
+docker compose -f docker-compose.dev.yml down
 ```

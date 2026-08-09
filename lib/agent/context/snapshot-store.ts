@@ -4,10 +4,27 @@ import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { compactLoopMessages, CONTEXT_SUMMARY_MARKER } from "@/lib/agent/runtime/compaction";
 import { estimateTokens } from "@/lib/agent/runtime/budget";
 import { CONTEXT_POLICY } from "./plan";
+import { contextSnapshotCache, type ContextSnapshotCache } from "./snapshot-cache";
 import type { ContextSnapshot } from "./types";
 
 const TABLE = "agent_context_snapshots";
 const SNAPSHOT_MESSAGE_TOKEN_LIMIT = 24_000;
+
+export type ContextSnapshotStoreDependencies = {
+  cache: ContextSnapshotCache;
+  getSupabase: typeof getSupabase;
+  hasSupabaseConfig: typeof hasSupabaseConfig;
+  onCacheError: (operation: "load" | "backfill" | "save", error: unknown) => void;
+};
+
+const defaultDependencies: ContextSnapshotStoreDependencies = {
+  cache: contextSnapshotCache,
+  getSupabase,
+  hasSupabaseConfig,
+  onCacheError(operation, error) {
+    console.error(`[ContextSnapshot.cache.${operation}]`, error);
+  },
+};
 
 function hashContent(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -86,34 +103,67 @@ function fromRow(row: any): ContextSnapshot {
 export async function loadContextSnapshot(input: {
   userId: string;
   sessionId: string;
-}): Promise<ContextSnapshot | null> {
-  if (!hasSupabaseConfig()) return null;
-  const { data, error } = await getSupabase()
+}, dependencies = defaultDependencies): Promise<ContextSnapshot | null> {
+  try {
+    const cached = await dependencies.cache.load(input);
+    if (cached) return cached;
+  } catch (error) {
+    dependencies.onCacheError("load", error);
+  }
+
+  if (!dependencies.hasSupabaseConfig()) return null;
+  const { data, error } = await dependencies.getSupabase()
     .from(TABLE)
     .select("*")
     .eq("user_id", input.userId)
     .eq("session_id", input.sessionId)
     .maybeSingle();
   if (error) throw new Error(`[ContextSnapshot.load] ${error.message}`);
-  return data ? fromRow(data) : null;
+  if (!data) return null;
+
+  const snapshot = fromRow(data);
+  await dependencies.cache.save(snapshot).catch((cacheError) =>
+    dependencies.onCacheError("backfill", cacheError));
+  return snapshot;
 }
 
-export async function saveContextSnapshot(snapshot: ContextSnapshot): Promise<void> {
-  if (!hasSupabaseConfig()) return;
-  const { error } = await getSupabase().from(TABLE).upsert({
-    id: snapshot.id,
-    user_id: snapshot.userId,
-    session_id: snapshot.sessionId,
-    version: snapshot.version,
-    model: snapshot.model,
-    policy_version: snapshot.policyVersion,
-    summary: snapshot.summary,
-    messages: snapshot.messages,
-    artifact_refs: snapshot.artifactRefs,
-    unresolved_items: snapshot.unresolvedItems,
-    source_message_count: snapshot.sourceMessageCount,
-    content_hash: snapshot.contentHash,
-    updated_at: snapshot.updatedAt,
-  }, { onConflict: "user_id,session_id" });
-  if (error) throw new Error(`[ContextSnapshot.save] ${error.message}`);
+export async function saveContextSnapshot(
+  snapshot: ContextSnapshot,
+  dependencies = defaultDependencies,
+): Promise<void> {
+  const hasPersistentStore = dependencies.hasSupabaseConfig();
+  if (hasPersistentStore) {
+    const { error } = await dependencies.getSupabase().from(TABLE).upsert({
+      id: snapshot.id,
+      user_id: snapshot.userId,
+      session_id: snapshot.sessionId,
+      version: snapshot.version,
+      model: snapshot.model,
+      policy_version: snapshot.policyVersion,
+      summary: snapshot.summary,
+      messages: snapshot.messages,
+      artifact_refs: snapshot.artifactRefs,
+      unresolved_items: snapshot.unresolvedItems,
+      source_message_count: snapshot.sourceMessageCount,
+      content_hash: snapshot.contentHash,
+      updated_at: snapshot.updatedAt,
+    }, { onConflict: "user_id,session_id" });
+    if (error) throw new Error(`[ContextSnapshot.save] ${error.message}`);
+  }
+
+  try {
+    await dependencies.cache.save(snapshot);
+  } catch (error) {
+    if (!hasPersistentStore) {
+      throw new Error("[ContextSnapshot.cache.save] Redis 快照保存失败", { cause: error });
+    }
+    dependencies.onCacheError("save", error);
+  }
+}
+
+export async function clearContextSnapshotCache(
+  input: { userId: string; sessionId: string },
+  dependencies = defaultDependencies,
+): Promise<void> {
+  await dependencies.cache.clear(input);
 }

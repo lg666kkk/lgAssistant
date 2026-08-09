@@ -12,9 +12,10 @@
 
 ```text
 请求进入
-  -> ContextSnapshot（优先）
+  -> Redis ContextSnapshot Cache（优先）
+  -> Supabase ContextSnapshot（未命中后回填 Redis）
   -> 客户端完整历史
-  -> Redis 会话历史
+  -> Redis Session History
   -> PostgreSQL messages fallback
   -> 当前 messages
 
@@ -105,12 +106,12 @@ Agent Runtime
 
 ### Q9. 讲一下本项目恢复对话上下文的优先级。
 
-- **项目落点**：有 session 时先读 `ContextSnapshot`；没有 Snapshot 且客户端已带多条历史时使用 client；只有当前消息时读 Redis，Redis 空再回退 PostgreSQL messages 并回填 Redis；无 session 直接使用 client。
+- **项目落点**：有 session 时先读 Redis `ContextSnapshot` Cache，未命中或 Redis 故障时读 Supabase Snapshot 并回填缓存；没有 Snapshot 且客户端已带多条历史时使用 client；只有当前消息时读 Redis Session History，仍为空再回退 PostgreSQL messages 并回填 History；无 session 直接使用 client。
 
-### Q10. 为什么 Snapshot 优先于 Redis 和数据库消息？
+### Q10. 为什么 Snapshot 优先于 Redis History 和数据库消息？
 
 - **想听**：Snapshot 保存的是 Runtime 已选择或压缩后的执行上下文，可直接延续摘要和 Artifact 引用；原始消息日志用于审计与重建，两者职责不同。
-- **边界**：Snapshot 如果损坏或过期，当前代码没有校验后自动降级到消息日志。
+- **边界**：Redis 中结构损坏或跨 scope 的 Snapshot 会被删除并回退 Supabase，但当前仍未比较 `policyVersion/contentHash` 判断语义新鲜度。
 
 ### Q11. 为什么客户端带完整历史时不再和 Redis 合并？
 
@@ -127,9 +128,9 @@ Agent Runtime
 - **项目落点**：Snapshot 路径比较最后一条消息的 role/content；数据库路径过滤末尾与当前用户内容相同的消息，再追加当前请求。
 - **边界**：纯内容比较不是稳定 message ID；相同文本的真实重复提问可能被误判。
 
-### Q14. Redis 会话缓存和 PostgreSQL 消息日志分别承担什么职责？
+### Q14. Redis Snapshot、Redis History 和 PostgreSQL 消息日志分别承担什么职责？
 
-- **想听**：Redis 提供低延迟短期连续性，PostgreSQL 提供持久记录和恢复来源。缓存丢失不应等于会话丢失，但数据库恢复会增加延迟。
+- **想听**：Redis Snapshot KV 缓存模型可直接使用的执行上下文，Redis List 保存短期消息连续性；Supabase Snapshot 和 PostgreSQL messages 分别持久化执行上下文与用户可见记录。缓存丢失不应等于会话丢失，但数据库恢复会增加延迟。
 
 ### Q15. 为什么数据库恢复后要回填 Redis？
 

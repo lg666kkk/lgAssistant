@@ -12,11 +12,41 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      # Production uses the Redis container on the private Compose network.
+      REDIS_URL: redis://redis:6379
+      # Empty overrides prevent legacy Upstash values in .env.production from
+      # taking precedence over REDIS_URL in RedisSessionStore.
+      UPSTASH_REDIS_REST_URL: ""
+      UPSTASH_REDIS_REST_TOKEN: ""
+    depends_on:
+      redis:
+        condition: service_healthy
     ports:
       # Nginx on the host terminates public HTTP/HTTPS traffic.
       - "127.0.0.1:3000:3000"
     volumes:
       - agent-artifacts:/app/data/agent-artifacts
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+    mem_limit: 192m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 secrets:

@@ -11,7 +11,7 @@
 本项目的记忆不是一个向量库，而是三类运行时能力和一条受控生命周期：
 
 ```text
-会话连续性：有 session 时优先 ContextSnapshot
+会话连续性：有 session 时 Redis ContextSnapshot Cache → Supabase Snapshot（回填 Cache）
     → 客户端已带完整历史则直接使用 client
     → 仅有当前消息时 Redis List(2h sliding TTL) → PostgreSQL messages fallback
     → 无 session 时使用 client
@@ -265,13 +265,13 @@
 
 - **想听**：当前 upsert 近似 last-write-wins，候选读取和最终写入之间存在竞态，旧请求可能后写覆盖新请求。可用 per-user/key 串行队列、版本号 CAS、advisory lock 或事件序列处理。
 
-### Q45. Redis 2 小时滑动 TTL 的收益和风险是什么？
+### Q45. Redis 两类 2 小时 TTL 的收益和风险是什么？
 
-- **想听**：活跃会话持续保留，闲置会话自动释放；每次 append 刷新 TTL。风险包括超长活跃会话无限增长、Redis 不可用、JSON 损坏和全量 `LRANGE` 成本，需要长度上限、裁剪和 fallback。
+- **想听**：Session History 每次 append 刷新 TTL；Snapshot Cache 在保存或 Supabase 回填时用 `SETEX` 更新 TTL。闲置会话自动释放，Redis 不可用时分别回退 Supabase Snapshot 或 PostgreSQL messages。风险包括超长 History、较大 Snapshot 占用内存、JSON 损坏和全量 `LRANGE` 成本，需要容量上限、淘汰策略和 fallback。
 
 ### Q46. 项目如何恢复会话历史？这个顺序为什么重要？
 
-- **项目落点**：优先 ContextSnapshot；否则若客户端已带完整历史则使用 client；只有单条当前消息时再查 Redis，Redis 空则回退 PostgreSQL messages 并回填 Redis。
+- **项目落点**：优先 Redis Snapshot Cache，未命中或故障时读 Supabase Snapshot 并回填；仍无 Snapshot 时，完整客户端历史优先，只有单条当前消息才查 Redis History，再回退 PostgreSQL messages 并回填 History。
 - **边界**：多源可能版本不一致，需要 snapshot version、去重和明确 source 观测。
 
 ### Q47. embedding 模型或维度升级时，记忆系统怎么不停机迁移？
@@ -389,7 +389,8 @@
 
 | 能力 | 当前代码/Schema | 面试表达 |
 |---|---|---|
-| 会话恢复优先级 | `app/api/chat/route.ts` 的 `resolveLoopMessages()` | Snapshot → client/Redis → PostgreSQL fallback，并回填 Redis |
+| 会话恢复优先级 | `snapshot-store.ts`、`app/api/chat/route.ts` | Redis Snapshot → Supabase Snapshot → client/Redis History → PostgreSQL fallback |
+| Snapshot 缓存 | `lib/agent/context/snapshot-cache.ts` | Redis KV，完整结构校验，2 小时 TTL，Supabase fallback/backfill |
 | 会话存储 | `lib/agent/memory/session-store.ts` | Redis List，key 含 userId，2 小时滑动 TTL |
 | 召回门控与重排 | `lib/agent/memory/memory-flow.ts` | 规则门控 + pgvector + relevance/importance/recency |
 | 可信上下文 | `renderMemoryContext()`、`lib/agent/prompt/segments.ts` | 不可信 JSON 数据、转义、独立预算和 trust 标签 |

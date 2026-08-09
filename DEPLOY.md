@@ -1,7 +1,8 @@
 # 生产环境部署
 
 本项目以 Node 20 Docker 容器运行。宿主机仅通过 Nginx 对外开放 80 和 443
-端口；应用容器只绑定到 `127.0.0.1:3000`。
+端口；应用容器只绑定到 `127.0.0.1:3000`。Compose 同时启动一个仅供应用
+访问的 Redis 容器，并将其内存限制为 192 MB。
 
 ## 服务器准备
 
@@ -26,7 +27,9 @@ chmod 600 .env.production
 ```
 
 将已有的服务商密钥填入 `.env.production`。该文件会在 Next.js 构建和容器运行时
-使用，但不会被复制进最终镜像。
+使用，但不会被复制进最终镜像。生产环境的 `REDIS_URL` 保持为
+`redis://redis:6379`；不需要配置 `UPSTASH_REDIS_REST_URL` 或
+`UPSTASH_REDIS_REST_TOKEN`。
 
 启用运行时配置编辑前，将 `CONFIG_ADMIN_EMAILS` 设置为允许管理应用的 Supabase
 登录邮箱，并生成加密主密钥：
@@ -43,6 +46,7 @@ openssl rand -base64 32
 ```bash
 docker compose up -d --build
 docker compose ps
+docker compose exec redis redis-cli ping
 docker compose logs -f app
 ```
 
@@ -75,7 +79,8 @@ certbot --nginx -d example.com
 ```
 
 云服务器安全组只应放行 SSH（22）、HTTP（80）和 HTTPS（443）。不要将 3000
-端口暴露到公网。
+或 6379 端口暴露到公网。Redis 没有配置宿主机端口映射，只通过 Compose 私有网络
+接收应用连接。
 
 ## 更新部署
 

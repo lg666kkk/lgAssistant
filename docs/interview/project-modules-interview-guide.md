@@ -46,7 +46,7 @@ Chat UI / SSE
 ### 功能总结
 
 - `ChatSession` 维护单会话的消息、流式状态、AbortController、计划和工具调用。
-- 前端每轮只向 `/api/chat` 发送当前用户消息，历史由服务端通过 Snapshot、Redis 或数据库恢复。
+- 前端每轮只向 `/api/chat` 发送当前用户消息；服务端先用 Redis/Supabase 两级 Snapshot，缺失时再通过客户端、Redis History 或数据库消息恢复。
 - SSE 不是纯文本流，而是 `text`、`tool_call`、`sources`、`model_usage`、`context_usage`、`plan_proposal`、`plan_progress`、`error` 和 `done` 的判别联合。
 - 用户能审核、编辑执行计划；失败步骤能重试或跳过；写工具能在 UI 中二次确认。
 - 会话和消息由 Supabase 持久化，用户中止生成时保存已有部分回答并标记 interrupted。
@@ -266,9 +266,9 @@ Chat UI / SSE
 
 **回答要点**：不能单条切消息；应把 assistant 的 `tool_use` 与对应 user/tool 的 `tool_result` 视为原子组。摘要还要保留用户约束、失败状态和 artifactId。
 
-#### Q4. Snapshot、Redis History 和数据库消息是什么关系？
+#### Q4. Redis Snapshot、Supabase Snapshot、Redis History 和数据库消息是什么关系？
 
-**回答要点**：Snapshot 是执行上下文快照；Redis 是低延迟会话缓存；数据库消息是用户可见的持久记录。它们语义不同，恢复时需要明确优先级、版本和去重规则。
+**回答要点**：Redis Snapshot 是低延迟一级缓存，Supabase Snapshot 是执行上下文的持久来源；Redis History 是短期消息列表，PostgreSQL messages 是用户可见记录。它们语义不同，恢复时需要明确优先级、版本、回填和去重规则。
 
 #### Q5. 如何防止外部知识中的 Prompt Injection 覆盖系统指令？
 

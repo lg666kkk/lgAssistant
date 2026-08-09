@@ -1,4 +1,5 @@
 import { deleteToolArtifactsForScope } from "@/lib/agent/runtime/artifact-store";
+import { clearContextSnapshotCache } from "@/lib/agent/context/snapshot-store";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
@@ -51,6 +52,9 @@ export async function DELETE(
   if (error) {
     return Response.json({ error: `删除会话失败: ${error.message}` }, { status: 500 });
   }
+
+  await clearContextSnapshotCache({ userId: user.id, sessionId }).catch((cacheError) =>
+    console.error("[session] 清理 Redis 上下文快照失败:", cacheError));
 
   return Response.json({ deleted: (data?.length ?? 0) > 0 });
 }

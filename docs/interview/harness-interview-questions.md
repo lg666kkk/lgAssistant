@@ -12,7 +12,7 @@ Harness 不是模型，也不是某个 SDK。在本项目中，它是包围模�
 
 ```text
 请求入口 /api/chat
-  -> 鉴权、输入校验、会话恢复（Snapshot -> Redis -> PostgreSQL -> client）
+  -> 鉴权、输入校验、会话恢复（Redis Snapshot -> Supabase Snapshot -> client/Redis History -> PostgreSQL）
   -> 记忆忘记/召回、RetrievalPlan、工具裁剪、Prompt Pipe、ContextPlan
   -> 复杂任务：生成 2-4 步计划 -> 用户审核 -> 按 allowedTools 顺序执行
      普通任务：直接进入 runAgentLoop
@@ -138,7 +138,7 @@ Harness 不是模型，也不是某个 SDK。在本项目中，它是包围模�
 
 ### Q18. 本项目如何恢复会话状态？为什么要有明确优先级？
 
-- **项目落点**：有 session 时优先 ContextSnapshot；客户端带完整历史则使用 client；仅传当前消息时查 Redis，未命中再回退 PostgreSQL 并回填 Redis。
+- **项目落点**：有 session 时优先 Redis Snapshot Cache，未命中或故障时读 Supabase Snapshot 并回填；仍无 Snapshot 时，客户端完整历史优先；仅传当前消息时查 Redis History，未命中再回退 PostgreSQL 并回填 History。
 - **追问**：多源恢复需要版本、去重和 source trace，否则可能重放旧状态。
 
 ### Q19. `ContextPlan` 给 Harness 带来了什么？
