@@ -93,6 +93,41 @@ export class LongTermStore implements MemoryStore {
   }
 
   /**
+   * 一次读取多个精确 key，供写入前组装 canonical/兼容 key 候选。
+   * 返回顺序与 keys 一致，数据库结果顺序不参与候选优先级判断。
+   */
+  async getMany(
+    keys: string[],
+    options: { userId?: string } = {},
+  ): Promise<MemoryRecord[]> {
+    if (!hasSupabaseConfig() || keys.length === 0) return [];
+    const userId = requireUserId(options, "getMany");
+    if (!userId) return [];
+
+    const orderedKeys = Array.from(new Set(keys));
+    const { data, error } = await getSupabase()
+      .from(TABLE)
+      .select("*")
+      .eq("user_id", userId)
+      .in("key", orderedKeys);
+    if (error) {
+      console.error("[LongTermStore.getMany] 读取失败:", error.message);
+      return [];
+    }
+
+    const recordsByKey = new Map<string, MemoryRecord>(
+      (data ?? []).map((row: any) => {
+        const record = this.toRecord(row);
+        return [record.key, record] as [string, MemoryRecord];
+      }),
+    );
+    return orderedKeys.flatMap((key) => {
+      const record = recordsByKey.get(key);
+      return record ? [record] : [];
+    });
+  }
+
+  /**
    * 硬删除该 key。改为走 purge_memory RPC，不再只删本表：
    * 单表 .delete() 会留下另一层的孤儿行，也留下历史表里可被检索的旧版本，
    * 用户说的「彻底删掉」就没做到。

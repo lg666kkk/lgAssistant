@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   containsRestrictedMemory,
+  composeMemoryWriteCandidates,
   deterministicWriteDecision,
   extractExplicitForgetSubject,
+  getCompatibleMemoryKeys,
   parseExtractedFacts,
   rankMemoryHits,
   renderMemoryOperationContext,
@@ -100,6 +102,42 @@ describe("可信记忆抽取校验", () => {
 });
 
 describe("记忆写入决策", () => {
+  it("按 exact、兼容 alias、语义近邻的预算组装每条事实的候选", () => {
+    const exact = memory({ key: "diet:food:香菜", version: 3 });
+    const alias1 = memory({ key: "diet:dislike:香菜", content: "用户不喜欢香菜" });
+    const alias2 = memory({ key: "diet:preference", content: "用户喜欢香菜" });
+    const aliasOverflow = memory({ key: "diet:favorite:香菜" });
+    const semantic = Array.from({ length: 7 }, (_, index) => memory({
+      key: index === 0 ? exact.key : `semantic:${index}`,
+      id: `semantic-${index}`,
+      score: 0.9 - index * 0.01,
+    }));
+
+    const candidates = composeMemoryWriteCandidates({
+      exact: [exact],
+      alias: [alias1, alias2, aliasOverflow],
+      semantic,
+    });
+
+    expect(candidates.map((candidate) => candidate.key)).toEqual([
+      "diet:food:香菜",
+      "diet:dislike:香菜",
+      "diet:preference",
+      "semantic:1",
+      "semantic:2",
+      "semantic:3",
+      "semantic:4",
+      "semantic:5",
+    ]);
+    expect(new Set(candidates.map((candidate) => candidate.key)).size).toBe(candidates.length);
+  });
+
+  it("只为可确认同槽位的历史命名生成 alias", () => {
+    expect(getCompatibleMemoryKeys("diet:food:香菜")).toContain("diet:preference");
+    expect(getCompatibleMemoryKeys("budget:car")).toEqual([]);
+    expect(getCompatibleMemoryKeys("budget:car:down_payment")).toEqual([]);
+  });
+
   it("把真实忘记结果渲染为可信模型上下文", () => {
     const context = renderMemoryOperationContext({
       handled: true,
@@ -171,6 +209,31 @@ describe("记忆写入决策", () => {
     expect(deterministicWriteDecision(favoriteHotpot, [legacyDislikeCilantro])).toEqual({
       action: "ADD",
       targetKey: "diet:food:火锅",
+      reason: "新增另一种食物偏好",
+    });
+  });
+
+  it("语义候选只能提示冲突，不能授权覆盖", () => {
+    const favoriteCilantro = fact({
+      fact: "用户最喜欢吃香菜",
+      key: "diet:food:香菜",
+      type: "preference",
+      evidenceExcerpt: "我最喜欢吃香菜",
+    });
+    const semanticOnlyLegacy = memory({
+      key: "diet:dislike:香菜",
+      type: "preference",
+      content: "用户不喜欢吃香菜",
+      score: 0.96,
+    });
+
+    expect(deterministicWriteDecision(
+      favoriteCilantro,
+      [semanticOnlyLegacy],
+      new Set(),
+    )).toEqual({
+      action: "ADD",
+      targetKey: "diet:food:香菜",
       reason: "新增另一种食物偏好",
     });
   });

@@ -10,6 +10,7 @@ import type {
   RetrievalSource,
 } from "@/lib/agent/rag/types";
 import type { ContextPlan } from "@/lib/agent/context/types";
+import type { MemoryConsolidationOutcome } from "@/lib/agent/memory/memory-flow";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -133,12 +134,18 @@ export type AnswerValidationTraceStep = TraceStepBase & {
   guarded: boolean;
 };
 
+export type MemoryConsolidationTraceStep = TraceStepBase & {
+  type: "memory_consolidation";
+  outcome: MemoryConsolidationOutcome;
+};
+
 export type TraceStep =
   | ModelTraceStep
   | ToolTraceStep
   | ContextCompactionTraceStep
   | PlanTraceStep
   | RetrievalTraceStep
+  | MemoryConsolidationTraceStep
   | AnswerValidationTraceStep; // 判别联合
 
 export type AgentTrace = {
@@ -218,6 +225,8 @@ export function formatTraceTree(trace: AgentTrace): string {
       return `${branch} #${step.index} plan ${step.phase} ${step.status} goal="${step.goal.slice(0, 100)}"`;
     } else if (step.type === "retrieval") {
       return `${branch} #${step.index} retrieval ${step.phase} route=${step.route} required=${step.evidenceRequired ?? false} evidence=${step.evidenceCount ?? 0}`;
+    } else if (step.type === "memory_consolidation") {
+      return `${branch} #${step.index} memory_consolidation ${step.outcome.status} persisted=${step.outcome.persistedCount} candidates=${step.outcome.candidateDetails.length}`;
     }
     return `${branch} #${step.index} answer_validation ${step.report.status} groundedness=${step.report.groundedness.toFixed(2)}`;
   });

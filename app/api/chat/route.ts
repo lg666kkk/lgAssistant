@@ -14,7 +14,10 @@ import {
   normalizePlanExecutionControl,
   shouldUsePlanAndExecute,
 } from "@/lib/agent/runtime/plan-execution";
-import { saveTrace } from "@/lib/agent/runtime/trace-store";
+import {
+  appendMemoryConsolidationTraceStep,
+  saveTrace,
+} from "@/lib/agent/runtime/trace-store";
 import {
   recallForPromptWithStats,
   consolidate,
@@ -22,6 +25,7 @@ import {
   renderMemoryOperationContext,
   renderMemoryPrefetchHint,
   type ExplicitForgetResult,
+  type MemoryConsolidationOutcome,
 } from "@/lib/agent/memory/memory-flow";
 import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
@@ -610,6 +614,7 @@ export async function POST(req: Request) {
         const consolidateWithObservation = async (
           conversation: Array<{ role: string; content: unknown }>,
         ) => {
+          const startedAt = Date.now();
           // Consolidation stays asynchronous, but its span is created while the root trace is active.
           const observation = langfuseTrace.startObservation("memory.consolidate", {
             input: {
@@ -621,7 +626,7 @@ export async function POST(req: Request) {
               sessionIdPresent: Boolean(sessionId),
             }),
           });
-          let outcome: Record<string, unknown> | undefined;
+          let outcome: MemoryConsolidationOutcome | undefined;
           try {
             const records = await consolidate(conversation, {
               sessionId,
@@ -632,12 +637,21 @@ export async function POST(req: Request) {
                 outcome = result;
               },
             });
+            const safeOutcome = redactSensitiveValue(outcome ?? {});
             observation.update({
               output: {
-                ...(outcome ?? {}),
+                ...safeOutcome,
                 persistedRecords: summarizeMemoryConsolidation(records),
               },
             });
+            if (outcome) {
+              await appendMemoryConsolidationTraceStep(requestId, user.id, {
+                type: "memory_consolidation",
+                startedAt,
+                durationMs: Date.now() - startedAt,
+                outcome: redactSensitiveValue(outcome),
+              });
+            }
           } catch (error: any) {
             console.error("[consolidate] 失败:", error.message);
             observation.update({
@@ -814,11 +828,11 @@ export async function POST(req: Request) {
           );
           await persistSnapshot(loopMessages).catch((error: any) =>
             console.error("[context-snapshot] 保存失败:", error.message));
+          projectTraceObservations(agentLoopResult.trace);
+          await savePendingTrace();
           if (!explicitForgetHandled) {
             void consolidateWithObservation(loopMessages);
           }
-          projectTraceObservations(agentLoopResult.trace);
-          await savePendingTrace();
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
@@ -928,9 +942,6 @@ export async function POST(req: Request) {
         ];
         await persistSnapshot(completedMessages).catch((error: any) =>
           console.error("[context-snapshot] 保存失败:", error.message));
-        if (!explicitForgetHandled) {
-          void consolidateWithObservation(completedMessages);
-        }
         langfuseTrace.update({
           output: {
             completed: true,
@@ -951,6 +962,9 @@ export async function POST(req: Request) {
           finalStopReason === "max_tokens" ? "max_tokens" : "completed";
         projectTraceObservations(agentLoopResult.trace);
         await savePendingTrace();
+        if (!explicitForgetHandled) {
+          void consolidateWithObservation(completedMessages);
+        }
         // 所有事件处理完毕，发 done 事件后关闭流，告诉浏览器"传输结束"
         enqueueEvent({ type: "done" }, enqueueText);
         closeStream();

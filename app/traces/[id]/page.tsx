@@ -153,12 +153,30 @@ type AnswerValidationStep = {
   };
 };
 
+type MemoryConsolidationStep = {
+  type: "memory_consolidation";
+  index: number;
+  durationMs?: number;
+  outcome: Record<string, unknown> & {
+    status?: string;
+    extractedFactCount?: number;
+    persistedCount?: number;
+    invalidatedCount?: number;
+    purgedCount?: number;
+    skippedCount?: number;
+    failedCount?: number;
+    retriedCount?: number;
+    candidateDetails?: Array<Record<string, unknown>>;
+  };
+};
+
 type Step =
   | ModelStep
   | ToolStep
   | ContextCompactionStep
   | PlanStep
   | RetrievalStep
+  | MemoryConsolidationStep
   | AnswerValidationStep;
 
 type Trace = {
@@ -851,6 +869,10 @@ export default function TraceDetailPage({
                       <span className="font-medium text-cyan-300">
                         检索闭环 · {step.phase}
                       </span>
+                    ) : step.type === "memory_consolidation" ? (
+                      <span className="font-medium text-emerald-300">
+                        记忆固化 · {step.outcome.status ?? "unknown"}
+                      </span>
                     ) : (
                       <span className={`font-medium ${
                         step.report.status === "pass"
@@ -1081,6 +1103,27 @@ export default function TraceDetailPage({
                       {step.attempts && step.attempts.length > 0 && (
                         <Collapsible label="Query attempts" body={toText(step.attempts)} />
                       )}
+                    </div>
+                  ) : step.type === "memory_consolidation" ? (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                        <span>抽取 {step.outcome.extractedFactCount ?? 0}</span>
+                        <span>写入 {step.outcome.persistedCount ?? 0}</span>
+                        <span>失效 {step.outcome.invalidatedCount ?? 0}</span>
+                        <span>硬删除 {step.outcome.purgedCount ?? 0}</span>
+                        <span>跳过 {step.outcome.skippedCount ?? 0}</span>
+                        <span>失败 {step.outcome.failedCount ?? 0}</span>
+                        <span>重试 {step.outcome.retriedCount ?? 0}</span>
+                      </div>
+                      <Collapsible
+                        label="查看候选明细"
+                        body={toText(step.outcome.candidateDetails ?? [])}
+                        meta={`${step.outcome.candidateDetails?.length ?? 0} 次事实处理`}
+                      />
+                      <Collapsible
+                        label="查看完整固化结果"
+                        body={toText(step.outcome)}
+                      />
                     </div>
                   ) : (
                     <div className="mt-2 space-y-2 text-xs">
