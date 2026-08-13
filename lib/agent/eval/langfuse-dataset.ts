@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { evalCases, type EvalCase } from "./cases";
-import { retrievalRoutingCases } from "./retrieval-routing-cases";
+import { evalCases, type EvalCase } from "./datasets/agent";
+import { retrievalRoutingCases } from "./datasets/retrieval-routing";
 import type { RetrievalRoutingCase } from "./retrieval-routing";
 
 export const LANGFUSE_EVAL_DATASET = "personal-assistant-agent-eval-v1";
@@ -45,7 +45,7 @@ export function buildLangfuseEvalCases(): LangfuseEvalCase[] {
     },
     expectedOutput: testCase.expect,
     metadata: {
-      source: "lib/agent/eval/cases.ts",
+      source: "lib/agent/eval/datasets/agent.ts",
       kind: "agent",
       caseId: testCase.id,
       description: testCase.description,
@@ -62,7 +62,7 @@ export function buildLangfuseEvalCases(): LangfuseEvalCase[] {
     },
     expectedOutput: { expectedRoute: testCase.expectedRoute },
     metadata: {
-      source: "lib/agent/eval/retrieval-routing-cases.ts",
+      source: "lib/agent/eval/datasets/retrieval-routing.ts",
       kind: "routing",
       caseId: testCase.id,
     },

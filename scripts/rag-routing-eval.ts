@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildRetrievalPlan } from "../lib/agent/rag/retrieval-router";
-import { retrievalRoutingCases } from "../lib/agent/eval/retrieval-routing-cases";
+import { retrievalRoutingCases } from "../lib/agent/eval/datasets/retrieval-routing";
 import { summarizeRetrievalRouting } from "../lib/agent/eval/retrieval-routing";
 
 function option(name: string) {

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { memoryIntegrationCases } from "../lib/agent/eval/memory-recall-cases";
+import { memoryIntegrationCases } from "../lib/agent/eval/datasets/memory";
 import type { MemoryFusionStrategy } from "../lib/agent/memory/fusion";
 import { recallRankedMemories } from "../lib/agent/memory/memory-flow";
 import { purgeMemoryKey } from "../lib/agent/memory/atomic-writer";

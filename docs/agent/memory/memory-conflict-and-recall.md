@@ -198,7 +198,7 @@
 - [记忆双写原子性](./memory-atomic-dual-write.md) — `upsert_memory` 的前身
 - 迁移：[20260804-memory-history.sql](../../schemas/migrations/20260804-memory-history.sql)、
   [20260804-memory-keyword-channel.sql](../../schemas/migrations/20260804-memory-keyword-channel.sql)
-- eval 基线：[memory-recall-cases.ts](../../../lib/agent/eval/memory-recall-cases.ts)
+- eval 基线：[memory.ts](../../../lib/agent/eval/datasets/memory.ts)
   （`known_red` 的 case **红本身是正确状态**，必须写明 `unblockedBy`，
   否则无法区分「还没做」与「做完了但坏了」）
 - 跑分与运维脚本：`npm run test:memory-fusion -- --user-id <uuid>`、

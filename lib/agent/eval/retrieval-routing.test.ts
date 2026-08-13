@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRetrievalPlan } from "@/lib/agent/rag/retrieval-router";
-import { retrievalRoutingCases } from "./retrieval-routing-cases";
+import { retrievalRoutingCases } from "./datasets/retrieval-routing";
 import { summarizeRetrievalRouting } from "./retrieval-routing";
 
 describe("retrieval routing eval", () => {

@@ -7,7 +7,7 @@ import {
   memoryIntegrationCases,
   memoryRecallGateCases,
   memoryWriteDecisionCases,
-} from "./memory-recall-cases";
+} from "./datasets/memory";
 
 /**
  * 只跑 case 集里不需要外部依赖的那两类。

@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import { Langfuse } from "langfuse";
-import type { EvalCase } from "../lib/agent/eval/cases";
+import type { EvalCase } from "../lib/agent/eval/datasets/agent";
 import type { EvalRunResult } from "../lib/agent/eval/runner";
 import {
   buildLangfuseEvalCases,

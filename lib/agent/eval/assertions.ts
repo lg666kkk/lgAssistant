@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import type { EvalCase } from "./cases";
+import type { EvalCase } from "./datasets/agent";
 import type { EvalRunResult } from "./runner";
 
 export function assertCase(res: EvalRunResult, c: EvalCase) {

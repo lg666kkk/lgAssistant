@@ -39,7 +39,7 @@ DEFAULT_USER_ID=<uuid>
 测试用例维护在：
 
 ```text
-lib/agent/eval/rag-cases.ts
+lib/agent/eval/datasets/rag.ts
 ```
 
 推荐每条 case 尽量写真实问题：

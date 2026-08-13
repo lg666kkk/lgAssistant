@@ -1,4 +1,4 @@
-// 一条 eval 用例：给定输入消息，期望 Agent 表现出某些客观行为
+// Agent 行为测试集：给定输入消息，期望 Agent 表现出某些客观行为。
 export type EvalCase = {
   id: string;
   description: string;

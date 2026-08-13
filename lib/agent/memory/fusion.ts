@@ -4,7 +4,7 @@ import type { MemoryRecord } from "./types";
  * 向量通道与关键词通道的融合。
  *
  * 三个策略都要能跑，因为**赢家是要用数据定的，不是推理定的**：
- * memory-recall-cases.ts 里的 fusion_ab 三条 case（vector_only / weighted / rrf）
+ * eval/datasets/memory.ts 里的 fusion_ab 三条 case（vector_only / weighted / rrf）
  * 必须在真实库上各跑一遍。vector_only 是对照组：如果关键词通道的增量小于噪声，
  * 整个通道就不该留下——没有对照组，「融合有效」这个结论无法证伪。
  *

@@ -87,7 +87,7 @@ const writeConfidence = readRecallNumber(
 );
 // 只用于「判定业务身份是否含糊」，不用于授权覆盖（见 deterministicWriteDecision）。
 // 判错方向的代价不对称：判含糊 → 漏写一条（可恢复），判不含糊 → 可能错覆盖（不可恢复），
-// 所以起点取得比 0.9 低一些，更容易触发 NOOP，再用 memory-recall-cases 往上调。
+// 所以起点取得比 0.9 低一些，更容易触发 NOOP，再用 eval/datasets/memory.ts 往上调。
 const ambiguousCandidateThreshold = readRecallNumber(
   "MEMORY_AMBIGUOUS_CANDIDATE_THRESHOLD",
   DEFAULT_AMBIGUOUS_CANDIDATE_THRESHOLD,
@@ -102,7 +102,7 @@ const keywordAdmitThreshold = readRecallNumber(
 );
 /**
  * 融合策略。默认 weighted 是**待验证的默认值**，不是定案结论：
- * memory-recall-cases.ts 的 fusion_ab 三条 case 必须在真实库上跑满
+ * eval/datasets/memory.ts 的 fusion_ab 三条 case 必须在真实库上跑满
  * vector_only / weighted / rrf，用 hit@1 / hit@3 决定留哪个。
  *
  * 选 weighted 作起点的理由，以及为什么默认值切过来是安全的：

@@ -38,7 +38,7 @@
 
 **观测与质量**
 - ✅ **Trace 链路** — `runtime/trace.ts` + `trace-store.ts`，`formatTraceTree`，写 `traces` 表
-- ✅ **Eval harness** — `lib/agent/eval/`：cases / assertions / runner / mock-models，`npm run test:eval`
+- ✅ **Eval harness** — `lib/agent/eval/datasets/` 统一存放分类测试集，`eval/` 保留 assertions / runner / mock-models，`npm run test:eval`
 - ✅ 基础质量检查：TypeScript / lint / build 已跑通
 
 ---
@@ -155,7 +155,7 @@
   - 避免只把来源塞到模型上下文，用户看不到依据
 
 - [x] **RAG-15 RAG Eval 数据集**
-  - 增加 `lib/agent/eval/rag-cases.ts`
+  - 增加 `lib/agent/eval/datasets/rag.ts`
   - 每条 case 包含 question、expected_page_id、expected_keywords
   - 指标：recall@5、MRR、关键词覆盖、无结果率
   - 加入 `npm run test:rag`

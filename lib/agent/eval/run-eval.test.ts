@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evalCases } from "./cases";
+import { evalCases } from "./datasets/agent";
 import { assertCase, hasToolCall } from "./assertions";
 import { createCalculatorToolThenAnswerModel } from "./mock-models";
 import { runCase } from "./runner";

@@ -1,4 +1,4 @@
-import type { RetrievalRoutingCase } from "./retrieval-routing";
+import type { RetrievalRoutingCase } from "../retrieval-routing";
 
 export const retrievalRoutingCases: RetrievalRoutingCase[] = [
   { id: "write-email", query: "帮我写一封项目延期通知邮件", expectedRoute: "no_retrieval" },

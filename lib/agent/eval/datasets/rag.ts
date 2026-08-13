@@ -1,3 +1,4 @@
+/** RAG 检索质量测试集。 */
 export type RagEvalCase = {
   id: string;
   question: string;

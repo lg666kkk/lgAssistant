@@ -466,7 +466,7 @@
 - **两张王牌**（大部分候选人没有，主动往这引导话题）：
   1. Q7 中文 FTS 分词的真实踩坑；
   2. Q15/Q35 的 ablation 评测能力，以及敢于说明当前规则 rerank 和 6 条评测集的边界。
-- **已知短板**：评测集目前只有 6 条用例（`lib/agent/eval/rag-cases.ts`）。要么面试前扩充，要么准备好「我知道它小、我计划按 category 各扩 5-10 条并加 LLM-as-judge 端到端评测」的说辞。
+- **已知短板**：评测集目前只有 6 条用例（`lib/agent/eval/datasets/rag.ts`）。要么面试前扩充，要么准备好「我知道它小、我计划按 category 各扩 5-10 条并加 LLM-as-judge 端到端评测」的说辞。
 - **主动承认的真实缺口**：RRF、动态权重和条件触发规则尚未在大规模 golden set 上校准；Cross-Encoder 默认关闭且缺少真实 provider 基准；parent 仍重复存于 child metadata；语义切块没有默认启用。无结果降到 0、同步非原子、单 query 向量召回和词面 MMR 问题已经在代码层修复，但仍需数据库集成测试。
 - **前沿层的用法**：第八层不要主动背诵名词，而是在相关问题里自然带出——答 Q5 切块时带 contextual retrieval / late chunking，答 Q9 无结果策略时映射到 CRAG，答 Q11 工具路由时带 Adaptive RAG，答 Q28 安全时扩展到知识供应链，答 Q37 引用排障时带 claim-level verifier，答 Q38 扩展性时带量化和 MRL。每个话题都用「解决什么老问题 → 代价 → 我的项目为什么（暂时不）需要」的框架讲。
 - **叙事主线**（比罗列技术点更有说服力）：
@@ -491,7 +491,7 @@
 | Query Cache | `lib/agent/rag/query-cache.ts` | tenant/index/source/depth 隔离、TTL 与 defensive clone |
 | Ingestion Queue | `lib/knowledge/ingestion-queue.ts` | 数据库 lease、指数退避、dead 状态和 worker 所有权校验 |
 | 知识库画像 | `lib/agent/tools/knowledge-profile.ts` | wiki summary 压缩、source hash 缓存和持久化 |
-| 评测数据 | `lib/agent/eval/rag-cases.ts` | 六类 case 结构、当前规模限制 |
+| 评测数据 | `lib/agent/eval/datasets/rag.ts` | 六类 case 结构、当前规模限制 |
 | 评测脚本 | `scripts/rag-eval.ts` | Recall@K/MRR/no-result、RRF/weighted、multi-query 和 Cross-Encoder 消融 |
 | Trace UI | `app/traces/[id]/page.tsx` | 融合、候选、MMR、Cross-Encoder、阶段耗时、上下文预算和代理指标边界 |
 

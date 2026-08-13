@@ -26,7 +26,7 @@ Agent Loop 之前只有零散控制台输出，**无法回答"这次为什么慢
 ```
 Trace 腿：runAgentLoop 每轮 push TraceStep → 4 个出口 finalizeTrace 回填总览
         → route 打印调用树 + saveTrace 落库 agent_traces
-Eval 腿：cases.ts 定义期望 → run-eval.test.ts 跑 loop → 断言 trace/metrics
+Eval 腿：datasets/agent.ts 定义期望 → run-eval.test.ts 跑 loop → 断言 trace/metrics
         → mock 轨默认跑（注入假 callModel），live 轨 EVAL_LIVE=1 真调模型
 ```
 

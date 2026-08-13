@@ -4,8 +4,8 @@ import type { MemoryRecord } from "@/lib/agent/memory/types";
 /**
  * 记忆召回与写入判定的 eval case 集。
  *
- * 为什么它必须先于权重与融合改动落地：eval/ 下已有 rag-cases 与
- * retrieval-routing-cases，但记忆这条线一直没有基线。没有基线的阈值调整和
+ * 为什么它必须先于权重与融合改动落地：datasets/ 下已有 RAG 与
+ * Retrieval Routing 测试集，但记忆这条线一直没有基线。没有基线的阈值调整和
  * 融合策略切换是盲调——改完只知道「跑起来了」，不知道变好还是变坏。
  *
  * 三条执行纪律写在类型里而不只写在文档里：

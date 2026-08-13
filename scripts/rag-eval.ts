@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { ragEvalCases, type RagEvalCase } from "../lib/agent/eval/rag-cases";
+import { ragEvalCases, type RagEvalCase } from "../lib/agent/eval/datasets/rag";
 import { AGENTIC_RAG_VERSION } from "../lib/agent/rag/types";
 import type {
   FusionStrategy,

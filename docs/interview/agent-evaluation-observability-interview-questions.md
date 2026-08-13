@@ -381,7 +381,7 @@ RAG 专项：routing cases + retrieval golden set + groundedness cases
 | Trace 持久化 | `lib/agent/runtime/trace-store.ts` | Supabase JSONB、脱敏、保留期兼容；缺 canonical run/OTel 字段 |
 | Trace 查询 | `app/api/traces/`、`app/traces/` | 用户隔离的列表/详情/删除和可视化 |
 | OTel/Langfuse | `instrumentation.ts` | NodeSDK + LangfuseSpanProcessor，生产资源/采样/生命周期待完善 |
-| 通用 Eval | `lib/agent/eval/cases.ts`、`runner.ts` | 3 条 live case，执行边界是 `runAgentLoop` |
+| 通用 Eval | `lib/agent/eval/datasets/agent.ts`、`runner.ts` | 3 条 live case，执行边界是 `runAgentLoop` |
 | Mock/Live 双轨 | `lib/agent/eval/run-eval.test.ts` | 默认 1 条 mock；live 需 `EVAL_LIVE=1` |
 | Dataset Run | `scripts/langfuse-eval.ts` | 同步 Agent/routing cases，记录 executionBoundary |
 | 在线评分 | `lib/agent/eval/online-scores.ts` | 完成、工具错误、调用数、延迟与 RAG groundedness/citation |
