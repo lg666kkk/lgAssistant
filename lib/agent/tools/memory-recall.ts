@@ -4,6 +4,7 @@ import {
   type MemoryTimelineEntry,
 } from "@/lib/agent/memory/history-store";
 import { recallRankedMemories } from "@/lib/agent/memory/memory-flow";
+import { redactSensitiveValue } from "@/lib/agent/rag/governance";
 import {
   defaultToolRuntimePolicy,
   type ToolDefinition,
@@ -184,6 +185,7 @@ export function createRecallMemoryTool(options: {
               memoryCandidateCount: result.candidates.length,
               memorySelectedCount: 0,
               memoryThreshold: result.threshold,
+              memoryRerank: redactSensitiveValue(result.rerankTrace),
             },
           };
         }
@@ -212,6 +214,7 @@ export function createRecallMemoryTool(options: {
             memorySelectedCount: memories.length,
             memoryThreshold: result.threshold,
             memoryKeys: memories.map((item) => item.key),
+            memoryRerank: redactSensitiveValue(result.rerankTrace),
           },
         };
       } catch (error) {

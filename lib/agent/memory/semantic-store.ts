@@ -1,6 +1,7 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { EmbeddingClient } from "@/lib/knowledge/embedding";
 import { purgeMemoryKey } from "./atomic-writer";
+import { scoreMemoryKeywordMatch, type MemoryQueryTerms } from "./keyword-terms";
 import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
 import type { MemoryRecord, MemoryWriteMetadata, SemanticMemoryStore } from "./types";
 
@@ -174,18 +175,17 @@ export class SemanticStore implements SemanticMemoryStore {
    * 关键词通道召回。terms 由 keyword-terms.ts 在应用层切好，这里只透传。
    *
    * 与 recall 的关系是并列的两条通道，不是主备：向量分不开数字（「8 万」与
-   * 「5 万」的余弦距离小到可忽略），关键词认不出同义改写。两条结果交给
-   * fusion.ts 合并（并集）。
+   * 「5 万」的余弦距离小到可忽略），关键词通过受控概念组覆盖有限同义改写。
+   * 两条结果交给 fusion.ts 合并（并集）。
    *
-   * 返回记录的 score 是 keyword_rank（命中词数 / 总词数，或受控 key 命中的 1.0），
-   * **与 recall 返回的余弦相似度不同量纲**，不能直接放在一起比大小 ——
-   * 这正是融合器要做校准的原因。
+   * SQL keyword_rank 只用于宽候选排序；最终 score 在应用层按概念组重算。
+   * 它与 recall 返回的余弦相似度仍然不同量纲，融合器会分别校准。
    *
    * 查询失败返回空数组而不抛：关键词通道是增强项，迁移还没跑（RPC 不存在）时
    * 整条召回链路必须仍然可用，退化成纯向量。
    */
   async recallByKeyword(
-    input: { terms: string[]; keys: string[] },
+    input: MemoryQueryTerms,
     limit = 12,
     options: { userId?: string } = {},
   ): Promise<MemoryRecord[]> {
@@ -206,8 +206,8 @@ export class SemanticStore implements SemanticMemoryStore {
     }
     return (data ?? []).map((row: any) => {
       const record = this.toRecord(row);
-      // record-mapper 只认 similarity 列，keyword_rank 得在这里补进 score。
-      if (row.keyword_rank != null) record.score = Number(row.keyword_rank);
+      // SQL 用展开后的同义词找候选；应用层按概念组重算，避免同义词扩展放大分母。
+      record.score = scoreMemoryKeywordMatch(record.content, record.key, input);
       return record;
     });
   }

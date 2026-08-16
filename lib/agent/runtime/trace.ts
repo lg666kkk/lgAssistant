@@ -11,6 +11,7 @@ import type {
 } from "@/lib/agent/rag/types";
 import type { ContextPlan } from "@/lib/agent/context/types";
 import type { MemoryConsolidationOutcome } from "@/lib/agent/memory/memory-flow";
+import type { MemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -139,6 +140,17 @@ export type MemoryConsolidationTraceStep = TraceStepBase & {
   outcome: MemoryConsolidationOutcome;
 };
 
+export type MemoryRecallTraceStep = TraceStepBase & {
+  type: "memory_recall";
+  query: string;
+  eligible: boolean;
+  candidateCount: number;
+  selectedCount: number;
+  selectedTypes: Record<string, number>;
+  selectedSources: Record<string, number>;
+  rerank: MemoryRerankTrace;
+};
+
 export type TraceStep =
   | ModelTraceStep
   | ToolTraceStep
@@ -146,6 +158,7 @@ export type TraceStep =
   | PlanTraceStep
   | RetrievalTraceStep
   | MemoryConsolidationTraceStep
+  | MemoryRecallTraceStep
   | AnswerValidationTraceStep; // 判别联合
 
 export type AgentTrace = {
@@ -183,6 +196,17 @@ export function createTrace(requestId: string, sessionId?: string): AgentTrace {
       toolDurations: [],
     },
   };
+}
+
+export function prependMemoryRecallTraceStep(
+  trace: AgentTrace,
+  step: Omit<MemoryRecallTraceStep, "index">,
+) {
+  trace.steps = [
+    { ...step, index: 0 },
+    ...trace.steps.map((item, index) => ({ ...item, index: index + 1 })),
+  ];
+  return trace;
 }
 // 文本摘要
 export function summarizeText(text: string) {
@@ -227,6 +251,8 @@ export function formatTraceTree(trace: AgentTrace): string {
       return `${branch} #${step.index} retrieval ${step.phase} route=${step.route} required=${step.evidenceRequired ?? false} evidence=${step.evidenceCount ?? 0}`;
     } else if (step.type === "memory_consolidation") {
       return `${branch} #${step.index} memory_consolidation ${step.outcome.status} persisted=${step.outcome.persistedCount} candidates=${step.outcome.candidateDetails.length}`;
+    } else if (step.type === "memory_recall") {
+      return `${branch} #${step.index} memory_recall eligible=${step.eligible} selected=${step.selectedCount} rerank=${step.rerank.used ? "used" : step.rerank.reason}`;
     }
     return `${branch} #${step.index} answer_validation ${step.report.status} groundedness=${step.report.groundedness.toFixed(2)}`;
   });

@@ -296,7 +296,7 @@
 
 ### Q51. 当前 Trace 能看到什么，缺什么？
 
-- **项目落点**：Langfuse 有 `memory.recall` 的 eligible/candidate/selected/type/source 聚合，`memory.consolidate` 有 extracted/persisted/invalidated/skipped/failed 和决策计数，不记录原文内容。
+- **项目落点**：Langfuse 的 `memory.recall` 与本地 `memory_recall` TraceStep 记录 reranker 的 query、候选正文、融合/规则/Qwen/最终分数和排序变化；保存前统一执行敏感字段脱敏。`memory.consolidate` 仍只记录 extracted/persisted/invalidated/skipped/failed 和决策计数，不记录固化原文。
 - **边界**：后台 span 生命周期依赖请求进程；缺 durable job correlation、逐阶段耗时、队列积压、模型/embedding 成本和质量标签闭环。
 
 ### Q52. 为什么观测日志不应该记录完整 memory content？
@@ -400,7 +400,7 @@
 | 原子双写 | `lib/agent/memory/atomic-writer.ts`、`20260718-atomic-memory-write.sql` | embedding 在事务前，两张表在同一 DB 事务内写入 |
 | 生命周期字段 | `lib/agent/memory/types.ts`、`20260718-trusted-memory-lifecycle.sql` | type/source/confidence/importance/status/evidence/validity/access |
 | 租户隔离 | store 的 userId 检查、`match_memories` | 应用层和 SQL 双重 fail closed；service role 是重要边界 |
-| 可观测性 | `app/api/chat/route.ts` 的 memory observations | 只记聚合统计，不把记忆正文写入 trace |
+| 可观测性 | `app/api/chat/route.ts` 的 memory observations | reranker 候选与逐阶段分数写入本地 Trace 和 Langfuse，保存前脱敏 |
 | 测试 | `lib/agent/memory/*.test.ts` | 策略单测 + 外部集成闭环；尚缺独立 memory eval 门禁 |
 
 ---

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { deepseekConfig } from "@/lib/platform/config";
+import type { CrossEncoderReranker } from "@/lib/knowledge/reranker";
 import { LongTermStore } from "./longterm-store";
 import { SemanticStore } from "./semantic-store";
 import { MemoryVersionConflictError, MemoryWriter } from "./atomic-writer";
@@ -7,9 +8,19 @@ import { renderControlledKeyList } from "./controlled-keys";
 import {
   admitFusedMemories,
   fuseMemoryChannels,
+  type FusedMemoryHit,
   type MemoryFusionStrategy,
 } from "./fusion";
 import { extractMemoryQueryTerms } from "./keyword-terms";
+import {
+  createConfiguredMemoryReranker,
+  createEmptyMemoryRerankTrace,
+  formatMemoryRerankDocument,
+  getMemoryRerankConfig,
+  type MemoryRerankCandidateTrace,
+  type MemoryRerankConfig,
+  type MemoryRerankTrace,
+} from "./memory-reranker";
 import type {
   MemoryEvidence,
   MemoryRecord,
@@ -20,6 +31,8 @@ import type {
 
 const longTerm = new LongTermStore();
 const semantic = new SemanticStore();
+const memoryRerankConfig = getMemoryRerankConfig();
+const memoryReranker = createConfiguredMemoryReranker(memoryRerankConfig);
 // 长期层 + 语义层的写入统一走原子写入器（单事务），不再各写各的
 const writer = new MemoryWriter();
 const client = new Anthropic({
@@ -170,11 +183,312 @@ export function rankMemoryHits(hits: MemoryRecord[], now = Date.now()) {
     )
     .map((hit) => ({
       hit,
-      rankScore:
-        (hit.score ?? 0) * 0.75 + hit.importance * 0.15 + recencyScore(hit, now) * 0.1,
+      rankScore: memoryRankScore(hit, now),
     }))
     .sort((a, b) => b.rankScore - a.rankScore)
     .map(({ hit }) => hit);
+}
+
+export function prioritizeMemoryRerankCandidates(input: {
+  ranked: MemoryRecord[];
+  vector: MemoryRecord[];
+  keyword: MemoryRecord[];
+}) {
+  const available = new Map(input.ranked.map((record) => [record.key, record]));
+  const prioritized: MemoryRecord[] = [];
+  const seen = new Set<string>();
+  const append = (record: MemoryRecord | undefined) => {
+    if (!record || seen.has(record.key)) return;
+    const governed = available.get(record.key);
+    if (!governed) return;
+    prioritized.push(governed);
+    seen.add(record.key);
+  };
+  const maxChannelLength = Math.max(input.vector.length, input.keyword.length);
+  for (let index = 0; index < maxChannelLength; index += 1) {
+    append(input.vector[index]);
+    append(input.keyword[index]);
+  }
+  input.ranked.forEach(append);
+  return prioritized;
+}
+
+function memoryRankScore(hit: MemoryRecord, now: number) {
+  return (hit.score ?? 0) * 0.75 + hit.importance * 0.15 + recencyScore(hit, now) * 0.1;
+}
+
+type MemoryRerankStats = MemoryRerankTrace;
+
+function buildMemoryRerankCandidateTrace(input: {
+  record: MemoryRecord;
+  ruleScore: number;
+  crossEncoderScore: number | null;
+  finalScore: number;
+  rankBefore: number;
+  rankAfter: number;
+  inRerankPool: boolean;
+  selected: boolean;
+}): MemoryRerankCandidateTrace {
+  return {
+    id: input.record.id,
+    key: input.record.key,
+    type: input.record.type,
+    source: input.record.source,
+    status: input.record.status,
+    confidence: input.record.confidence,
+    importance: input.record.importance,
+    content: input.record.content,
+    fusedScore: typeof input.record.score === "number" ? input.record.score : null,
+    vectorScore: null,
+    keywordScore: null,
+    ruleScore: input.ruleScore,
+    crossEncoderScore: input.crossEncoderScore,
+    finalScore: input.finalScore,
+    rankBefore: input.rankBefore,
+    rankAfter: input.rankAfter,
+    inRerankPool: input.inRerankPool,
+    admitted: false,
+    admissionReason: "pending",
+    rescuedByReranker: false,
+    selected: input.selected,
+  };
+}
+
+function buildMemoryRerankTrace(input: {
+  config: MemoryRerankConfig;
+  candidates: MemoryRecord[];
+  startedAt: number;
+  now?: number;
+  used: boolean;
+  reason: string;
+  error?: string;
+  scoreByIndex?: Map<number, number>;
+  reranked?: MemoryRecord[];
+  attempted?: boolean;
+  providerRequestId?: string;
+  providerModel?: string;
+  totalTokens?: number;
+}): MemoryRerankTrace {
+  const reranked = input.reranked ?? input.candidates;
+  const rankAfter = new Map(reranked.map((record, index) => [record.id, index + 1]));
+  const poolSize = Math.min(input.config.candidateCount, input.candidates.length);
+  return {
+    enabled: input.config.enabled,
+    configured: input.config.configured,
+    mode: input.config.mode,
+    model: input.config.model,
+    instruct: input.config.instruct,
+    candidateCount: input.candidates.length,
+    candidateLimit: input.config.candidateCount,
+    admitThreshold: input.config.admitThreshold ?? null,
+    used: input.used,
+    reason: input.reason,
+    latencyMs: Date.now() - input.startedAt,
+    providerRequestId: input.providerRequestId,
+    providerModel: input.providerModel,
+    totalTokens: input.totalTokens,
+    error: input.error,
+    candidates: input.candidates.map((record, index) => {
+      const ruleScore = memoryRankScore(record, input.now ?? Date.now());
+      const crossEncoderScore = index < poolSize
+        ? input.scoreByIndex?.get(index) ?? null
+        : null;
+      const finalScore = crossEncoderScore === null
+        ? ruleScore
+        : crossEncoderScore;
+      return buildMemoryRerankCandidateTrace({
+        record,
+        ruleScore,
+        crossEncoderScore,
+        finalScore,
+        rankBefore: index + 1,
+        rankAfter: rankAfter.get(record.id) ?? index + 1,
+        inRerankPool: (input.used || input.attempted === true) && index < poolSize,
+        selected: false,
+      });
+    }),
+  };
+}
+
+export async function rerankMemoryHits(
+  query: string,
+  candidates: MemoryRecord[],
+  options: {
+    config?: MemoryRerankConfig;
+    reranker?: CrossEncoderReranker;
+    now?: number;
+    fallbackCandidateKeys?: ReadonlySet<string>;
+  } = {},
+): Promise<{ records: MemoryRecord[]; stats: MemoryRerankStats }> {
+  const config = options.config ?? memoryRerankConfig;
+  const reranker = options.reranker ?? memoryReranker;
+  const now = options.now ?? Date.now();
+  const startedAt = Date.now();
+  const baseStats = (reason: string): MemoryRerankStats => buildMemoryRerankTrace({
+    config,
+    candidates,
+    startedAt,
+    now,
+    used: false,
+    reason,
+  });
+
+  // 调用方已经按向量/关键词通道交错排好候选池。这里不能再按规则分排序，
+  // 否则 score=0 的同义词扩展候选会再次沉到模型 candidateCount 之外。
+  const ordered = [...candidates];
+  if (!config.enabled) {
+    return { records: ordered, stats: baseStats("disabled") };
+  }
+  if (!config.configured || !reranker) {
+    return { records: ordered, stats: baseStats("not_configured") };
+  }
+  if (ordered.length === 0) {
+    return { records: ordered, stats: baseStats("no_candidates") };
+  }
+  const allCandidatesPassFallback = options.fallbackCandidateKeys
+    ? ordered.every((candidate) => options.fallbackCandidateKeys!.has(candidate.key))
+    : false;
+  if (config.mode === "conditional" && allCandidatesPassFallback) {
+    return { records: ordered, stats: baseStats("easy_query") };
+  }
+
+  try {
+    const selected = ordered.slice(0, config.candidateCount);
+    const scores = await reranker.rerank({
+      query,
+      documents: selected.map((record) => ({
+        id: record.id,
+        text: formatMemoryRerankDocument(record),
+      })),
+    });
+    if (scores.length !== selected.length) {
+      throw new Error(`记忆 Cross-Encoder 返回数量不一致: ${scores.length}/${selected.length}`);
+    }
+
+    const scoreByIndex = new Map<number, number>();
+    for (const score of scores) {
+      const record = selected[score.index];
+      if (!record) throw new Error(`记忆 Cross-Encoder index 越界: ${score.index}`);
+      scoreByIndex.set(score.index, score.score);
+    }
+
+    const rerankedSelected = selected
+      .map((record, index) => {
+        const crossScore = scoreByIndex.get(index);
+        return {
+          record,
+          score: crossScore ?? -1,
+          ruleScore: memoryRankScore(record, now),
+        };
+      })
+      .sort((left, right) =>
+        right.score - left.score || right.ruleScore - left.ruleScore)
+      .map(({ record }) => record);
+    const reranked = [
+      ...rerankedSelected,
+      ...ordered.slice(selected.length),
+    ];
+
+    return {
+      records: reranked,
+      stats: buildMemoryRerankTrace({
+        config,
+        candidates: ordered,
+        startedAt,
+        now,
+        used: true,
+        reason: config.admitThreshold === undefined
+          ? "shadow_no_admit_threshold"
+          : config.mode === "always"
+            ? "model_admission"
+            : "conditional_model_admission",
+        attempted: true,
+        scoreByIndex,
+        reranked,
+        providerRequestId: scores.providerResponse?.requestId,
+        providerModel: scores.providerResponse?.model,
+        totalTokens: scores.providerResponse?.totalTokens,
+      }),
+    };
+  } catch (error) {
+    return {
+      records: ordered,
+      stats: buildMemoryRerankTrace({
+        config,
+        candidates: ordered,
+        startedAt,
+        now,
+        used: false,
+        reason: "error_fallback",
+        attempted: true,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    };
+  }
+}
+
+export function selectMemoryHitsAfterRerank(input: {
+  fused: FusedMemoryHit[];
+  reranked: Awaited<ReturnType<typeof rerankMemoryHits>>;
+  selectThreshold: number;
+  keywordAdmitThreshold: number;
+  now?: number;
+}): { records: MemoryRecord[]; trace: MemoryRerankTrace } {
+  const fallbackHits = admitFusedMemories(input.fused, {
+    selectThreshold: input.selectThreshold,
+    keywordAdmitThreshold: input.keywordAdmitThreshold,
+  });
+  const fallbackKeys = new Set(fallbackHits.map((hit) => hit.record.key));
+  const fallbackReasons = new Map(fallbackHits.map((hit) => [
+    hit.record.key,
+    hit.vectorScore >= input.selectThreshold ? "vector_threshold" : "keyword_threshold",
+  ]));
+  const useModelAdmission = input.reranked.stats.used
+    && input.reranked.stats.admitThreshold !== null;
+  const admittedKeys = new Set<string>();
+
+  if (useModelAdmission) {
+    for (const candidate of input.reranked.stats.candidates) {
+      if (
+        candidate.inRerankPool
+        && candidate.crossEncoderScore !== null
+        && candidate.crossEncoderScore >= input.reranked.stats.admitThreshold!
+      ) {
+        admittedKeys.add(candidate.key);
+      }
+    }
+  } else {
+    fallbackKeys.forEach((key) => admittedKeys.add(key));
+  }
+
+  const ordered = useModelAdmission
+    ? input.reranked.records
+    : rankMemoryHits(fallbackHits.map((hit) => hit.record), input.now);
+  const records = ordered.filter((record) => admittedKeys.has(record.key));
+  const signalByKey = new Map(input.fused.map((hit) => [hit.record.key, hit]));
+  const trace: MemoryRerankTrace = {
+    ...input.reranked.stats,
+    candidates: input.reranked.stats.candidates.map((candidate) => {
+      const signal = signalByKey.get(candidate.key);
+      const admitted = admittedKeys.has(candidate.key);
+      const admissionReason = useModelAdmission
+        ? candidate.crossEncoderScore === null
+          ? "outside_rerank_pool"
+          : admitted
+            ? "reranker_threshold"
+            : "reranker_below_threshold"
+        : fallbackReasons.get(candidate.key) ?? "rule_below_threshold";
+      return {
+        ...candidate,
+        vectorScore: signal?.vectorScore ?? null,
+        keywordScore: signal?.keywordScore ?? null,
+        admitted,
+        admissionReason,
+        rescuedByReranker: useModelAdmission && admitted && !fallbackKeys.has(candidate.key),
+      };
+    }),
+  };
+  return { records, trace };
 }
 
 function escapeMemoryData(value: unknown) {
@@ -207,6 +521,11 @@ export type MemoryRecallResult = {
   selectedCount: number;
   selectedTypes: Record<string, number>;
   selectedSources: Record<string, number>;
+  rerankUsed: boolean;
+  rerankReason: string;
+  rerankMs: number;
+  rerankError?: string;
+  rerankTrace: MemoryRerankTrace;
 };
 
 function countBy<T>(items: T[], select: (item: T) => string) {
@@ -229,6 +548,11 @@ export type RankedMemoryRecall = {
   strategy: MemoryFusionStrategy;
   vectorCount: number;
   keywordCount: number;
+  rerankUsed: boolean;
+  rerankReason: string;
+  rerankMs: number;
+  rerankError?: string;
+  rerankTrace: MemoryRerankTrace;
 };
 
 /**
@@ -249,6 +573,8 @@ export async function recallRankedMemories(
     threshold?: number;
     userId?: string;
     strategy?: MemoryFusionStrategy;
+    /** 评估脚本可关闭访问时间更新，线上默认仍会 touch 最终 Top-K。 */
+    touch?: boolean;
   } = {},
 ): Promise<RankedMemoryRecall> {
   const limit = opts.limit ?? recallLimit;
@@ -273,14 +599,18 @@ export async function recallRankedMemories(
     strategy,
     vectorCount: 0,
     keywordCount: 0,
+    rerankUsed: false,
+    rerankReason: "no_user",
+    rerankMs: 0,
+    rerankTrace: createEmptyMemoryRerankTrace("no_user", memoryRerankConfig),
   };
   if (!opts.userId) return empty;
 
-  const poolSize = Math.max(12, limit * 4);
+  const poolSize = Math.max(memoryRerankConfig.candidateCount, 12, limit * 4);
   // vector_only 是 A/B 的对照组：不切词、不发关键词查询，省掉一次往返，
   // 也保证对照组不会偷偷用到另一条通道。
   const keywordInput = strategy === "vector_only"
-    ? { terms: [], keys: [] }
+    ? { terms: [], keys: [], strongTerms: [] }
     : extractMemoryQueryTerms(query);
   const [vector, keyword] = await Promise.all([
     semantic.recall(query, poolSize, {
@@ -290,18 +620,38 @@ export async function recallRankedMemories(
     semantic.recallByKeyword(keywordInput, poolSize, { userId: opts.userId }),
   ]);
   const fused = fuseMemoryChannels({ vector, keyword, strategy });
-  // 严过滤这一步同时承担了原先那道「冗余防御 filter」的职责：准入判定看的是
-  // **原始向量分**，所以即使 match_memories 的谓词被改、semantic.recall 忘了透传
-  // 阈值、或测试替身返回硬编码数据，低分记忆也进不了 prompt。
-  // 它不再是冗余的了 —— 候选池已经按 0.7× 放宽，这里是唯一的严过滤点。
-  const admitted = admitFusedMemories(fused, {
+  // 这里只预先计算规则降级集，绝不先用它裁掉模型候选。Qwen 成功且配置了
+  // 准入阈值时，宽候选池会先完成治理硬过滤，再整体送入模型判断相关性。
+  const fallbackHits = admitFusedMemories(fused, {
     selectThreshold: threshold,
     keywordAdmitThreshold,
   });
-  // 排序用融合分（admitFusedMemories 之前已写进 record.score），准入用原始分。
-  // 两者不能互换：拿融合分做准入等于顺手抬高了召回门槛，见 fusion.ts 的说明。
-  const selected = rankMemoryHits(admitted.map((hit) => hit.record)).slice(0, limit);
-  if (selected.length > 0) {
+  const fallbackCandidateKeys = new Set(fallbackHits.map((hit) => hit.record.key));
+  const governedCandidates = rankMemoryHits(fused.map((hit) => hit.record));
+  const prioritizedCandidates = prioritizeMemoryRerankCandidates({
+    ranked: governedCandidates,
+    vector,
+    keyword,
+  });
+  const reranked = await rerankMemoryHits(query, prioritizedCandidates, {
+    fallbackCandidateKeys,
+  });
+  const admission = selectMemoryHitsAfterRerank({
+    fused,
+    reranked,
+    selectThreshold: threshold,
+    keywordAdmitThreshold,
+  });
+  const selected = admission.records.slice(0, limit);
+  const selectedKeys = new Set(selected.map((record) => record.key));
+  const rerankTrace: MemoryRerankTrace = {
+    ...admission.trace,
+    candidates: admission.trace.candidates.map((candidate) => ({
+      ...candidate,
+      selected: selectedKeys.has(candidate.key),
+    })),
+  };
+  if (selected.length > 0 && opts.touch !== false) {
     await semantic.touch(
       selected.map((hit) => hit.key),
       { userId: opts.userId },
@@ -316,6 +666,11 @@ export async function recallRankedMemories(
     strategy,
     vectorCount: vector.length,
     keywordCount: keyword.length,
+    rerankUsed: reranked.stats.used,
+    rerankReason: reranked.stats.reason,
+    rerankMs: reranked.stats.latencyMs,
+    rerankError: reranked.stats.error,
+    rerankTrace,
   };
 }
 
@@ -332,10 +687,15 @@ export async function recallForPromptWithStats(
       selectedCount: 0,
       selectedTypes: {},
       selectedSources: {},
+      rerankUsed: false,
+      rerankReason: "not_eligible",
+      rerankMs: 0,
+      rerankTrace: createEmptyMemoryRerankTrace("not_eligible", memoryRerankConfig),
     };
   }
 
-  const { candidates, selected } = await recallRankedMemories(query, opts);
+  const recall = await recallRankedMemories(query, opts);
+  const { candidates, selected } = recall;
   if (selected.length === 0) {
     return {
       context: "",
@@ -344,6 +704,11 @@ export async function recallForPromptWithStats(
       selectedCount: 0,
       selectedTypes: {},
       selectedSources: {},
+      rerankUsed: recall.rerankUsed,
+      rerankReason: recall.rerankReason,
+      rerankMs: recall.rerankMs,
+      rerankError: recall.rerankError,
+      rerankTrace: recall.rerankTrace,
     };
   }
 
@@ -354,6 +719,11 @@ export async function recallForPromptWithStats(
     selectedCount: selected.length,
     selectedTypes: countBy(selected, (hit) => hit.type),
     selectedSources: countBy(selected, (hit) => hit.source),
+    rerankUsed: recall.rerankUsed,
+    rerankReason: recall.rerankReason,
+    rerankMs: recall.rerankMs,
+    rerankError: recall.rerankError,
+    rerankTrace: recall.rerankTrace,
   };
 }
 

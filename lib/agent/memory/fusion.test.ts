@@ -165,4 +165,16 @@ describe("admitFusedMemories", () => {
 
     expect(admitFusedMemories(hits, options)).toEqual([]);
   });
+
+  it("候选扩展词可以带入记录，但零关键词分不会抬高融合排序", () => {
+    const hits = fuseMemoryChannels({
+      vector: [],
+      keyword: [record("diet:food:cilantro", 0)],
+      strategy: "weighted",
+    });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ keywordScore: 0, fusedScore: 0 });
+    expect(admitFusedMemories(hits, options)).toEqual([]);
+  });
 });

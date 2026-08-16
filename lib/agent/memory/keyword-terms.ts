@@ -18,10 +18,12 @@ import { CONTROLLED_MEMORY_KEYS, isControlledMemoryKey } from "./controlled-keys
  */
 
 export type MemoryQueryTerms = {
-  /** 与 content 做子串匹配的词。 */
+  /** 只用于从 content 扩大候选池，不直接参与最终准入评分。 */
   terms: string[];
   /** 与 key 列做等值匹配的受控 key。 */
   keys: string[];
+  /** 数字、Latin 型号等可直接作为强相关证据的字面词。 */
+  strongTerms: string[];
 };
 
 /**
@@ -36,7 +38,7 @@ export type MemoryQueryTerms = {
  */
 export const MEMORY_STOPWORDS = new Set([
   // 人称与指代
-  "我", "我的", "你", "你的", "他", "她", "它", "我们", "自己", "用户",
+  "我", "我不", "我的", "你", "你的", "他", "她", "它", "我们", "自己", "用户",
   "这", "那", "这个", "那个", "这些", "那些", "这样", "那样", "这条", "那条",
   // 虚词
   "的", "了", "着", "过", "得", "地", "和", "与", "或", "把", "被", "给",
@@ -73,6 +75,8 @@ const NUMBER_PATTERN = /\d+(?:\.\d+)?/g;
 const LATIN_PATTERN = /[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*/g;
 const CONTROLLED_KEY_PATTERN = /[a-z][a-z0-9_]*(?::[a-z0-9_]+)+/g;
 const CJK_PATTERN = /[㐀-䶿一-鿿]/;
+const DIET_DISLIKE_ALIASES = ["不喜欢", "讨厌", "不爱吃", "不吃", "忌口", "避开", "不能吃"];
+const DIET_LIKE_ALIASES = ["喜欢吃", "爱吃", "偏爱", "喜欢"];
 
 /**
  * 受控 key 的中文标签 → key。
@@ -119,9 +123,12 @@ function pushTerm(collected: Set<string>, raw: string) {
 
 export function extractMemoryQueryTerms(query: string): MemoryQueryTerms {
   const text = query.trim();
-  if (!text) return { terms: [], keys: [] };
+  if (!text) {
+    return { terms: [], keys: [], strongTerms: [] };
+  }
 
   const terms = new Set<string>();
+  const strongTerms = new Set<string>();
   const keys = new Set<string>();
 
   // ① 受控 key 字面量。先做：命中它就等于拿到了槽位，最可信的一路。
@@ -139,11 +146,13 @@ export function extractMemoryQueryTerms(query: string): MemoryQueryTerms {
   //    无关记忆多一点分，真正相关的那条会命中更多 term 而排在前面。
   for (const match of Array.from(text.matchAll(NUMBER_PATTERN))) {
     pushTerm(terms, match[0]);
+    pushTerm(strongTerms, match[0]);
   }
 
   // ④ Latin 词。
   for (const match of Array.from(text.matchAll(LATIN_PATTERN))) {
     pushTerm(terms, match[0]);
+    pushTerm(strongTerms, match[0]);
   }
 
   // ⑤ 中文词。
@@ -156,8 +165,30 @@ export function extractMemoryQueryTerms(query: string): MemoryQueryTerms {
     }
   }
 
+  const aliasGroup = DIET_DISLIKE_ALIASES.some((alias) => text.includes(alias))
+    ? DIET_DISLIKE_ALIASES
+    : DIET_LIKE_ALIASES.some((alias) => text.includes(alias))
+      ? DIET_LIKE_ALIASES
+      : [];
+  for (const alias of aliasGroup) pushTerm(terms, alias);
+
   return {
     terms: Array.from(terms).slice(0, MAX_TERMS),
     keys: Array.from(keys),
+    strongTerms: Array.from(strongTerms).slice(0, MAX_TERMS),
   };
+}
+
+export function scoreMemoryKeywordMatch(
+  content: string,
+  key: string,
+  input: MemoryQueryTerms,
+) {
+  if (input.keys.includes(key)) return 1;
+  if (input.strongTerms.length === 0) return 0;
+
+  const normalizedContent = content.toLowerCase();
+  const matchedTerms = input.strongTerms.filter((term) =>
+    normalizedContent.includes(term.toLowerCase())).length;
+  return matchedTerms / input.strongTerms.length;
 }

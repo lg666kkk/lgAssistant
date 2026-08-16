@@ -120,11 +120,29 @@ describe("recall_memory", () => {
   });
 
   it("查到记忆时把内容标成候选背景数据，而不是已确认前提", async () => {
+    const rerankTrace = {
+      enabled: true,
+      configured: true,
+      mode: "always" as const,
+      model: "qwen3-rerank",
+      instruct: "Retrieve relevant memories.",
+      candidateCount: 1,
+      candidateLimit: 12,
+      used: true,
+      reason: "mode_always",
+      latencyMs: 42,
+      candidates: [{
+        key: "budget:car",
+        content: "联系 user@example.com",
+        crossEncoderScore: 0.93,
+      }],
+    };
     const recall = vi.fn(async () => ({
       candidates: [memoryRecord()],
       selected: [memoryRecord()],
       limit: 3,
       threshold: 0.68,
+      rerankTrace,
     }));
     const tool = createRecallMemoryTool({ recall: recall as never });
 
@@ -137,6 +155,14 @@ describe("recall_memory", () => {
     expect(result.content).not.toContain("user_explicit");
     expect(result.content).not.toContain("0.91");
     expect(result.metadata?.memoryKeys).toEqual(["budget:car"]);
+    expect(result.metadata?.memoryRerank).toEqual({
+      ...rerankTrace,
+      candidates: [{
+        key: "budget:car",
+        content: "联系 [REDACTED_EMAIL]",
+        crossEncoderScore: 0.93,
+      }],
+    });
   });
 
   it("没查到时明确说「查过了没有」，不留含糊空返回", async () => {

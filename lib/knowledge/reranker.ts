@@ -8,11 +8,21 @@ export type CrossEncoderScore = {
   score: number;
 };
 
+export type CrossEncoderProviderResponse = {
+  requestId?: string;
+  model?: string;
+  totalTokens?: number;
+};
+
+export type CrossEncoderScores = CrossEncoderScore[] & {
+  providerResponse?: CrossEncoderProviderResponse;
+};
+
 export type CrossEncoderReranker = {
   rerank(input: {
     query: string;
     documents: CrossEncoderDocument[];
-  }): Promise<CrossEncoderScore[]>;
+  }): Promise<CrossEncoderScores>;
 };
 
 type HttpRerankerOptions = {
@@ -20,6 +30,7 @@ type HttpRerankerOptions = {
   apiKey: string;
   model: string;
   timeoutMs?: number;
+  instruct?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -28,6 +39,7 @@ export class HttpCrossEncoderReranker implements CrossEncoderReranker {
   private apiKey: string;
   private model: string;
   private timeoutMs: number;
+  private instruct?: string;
   private fetchImpl: typeof fetch;
 
   constructor(options: HttpRerankerOptions) {
@@ -35,13 +47,14 @@ export class HttpCrossEncoderReranker implements CrossEncoderReranker {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.timeoutMs = options.timeoutMs ?? 8_000;
+    this.instruct = options.instruct;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   async rerank(input: {
     query: string;
     documents: CrossEncoderDocument[];
-  }): Promise<CrossEncoderScore[]> {
+  }): Promise<CrossEncoderScores> {
     if (input.documents.length === 0) return [];
 
     const controller = new AbortController();
@@ -59,7 +72,7 @@ export class HttpCrossEncoderReranker implements CrossEncoderReranker {
           query: input.query,
           documents: input.documents.map((document) => document.text),
           top_n: input.documents.length,
-          return_documents: false,
+          ...(this.instruct ? { instruct: this.instruct } : {}),
         }),
         signal: controller.signal,
       });
@@ -108,6 +121,9 @@ function normalizeRerankResponse(
   }
 
   const value = payload as {
+    id?: unknown;
+    model?: unknown;
+    usage?: { total_tokens?: unknown };
     results?: unknown;
     output?: { results?: unknown };
   };
@@ -122,7 +138,7 @@ function normalizeRerankResponse(
   }
 
   const seen = new Set<number>();
-  return rawResults.map((item) => {
+  const scores = rawResults.map((item) => {
     if (!item || typeof item !== 'object') {
       throw new Error('Cross-Encoder result 格式错误');
     }
@@ -148,5 +164,15 @@ function normalizeRerankResponse(
       index,
       score: Math.max(0, Math.min(1, score)),
     };
+  }) as CrossEncoderScores;
+  const totalTokens = Number(value.usage?.total_tokens);
+  Object.defineProperty(scores, 'providerResponse', {
+    enumerable: false,
+    value: {
+      requestId: typeof value.id === 'string' ? value.id : undefined,
+      model: typeof value.model === 'string' ? value.model : undefined,
+      totalTokens: Number.isFinite(totalTokens) ? totalTokens : undefined,
+    },
   });
+  return scores;
 }

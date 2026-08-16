@@ -211,7 +211,7 @@ RAG 专项：routing cases + retrieval golden set + groundedness cases
 
 ### Q36. 当前项目对记忆观测已经记录了什么？
 
-- **项目落点**：`memory.recall` 记录 eligible、candidate/selected 数、类型/来源和注入字符数；`memory.consolidate` 记录 extracted/persisted/invalidated/skipped/failed 和 decision counts；显式忘记记录状态和失效数量，不记录正文。
+- **项目落点**：`memory.recall` 除 eligible、candidate/selected、类型/来源外，还记录 Qwen reranker 的候选正文、分阶段分数与排序变化，并同步进入本地 Trace；保存前统一脱敏。`memory.consolidate` 记录 extracted/persisted/invalidated/skipped/failed 和 decision counts；显式忘记记录状态和失效数量。
 
 ### Q37. 当前记忆观测还缺什么？
 

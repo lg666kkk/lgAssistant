@@ -25,6 +25,7 @@ export const SPAN_LABELS: Record<string, string> = {
 
   // ── 记忆 ──
   "memory.recall": "记忆召回（把相关长期记忆注入 system）",
+  "memory.rerank": "记忆重排（Qwen3 对候选记忆重新评分）",
   "memory.explicit_forget": "显式遗忘处理（用户要求忘掉某条记忆）",
   "memory.consolidate": "记忆固化（把本轮对话沉淀成长期记忆）",
 

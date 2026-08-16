@@ -66,8 +66,13 @@
         ├─ 向量通道  semantic.recall(query, threshold = 严阈值 × 0.7)   ← 宽召回
         ├─ 关键词通道 extractMemoryQueryTerms(query) → recallByKeyword   ← 两条并行
         ├─ fuseMemoryChannels(...)            并集合并 + 融合打分
-        ├─ admitFusedMemories(...)            **按通道原始分**准入（严阈值）
-        └─ rankMemoryHits(...).slice(0, 3)    按融合分排序取 top-3
+        ├─ rankMemoryHits(...)                 只做 status / confidence 治理硬过滤
+        ├─ Qwen3-Rerank                        对宽候选逐条输出 crossEncoderScore
+        ├─ crossEncoderScore >= 评估阈值       模型成功时的相关性准入
+        └─ slice(0, 3)                         取模型排序后的 top-3
+
+Qwen 关闭、未配置、超时或失败时：
+        └─ admitFusedMemories(...)             回退原向量 / 强关键词规则阈值
 
 用户说了新事实
   └─ 抽取 → 写入判定（intent: upsert / correct / forget / purge）
@@ -109,12 +114,75 @@
 **关键词通道**
 
 - SQL（[20260804-memory-keyword-channel.sql](../../schemas/migrations/20260804-memory-keyword-channel.sql)）：
-  `match_memories_keyword` 只做匹配与打分，`p_terms` 由应用层切好传进来。
-  `overlap_rank = 命中词数 / term 总数`，受控 key 命中记 1.0，两者取 `GREATEST`。
+  `match_memories_keyword` 使用应用层展开的同义词做宽候选召回；SQL 的 `overlap_rank`
+  只负责候选排序，不再作为最终关键词分。
 - 切词（[keyword-terms.ts](../../../lib/agent/memory/keyword-terms.ts)）：数字 → Latin 词 →
-  受控 key 字面量与中文标签 → `Intl.Segmenter` 切中文，逐层过停用词表。
+  受控 key 字面量与中文标签 → `Intl.Segmenter` 切中文，逐层过停用词表。同义表达如
+  `不喜欢/讨厌/不吃/忌口` 只用于扩大 SQL 候选，不产生最终关键词分；最终关键词分只保留
+  数字、Latin 型号和精确受控 key 这类可解释的强字面信号。
 - 融合（[fusion.ts](../../../lib/agent/memory/fusion.ts)）：`vector_only` / `weighted` / `rrf`
   三种策略，`MEMORY_FUSION_STRATEGY` 切换。当前默认 `weighted`，**这是待验证的默认值不是结论**。
+
+记忆候选先做状态和置信度治理硬过滤，再进入 Qwen3 Cross-Encoder；模型成功且配置了
+`MEMORY_RERANK_ADMIT_THRESHOLD` 时，`crossEncoderScore` 同时负责相关性准入和排序，
+因此可以救回旧向量/关键词严阈值会提前挡掉的候选。模型未启用、未配置、超时、失败，
+或准入阈值仍留空时，系统完整回退原向量/强关键词规则，不负责判断事实真伪。
+每次重排会把候选正文、向量分、关键词分、融合分、规则分、Qwen 分、准入结果、
+准入原因、是否由模型救回和排序变化同步写入
+`agent_traces.steps[type=memory_recall]` 与 Langfuse `memory.recall`/`memory.rerank` observation；
+同时记录百炼响应的 request ID、model 与 `usage.total_tokens`，写入前使用项目统一的敏感数据脱敏器。
+
+```env
+# 是否启用长期记忆的 Qwen3 模型重排；false 时只使用原有规则排序。
+MEMORY_RERANK_ENABLED=false
+# always 对每个非空宽候选池调用；conditional 仅在旧规则不能覆盖全部候选时调用。
+MEMORY_RERANK_MODE=always
+# 百炼重排模型名称。
+MEMORY_RERANK_MODEL=qwen3-rerank
+# 包含 WorkspaceId 的完整百炼 rerank endpoint。
+MEMORY_RERANK_URL=
+# 调用 MEMORY_RERANK_URL 的 API Key；不会自动复用其他 DashScope Key。
+MEMORY_RERANK_API_KEY=
+# 模型判断候选相关性时使用的任务指令。
+MEMORY_RERANK_INSTRUCT=Given a user memory retrieval query, retrieve relevant personal memory passages that answer the query.
+# 单次最多送入模型重排的候选数，允许范围 2-24。
+MEMORY_RERANK_CANDIDATE_COUNT=12
+# 模型相关性准入阈值，必须用真实记忆标注集评估后填写；留空时只采集分数并回退旧规则。
+MEMORY_RERANK_ADMIT_THRESHOLD=
+# HTTP 请求超时时间，单位毫秒；失败或超时会回退规则排序。
+MEMORY_RERANK_TIMEOUT_MS=1200
+```
+
+`MEMORY_RERANK_URL` 直接填写包含 WorkspaceId 的完整百炼模型地址，例如
+`https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-api/v1/reranks`。请求采用兼容接口的顶层
+`model/query/documents/top_n/instruct` 结构。
+
+准入阈值不提供默认值。先用真实用户记忆建立一个本地 JSON 标注集：
+
+```json
+{
+  "cases": [
+    {
+      "id": "diet-dislike-1",
+      "query": "我讨厌吃什么",
+      "expectedKeys": ["diet:food:折耳根", "diet:food:香菜"]
+    }
+  ]
+}
+```
+
+然后运行：
+
+```bash
+npm run test:memory-rerank-threshold -- \
+  --dataset ./artifacts/memory-rerank-labels.json \
+  --user-id '<真实用户 UUID>' \
+  --out ./artifacts/memory-rerank-threshold-report.json
+```
+
+脚本强制使用 `always` 模式、关闭 `touch`，扫描真实候选分数并输出每个阈值的
+Precision / Recall / F1、FP、FN 和未进入 rerank 池的相关 key。它只给出评估报告，
+不会自动改写 `MEMORY_RERANK_ADMIT_THRESHOLD`；上线阈值必须结合误召回和漏召回成本人工确认。
 
 ### 技术选型与决策
 

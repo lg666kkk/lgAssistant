@@ -11,6 +11,7 @@ import {
 describe("resolveSpanLabel", () => {
   it("精确命中已登记的 span 名", () => {
     expect(resolveSpanLabel("memory.recall")).toBe(SPAN_LABELS["memory.recall"]);
+    expect(resolveSpanLabel("memory.rerank")).toBe(SPAN_LABELS["memory.rerank"]);
     expect(resolveSpanLabel("retrieval.route")).toBe(SPAN_LABELS["retrieval.route"]);
   });
 

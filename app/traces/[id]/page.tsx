@@ -170,12 +170,35 @@ type MemoryConsolidationStep = {
   };
 };
 
+type MemoryRecallStep = {
+  type: "memory_recall";
+  index: number;
+  durationMs?: number;
+  query: string;
+  eligible: boolean;
+  candidateCount: number;
+  selectedCount: number;
+  selectedTypes: Record<string, number>;
+  selectedSources: Record<string, number>;
+  rerank: Record<string, unknown> & {
+    used?: boolean;
+    reason?: string;
+    model?: string;
+    mode?: string;
+    latencyMs?: number;
+    providerRequestId?: string;
+    totalTokens?: number;
+    candidates?: Array<Record<string, unknown>>;
+  };
+};
+
 type Step =
   | ModelStep
   | ToolStep
   | ContextCompactionStep
   | PlanStep
   | RetrievalStep
+  | MemoryRecallStep
   | MemoryConsolidationStep
   | AnswerValidationStep;
 
@@ -869,6 +892,10 @@ export default function TraceDetailPage({
                       <span className="font-medium text-cyan-300">
                         检索闭环 · {step.phase}
                       </span>
+                    ) : step.type === "memory_recall" ? (
+                      <span className="font-medium text-emerald-300">
+                        记忆召回 · {step.rerank.used ? "Qwen3 rerank" : (step.rerank.reason ?? "rule rank")}
+                      </span>
                     ) : step.type === "memory_consolidation" ? (
                       <span className="font-medium text-emerald-300">
                         记忆固化 · {step.outcome.status ?? "unknown"}
@@ -1103,6 +1130,29 @@ export default function TraceDetailPage({
                       {step.attempts && step.attempts.length > 0 && (
                         <Collapsible label="Query attempts" body={toText(step.attempts)} />
                       )}
+                    </div>
+                  ) : step.type === "memory_recall" ? (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                        <span>eligible {step.eligible ? "是" : "否"}</span>
+                        <span>候选 {step.candidateCount}</span>
+                        <span>选中 {step.selectedCount}</span>
+                        <span>model {step.rerank.model ?? "-"}</span>
+                        <span>rerank {step.rerank.used ? "used" : (step.rerank.reason ?? "-")}</span>
+                        <span>耗时 {step.rerank.latencyMs ?? 0}ms</span>
+                        <span>tokens {step.rerank.totalTokens ?? "-"}</span>
+                      </div>
+                      <div className="text-slate-500">query={step.query}</div>
+                      {step.rerank.providerRequestId && (
+                        <div className="text-slate-500">
+                          provider request={step.rerank.providerRequestId}
+                        </div>
+                      )}
+                      <Collapsible
+                        label="查看 reranker 候选与分数"
+                        body={toText(step.rerank.candidates ?? [])}
+                        meta={`${step.rerank.candidates?.length ?? 0} 条候选`}
+                      />
                     </div>
                   ) : step.type === "memory_consolidation" ? (
                     <div className="mt-2 space-y-2 text-xs">

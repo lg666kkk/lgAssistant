@@ -112,7 +112,11 @@ export function fuseMemoryChannels(input: {
         rrfRaw: 0,
         channels: new Set<MemoryChannel>(),
       };
-      const calibrated = calibrateMemoryListScore(raw, rank, records.length);
+      // 同义词和普通中文词只负责把记录带进候选池。应用层重算后的 raw=0
+      // 必须保持 0，不能再被排名百分位凭空抬成一个可参与最终排序的关键词分。
+      const calibrated = raw > 0
+        ? calibrateMemoryListScore(raw, rank, records.length)
+        : 0;
       if (channel === "vector") {
         current.vectorRaw = Math.max(current.vectorRaw, raw);
         current.vectorCalibrated = Math.max(current.vectorCalibrated, calibrated);

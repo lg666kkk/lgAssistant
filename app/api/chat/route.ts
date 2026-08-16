@@ -28,6 +28,7 @@ import {
   type MemoryConsolidationOutcome,
 } from "@/lib/agent/memory/memory-flow";
 import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
+import { createEmptyMemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
@@ -50,7 +51,12 @@ import {
 } from "@/lib/agent/observability/span-labels";
 import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
-import type { AgentTrace } from "@/lib/agent/runtime/trace";
+import {
+  createTrace,
+  prependMemoryRecallTraceStep,
+  type AgentTrace,
+  type MemoryRecallTraceStep,
+} from "@/lib/agent/runtime/trace";
 import { reportOnlineScores } from "@/lib/agent/eval/online-scores";
 import {
   retrievalObservationLabel,
@@ -565,9 +571,14 @@ export async function POST(req: Request) {
         const explicitForgetHandled = explicitForgetResult.handled;
         let memorySystem = "";
         let memoryRecallHint = "";
+        let memoryRecallTraceStep: Omit<MemoryRecallTraceStep, "index"> | undefined;
         if (lastUser) {
+          const recallStartedAt = Date.now();
           const observation = langfuseTrace.startObservation("memory.recall", {
-            input: { queryChars: lastUser.content.length },
+            input: {
+              query: redactSensitiveValue(lastUser.content),
+              queryChars: lastUser.content.length,
+            },
             metadata: withSpanLabel("memory.recall", {
               requestId,
               sessionIdPresent: Boolean(sessionId),
@@ -579,6 +590,19 @@ export async function POST(req: Request) {
             });
             memorySystem = recall.context;
             memoryRecallHint = renderMemoryPrefetchHint(recall);
+            const safeRerankTrace = redactSensitiveValue(recall.rerankTrace);
+            memoryRecallTraceStep = {
+              type: "memory_recall",
+              startedAt: recallStartedAt,
+              durationMs: Date.now() - recallStartedAt,
+              query: redactSensitiveValue(lastUser.content),
+              eligible: recall.eligible,
+              candidateCount: recall.candidateCount,
+              selectedCount: recall.selectedCount,
+              selectedTypes: recall.selectedTypes,
+              selectedSources: recall.selectedSources,
+              rerank: safeRerankTrace,
+            };
             observation.update({
               output: {
                 eligible: recall.eligible,
@@ -588,6 +612,11 @@ export async function POST(req: Request) {
                 injectedChars: recall.context.length,
                 selectedTypes: recall.selectedTypes,
                 selectedSources: recall.selectedSources,
+                rerankUsed: recall.rerankUsed,
+                rerankReason: recall.rerankReason,
+                rerankMs: recall.rerankMs,
+                rerankError: Boolean(recall.rerankError),
+                rerank: safeRerankTrace,
               },
             });
           } catch (e: any) {
@@ -602,14 +631,40 @@ export async function POST(req: Request) {
               selectedCount: 0,
               selectedTypes: {},
               selectedSources: {},
+              rerankUsed: false,
+              rerankReason: "recall_error",
+              rerankMs: 0,
+              rerankTrace: createEmptyMemoryRerankTrace("recall_error"),
             });
+            memoryRecallTraceStep = {
+              type: "memory_recall",
+              startedAt: recallStartedAt,
+              durationMs: Date.now() - recallStartedAt,
+              query: redactSensitiveValue(lastUser.content),
+              eligible: false,
+              candidateCount: 0,
+              selectedCount: 0,
+              selectedTypes: {},
+              selectedSources: {},
+              rerank: {
+                ...createEmptyMemoryRerankTrace("recall_error"),
+                error: redactSensitiveValue(e instanceof Error ? e.message : String(e)),
+              },
+            };
             observation.update({
               level: "ERROR",
-              output: { errorClass: e.name ?? "Error" },
+              output: {
+                errorClass: e.name ?? "Error",
+                rerank: redactSensitiveValue(memoryRecallTraceStep.rerank),
+              },
             });
           } finally {
             observation.end();
           }
+        }
+        if (memoryRecallTraceStep) {
+          pendingTrace = createTrace(requestId, sessionId);
+          prependMemoryRecallTraceStep(pendingTrace, memoryRecallTraceStep);
         }
         const consolidateWithObservation = async (
           conversation: Array<{ role: string; content: unknown }>,
@@ -764,6 +819,13 @@ export async function POST(req: Request) {
               output: { completed: true, status: "awaiting_plan_approval", plan: proposal },
             });
             langfuseTrace.setTraceIO({ input: traceDisplayInput, output: proposal });
+            if (pendingTrace) {
+              pendingTrace.completed = true;
+              pendingTrace.stopReason = "completed";
+              pendingTrace.endedAt = Date.now();
+              pendingTrace.totalDurationMs = pendingTrace.endedAt - pendingTrace.startedAt;
+            }
+            await savePendingTrace();
             enqueueEvent({ type: "done" }, enqueueText);
             closeStream();
             return;
@@ -776,6 +838,13 @@ export async function POST(req: Request) {
             statusMessage: failureText,
           });
           langfuseTrace.setTraceIO({ input: traceDisplayInput, output: { error: failureText } });
+          if (pendingTrace) {
+            pendingTrace.completed = false;
+            pendingTrace.stopReason = "error";
+            pendingTrace.endedAt = Date.now();
+            pendingTrace.totalDurationMs = pendingTrace.endedAt - pendingTrace.startedAt;
+          }
+          await savePendingTrace();
           enqueueEvent({ type: "done" }, enqueueText);
           closeStream();
           return;
@@ -801,6 +870,9 @@ export async function POST(req: Request) {
           [],
           contextPlan,
         );
+        if (memoryRecallTraceStep) {
+          prependMemoryRecallTraceStep(agentLoopResult.trace, memoryRecallTraceStep);
+        }
         pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
 

@@ -42,6 +42,45 @@ describe('HttpCrossEncoderReranker', () => {
     });
   });
 
+  it('builds the Bailian compatible request used by qwen3-rerank', async () => {
+    const fetchImpl = vi.fn(async (
+      _input: string | URL | Request,
+      _init?: RequestInit,
+    ) => new Response(JSON.stringify({
+      object: 'list',
+      results: [{ index: 0, relevance_score: 0.9 }],
+      model: 'qwen3-rerank',
+      id: 'request-123',
+      usage: { total_tokens: 42 },
+    }), { status: 200 }));
+    const reranker = new HttpCrossEncoderReranker({
+      url: 'https://example.com/qwen-rerank',
+      apiKey: 'test-key',
+      model: 'qwen3-rerank',
+      instruct: 'Retrieve relevant personal memories.',
+      fetchImpl,
+    });
+
+    const scores = await reranker.rerank({
+      query: '用户的预算',
+      documents: [{ id: 'a', text: '用户的购车预算是 8 万' }],
+    });
+
+    const request = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(request).toEqual({
+      model: 'qwen3-rerank',
+      query: '用户的预算',
+      documents: ['用户的购车预算是 8 万'],
+      top_n: 1,
+      instruct: 'Retrieve relevant personal memories.',
+    });
+    expect(scores.providerResponse).toEqual({
+      requestId: 'request-123',
+      model: 'qwen3-rerank',
+      totalTokens: 42,
+    });
+  });
+
   it('rejects duplicate indexes', async () => {
     const fetchImpl = vi.fn(async (
       _input: string | URL | Request,
