@@ -1,5 +1,9 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
-import { EmbeddingClient } from "@/lib/knowledge/embedding";
+import {
+  EMBEDDING_MODEL,
+  EmbeddingClient,
+  type EmbeddingUsage,
+} from "@/lib/knowledge/embedding";
 import { purgeMemoryKey } from "./atomic-writer";
 import { scoreMemoryKeywordMatch, type MemoryQueryTerms } from "./keyword-terms";
 import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
@@ -148,13 +152,31 @@ export class SemanticStore implements SemanticMemoryStore {
   async recall(
     query: string,
     limit = 5,
-    options: { userId?: string; threshold?: number } = {},
+    options: {
+      userId?: string;
+      threshold?: number;
+      onEmbeddingUsage?: (usage: EmbeddingUsage) => void;
+    } = {},
   ): Promise<MemoryRecord[]> {
     if (!hasSupabaseConfig()) return [];
     const userId = requireUserId(options, "recall");
     if (!userId) return [];
 
-    const queryEmbedding = await this.getEmbedder().embedSingle(query);
+    const embeddingUsage: EmbeddingUsage = {
+      model: EMBEDDING_MODEL,
+      inputTokens: 0,
+      totalTokens: 0,
+      modelCallCount: 0,
+    };
+    const queryEmbedding = await this.getEmbedder().embedSingle(query, {
+      onEvent: (event) => {
+        if (event.type !== "batch_done") return;
+        embeddingUsage.inputTokens += event.inputTokens ?? 0;
+        embeddingUsage.totalTokens += event.totalTokens ?? event.inputTokens ?? 0;
+        embeddingUsage.modelCallCount += 1;
+      },
+    });
+    options.onEmbeddingUsage?.(embeddingUsage);
     const { data, error } = await getSupabase().rpc(MATCH_FN, {
       query_embedding: queryEmbedding,
       match_count: limit,

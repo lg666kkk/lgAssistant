@@ -601,6 +601,7 @@ export async function POST(req: Request) {
               selectedCount: recall.selectedCount,
               selectedTypes: recall.selectedTypes,
               selectedSources: recall.selectedSources,
+              embeddingUsage: recall.embeddingUsage,
               rerank: safeRerankTrace,
             };
             observation.update({
@@ -612,6 +613,7 @@ export async function POST(req: Request) {
                 injectedChars: recall.context.length,
                 selectedTypes: recall.selectedTypes,
                 selectedSources: recall.selectedSources,
+                embeddingUsage: recall.embeddingUsage,
                 rerankUsed: recall.rerankUsed,
                 rerankReason: recall.rerankReason,
                 rerankMs: recall.rerankMs,

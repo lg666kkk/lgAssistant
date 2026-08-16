@@ -2,7 +2,7 @@
 
 ## 总览
 
-`/usage` 页面展示的是模型调用用量、缓存命中和费用估算。它的数据不是从 DeepSeek 的账单明细接口直接拉取，而是来自本项目每次模型调用后落库的 `agent_traces`。
+`/usage` 页面展示对话、向量和重排模型的调用用量、缓存命中和费用估算。它的数据不是从供应商账单明细接口直接拉取，而是来自本项目每次模型调用后落库的 `agent_traces`。
 
 整体链路：
 
@@ -30,6 +30,23 @@ GET /api/deepseek/balance
 | 费用 | 本地价格表 × token 用量 | 本地估算 |
 | DeepSeek 余额 | DeepSeek `/user/balance` | 官方余额接口 |
 | 最近请求 | `agent_traces` | 本地 trace 记录 |
+
+## 向量与重排模型
+
+非聊天模型价格表在：
+
+```text
+lib/agent/observability/metered-models.ts
+```
+
+当前华北 2（北京）公开价：
+
+| 模型 | 单价 | Trace 来源 | 缓存口径 |
+|---|---:|---|---|
+| `text-embedding-v4` | 0.5 元 / 百万输入 Token | RAG `retrieval.attempts[].debug.embeddingUsage`、记忆召回 `embeddingUsage` | 查询 embedding 或完整检索结果命中缓存时，按避免调用的输入 Token 估算节省金额 |
+| `qwen3-rerank` | 0.5 元 / 百万文本输入 Token | `memory_recall.rerank.totalTokens` 或 `recall_memory` 工具 metadata | 当前未启用缓存，节省金额为 0 |
+
+百炼的 100 万 Token 免费额度及 90 天有效期由供应商账单决定，本地 Trace 不知道额度是否已抵扣，因此不会从估算费用中扣除。同步 Batch 服务的半价也不适用于当前在线兼容 API 调用。
 
 ---
 
@@ -521,7 +538,8 @@ recentRequests[]
 | 会话 | `sessions.title` | 会话标题 |
 | 模型 | 第一个 model step 的 `model` | 本次请求主要模型 |
 | Tokens | 该 trace 下所有 model step 的 `totalTokens` 总和 |
-| 费用 | 该 trace 下所有 model step 的 `estimatedCostCny` 总和 |
+| 费用 | 该 trace 下对话、embedding、rerank 的 `estimatedCostCny` 总和 |
+| 缓存节省 | 按未命中单价估算的避免费用 |
 
 分页：
 
@@ -609,3 +627,7 @@ estimatedCostCny
 6. **limit 影响总览范围**
 
    `/api/usage?limit=1000` 只聚合最新 1000 条 trace，不代表数据库全量历史。
+
+7. **Trace 不是账单级全量事件流**
+
+   当前统计覆盖聊天请求内的知识库查询、记忆查询和记忆重排。知识库离线同步、异步记忆写入等无法稳定归属聊天 Trace 的 embedding 调用不在此口径内。

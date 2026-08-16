@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { QueryResultCache } from '@/lib/agent/rag/query-cache';
 import {
+  type CachedQueryEmbedding,
   RAGRetriever,
   type SearchResult,
 } from './retriever';
@@ -259,10 +260,17 @@ describe('RAGRetriever advanced retrieval', () => {
   });
 
   it('caches query embeddings by tenant and index version', async () => {
-    const embedBatch = vi.fn(async () => [[1, 0]]);
+    const embedBatch = vi.fn(async (_queries: string[], options?: any) => {
+      options?.onEvent?.({
+        type: 'batch_done',
+        inputTokens: 6,
+        totalTokens: 6,
+      });
+      return [[1, 0]];
+    });
     const retriever = new RAGRetriever({
       embeddingClient: { embedBatch },
-      embeddingCache: new QueryResultCache<number[]>(),
+      embeddingCache: new QueryResultCache<CachedQueryEmbedding>(),
       vectorSearch: vi.fn(async () => []),
       keywordSearch: vi.fn(async () => []),
     });
@@ -283,9 +291,23 @@ describe('RAGRetriever advanced retrieval', () => {
       embeddingCacheHits: 0,
       embeddingCacheMisses: 1,
     });
+    expect(first.debug.embeddingUsage).toMatchObject({
+      model: 'text-embedding-v4',
+      inputTokens: 6,
+      cacheHitTokens: 0,
+      cacheMissTokens: 6,
+      modelCallCount: 1,
+    });
     expect(second.debug.timings).toMatchObject({
       embeddingCacheHits: 1,
       embeddingCacheMisses: 0,
+    });
+    expect(second.debug.embeddingUsage).toMatchObject({
+      inputTokens: 0,
+      cacheHitTokens: 6,
+      cacheMissTokens: 0,
+      modelCallCount: 0,
+      cacheHitCalls: 1,
     });
   });
 

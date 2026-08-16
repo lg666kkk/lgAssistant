@@ -73,7 +73,11 @@ export interface SemanticMemoryStore extends MemoryStore {
   recall(
     query: string,
     limit?: number,
-    options?: { userId?: string; threshold?: number },
+    options?: {
+      userId?: string;
+      threshold?: number;
+      onEmbeddingUsage?: (usage: import("@/lib/knowledge/embedding").EmbeddingUsage) => void;
+    },
   ): Promise<MemoryRecord[]>;
   touch(keys: string[], options?: { userId?: string }): Promise<void>;
 }

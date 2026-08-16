@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { deepseekConfig } from "@/lib/platform/config";
 import type { CrossEncoderReranker } from "@/lib/knowledge/reranker";
+import type { EmbeddingUsage } from "@/lib/knowledge/embedding";
 import { LongTermStore } from "./longterm-store";
 import { SemanticStore } from "./semantic-store";
 import { MemoryVersionConflictError, MemoryWriter } from "./atomic-writer";
@@ -526,6 +527,7 @@ export type MemoryRecallResult = {
   rerankMs: number;
   rerankError?: string;
   rerankTrace: MemoryRerankTrace;
+  embeddingUsage?: EmbeddingUsage;
 };
 
 function countBy<T>(items: T[], select: (item: T) => string) {
@@ -553,6 +555,7 @@ export type RankedMemoryRecall = {
   rerankMs: number;
   rerankError?: string;
   rerankTrace: MemoryRerankTrace;
+  embeddingUsage?: EmbeddingUsage;
 };
 
 /**
@@ -612,10 +615,14 @@ export async function recallRankedMemories(
   const keywordInput = strategy === "vector_only"
     ? { terms: [], keys: [], strongTerms: [] }
     : extractMemoryQueryTerms(query);
+  let embeddingUsage: EmbeddingUsage | undefined;
   const [vector, keyword] = await Promise.all([
     semantic.recall(query, poolSize, {
       userId: opts.userId,
       threshold: candidateThreshold,
+      onEmbeddingUsage: (usage) => {
+        embeddingUsage = usage;
+      },
     }),
     semantic.recallByKeyword(keywordInput, poolSize, { userId: opts.userId }),
   ]);
@@ -671,6 +678,7 @@ export async function recallRankedMemories(
     rerankMs: reranked.stats.latencyMs,
     rerankError: reranked.stats.error,
     rerankTrace,
+    embeddingUsage,
   };
 }
 
@@ -709,6 +717,7 @@ export async function recallForPromptWithStats(
       rerankMs: recall.rerankMs,
       rerankError: recall.rerankError,
       rerankTrace: recall.rerankTrace,
+      embeddingUsage: recall.embeddingUsage,
     };
   }
 
@@ -724,6 +733,7 @@ export async function recallForPromptWithStats(
     rerankMs: recall.rerankMs,
     rerankError: recall.rerankError,
     rerankTrace: recall.rerankTrace,
+    embeddingUsage: recall.embeddingUsage,
   };
 }
 

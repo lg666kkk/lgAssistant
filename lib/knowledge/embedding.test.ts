@@ -26,10 +26,12 @@ describe('EmbeddingClient batch integrity', () => {
               { index: 1, embedding: vector(2) },
               { index: 0, embedding: vector(1) },
             ],
+            usage: { promptTokens: 5, totalTokens: 5 },
           };
         }
         return {
           data: [{ index: 0, embedding: vector(3) }],
+          usage: { promptTokens: 3, totalTokens: 3 },
         };
       },
     );
@@ -61,6 +63,8 @@ describe('EmbeddingClient batch integrity', () => {
         batchIndex: 1,
         providerIndexes: [1, 0],
         reordered: true,
+        inputTokens: 5,
+        totalTokens: 5,
       }),
     );
   });

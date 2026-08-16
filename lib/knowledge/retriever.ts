@@ -16,6 +16,7 @@ import {
   cosineSimilarity,
   EMBEDDING_MODEL,
   EmbeddingClient,
+  type EmbeddingUsage,
   validateEmbeddingVector,
 } from './embedding';
 import {
@@ -90,6 +91,11 @@ export interface RAGSearchDebug {
   crossEncoderError?: string;
   topScoreGap: number | null;
   filters?: RetrievalFilters;
+  embeddingUsage?: EmbeddingUsage & {
+    cacheHitTokens: number;
+    cacheMissTokens: number;
+    cacheHitCalls: number;
+  };
   timings: {
     embeddingMs: number;
     vectorSearchMs: number;
@@ -162,11 +168,17 @@ export type KeywordSearchRequest = {
 
 export type RAGRetrieverDependencies = {
   embeddingClient?: Pick<EmbeddingClient, 'embedBatch'>;
-  embeddingCache?: QueryResultCache<number[]>;
+  embeddingCache?: QueryResultCache<CachedQueryEmbedding>;
   embeddingCacheVersion?: string;
   vectorSearch?: (request: VectorSearchRequest) => Promise<SearchResult[]>;
   keywordSearch?: (request: KeywordSearchRequest) => Promise<SearchResult[]>;
   crossEncoderReranker?: CrossEncoderReranker;
+};
+
+export type CachedQueryEmbedding = {
+  embedding: number[];
+  /** provider 批次真实 token 按各输入文本长度归因后的份额。 */
+  inputTokens: number;
 };
 
 type RankedList = {
@@ -181,7 +193,7 @@ type FusionWeights = {
   keyword: number;
 };
 
-const queryEmbeddingCache = new QueryResultCache<number[]>(10 * 60_000, 500);
+const queryEmbeddingCache = new QueryResultCache<CachedQueryEmbedding>(10 * 60_000, 500);
 const QUERY_EMBEDDING_CACHE_VERSION = 'rag-query-embedding-v1';
 
 async function withRetrievalTimeout<T>(input: {
@@ -227,7 +239,7 @@ function createSupabaseClient() {
  */
 export class RAGRetriever {
   private embeddingClient: Pick<EmbeddingClient, 'embedBatch'>;
-  private embeddingCache?: QueryResultCache<number[]>;
+  private embeddingCache?: QueryResultCache<CachedQueryEmbedding>;
   private embeddingCacheVersion: string;
   private vectorSearchOverride?: RAGRetrieverDependencies['vectorSearch'];
   private keywordSearchOverride?: RAGRetrieverDependencies['keywordSearch'];
@@ -462,6 +474,7 @@ export class RAGRetriever {
         crossEncoderError,
         topScoreGap,
         filters: options.filters,
+        embeddingUsage: vectorPath.embeddingUsage,
         timings: {
           embeddingMs: vectorPath.embeddingMs,
           vectorSearchMs: vectorPath.vectorSearchMs,
@@ -525,19 +538,36 @@ export class RAGRetriever {
       query,
       strategyVersion: `${QUERY_EMBEDDING_CACHE_VERSION}:${this.embeddingCacheVersion}`,
     }));
-    const embeddings: Array<number[] | undefined> = cacheKeys.map((key) =>
+    const cachedEmbeddings = cacheKeys.map((key) =>
       this.embeddingCache?.get(key));
-    const missingIndexes = embeddings.flatMap((embedding, index) =>
-      embedding ? [] : [index]);
+    const embeddings: Array<number[] | undefined> = cachedEmbeddings.map((cached) =>
+      cached?.embedding);
+    const missingIndexes = cachedEmbeddings.flatMap((cached, index) =>
+      cached ? [] : [index]);
+    let providerInputTokens = 0;
+    let providerTotalTokens = 0;
+    let modelCallCount = 0;
     if (missingIndexes.length > 0) {
       const missingQueries = missingIndexes.map((index) => input.queries[index]);
       const missingEmbeddings = await this.embeddingClient.embedBatch(missingQueries, {
         idempotencyScope: `rag-query:${input.userId ?? 'anonymous'}:${input.indexVersion ?? 'index-unknown'}`,
+        onEvent: (event) => {
+          if (event.type !== 'batch_done') return;
+          providerInputTokens += event.inputTokens ?? 0;
+          providerTotalTokens += event.totalTokens ?? event.inputTokens ?? 0;
+          modelCallCount += 1;
+        },
       });
+      const attributedTokens = allocateEmbeddingTokens(providerInputTokens, missingQueries);
       missingIndexes.forEach((queryIndex, batchIndex) => {
         const embedding = missingEmbeddings[batchIndex];
         embeddings[queryIndex] = embedding;
-        if (embedding) this.embeddingCache?.set(cacheKeys[queryIndex], embedding);
+        if (embedding) {
+          this.embeddingCache?.set(cacheKeys[queryIndex], {
+            embedding,
+            inputTokens: attributedTokens[batchIndex] ?? 0,
+          });
+        }
       });
     }
     const resolvedEmbeddings = embeddings.map((embedding, index) => {
@@ -563,6 +593,18 @@ export class RAGRetriever {
       embeddingMs,
       embeddingCacheHits: input.queries.length - missingIndexes.length,
       embeddingCacheMisses: missingIndexes.length,
+      embeddingUsage: {
+        model: EMBEDDING_MODEL,
+        inputTokens: providerInputTokens,
+        totalTokens: providerTotalTokens || providerInputTokens,
+        modelCallCount,
+        cacheHitTokens: cachedEmbeddings.reduce(
+          (sum, cached) => sum + (cached?.inputTokens ?? 0),
+          0,
+        ),
+        cacheMissTokens: providerInputTokens,
+        cacheHitCalls: input.queries.length - missingIndexes.length,
+      },
       vectorSearchMs: Date.now() - vectorStartedAt,
     };
   }
@@ -1109,6 +1151,25 @@ async function measureAsync<T>(promise: Promise<T>) {
     value,
     durationMs: Date.now() - startedAt,
   };
+}
+
+function allocateEmbeddingTokens(totalTokens: number, texts: string[]) {
+  if (texts.length === 0) return [];
+  const total = Math.max(0, Math.floor(totalTokens));
+  if (total === 0) return texts.map(() => 0);
+
+  const weights = texts.map((text) => Math.max(1, text.trim().length));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  const raw = weights.map((weight) => (total * weight) / weightTotal);
+  const allocated = raw.map(Math.floor);
+  const remaining = total - allocated.reduce((sum, value) => sum + value, 0);
+  const remainderOrder = raw
+    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+    .sort((left, right) => right.remainder - left.remainder);
+  for (let index = 0; index < remaining; index += 1) {
+    allocated[remainderOrder[index % remainderOrder.length].index] += 1;
+  }
+  return allocated;
 }
 
 function positiveInteger(value: number, fallback: number) {

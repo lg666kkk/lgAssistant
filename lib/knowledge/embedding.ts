@@ -28,6 +28,17 @@ export type EmbeddingProviderResponse = {
     index: number;
     embedding: unknown;
   }>;
+  usage?: {
+    promptTokens?: number;
+    totalTokens?: number;
+  };
+};
+
+export type EmbeddingUsage = {
+  model: string;
+  inputTokens: number;
+  totalTokens: number;
+  modelCallCount: number;
 };
 
 export type EmbeddingProvider = {
@@ -51,6 +62,8 @@ export type EmbeddingBatchEvent = {
   nextDelayMs?: number;
   retryable?: boolean;
   error?: string;
+  inputTokens?: number;
+  totalTokens?: number;
 };
 
 export type EmbedBatchOptions = {
@@ -108,8 +121,11 @@ export class EmbeddingClient {
    * @param text 文本内容
    * @returns 1024 维向量数组
    */
-  async embedSingle(text: string): Promise<number[]> {
-    const embeddings = await this.embedBatch([text]);
+  async embedSingle(
+    text: string,
+    options: EmbedBatchOptions = {},
+  ): Promise<number[]> {
+    const embeddings = await this.embedBatch([text], options);
     return embeddings[0];
   }
 
@@ -246,6 +262,8 @@ export class EmbeddingClient {
         idempotencyKey: input.idempotencyKey,
         providerIndexes: normalized.providerIndexes,
         reordered: normalized.reordered,
+        inputTokens: normalized.inputTokens,
+        totalTokens: normalized.totalTokens,
       });
 
       return normalized.embeddings;
@@ -308,6 +326,10 @@ function createOpenAICompatibleProvider(): EmbeddingProvider {
           index: item.index,
           embedding: item.embedding,
         })),
+        usage: {
+          promptTokens: response.usage?.prompt_tokens,
+          totalTokens: response.usage?.total_tokens,
+        },
       };
     },
   };
@@ -320,6 +342,8 @@ function normalizeEmbeddingResponse(
   embeddings: number[][];
   providerIndexes: number[];
   reordered: boolean;
+  inputTokens: number;
+  totalTokens: number;
 } {
   if (!response || !Array.isArray(response.data)) {
     throw new EmbeddingIntegrityError('provider 未返回 embedding data 数组');
@@ -363,7 +387,17 @@ function normalizeEmbeddingResponse(
     embeddings,
     providerIndexes,
     reordered: providerIndexes.some((providerIndex, index) => providerIndex !== index),
+    inputTokens: nonNegativeUsageToken(response.usage?.promptTokens),
+    totalTokens: nonNegativeUsageToken(
+      response.usage?.totalTokens ?? response.usage?.promptTokens,
+    ),
   };
+}
+
+function nonNegativeUsageToken(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0;
 }
 
 function validateEmbeddingInputs(texts: string[]) {

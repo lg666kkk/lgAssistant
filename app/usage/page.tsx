@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { authFetch } from "@/lib/auth/client";
@@ -8,8 +8,11 @@ import { authFetch } from "@/lib/auth/client";
 type UsageSummary = {
   model: string;
   modelName: string;
+  category: "all" | "chat" | "embedding" | "rerank";
+  inputPriceCnyPerMillionTokens?: number;
   requestCount: number;
   modelCallCount: number;
+  cacheHitCalls: number;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -18,6 +21,7 @@ type UsageSummary = {
   cacheCreationTokens: number;
   cacheHitRate: number;
   estimatedCostCny: number;
+  cacheSavedCostCny: number;
 };
 
 type UsageRequest = {
@@ -99,49 +103,100 @@ function TokenBar({ usage }: { usage: UsageSummary }) {
   const output = (usage.outputTokens / total) * 100;
 
   return (
-    <div>
-      <div className="flex h-3 overflow-hidden rounded-full bg-slate-800">
-        <div className="bg-emerald-500" style={{ width: `${hit}%` }} />
-        <div className="bg-amber-500" style={{ width: `${creation}%` }} />
-        <div className="bg-sky-500" style={{ width: `${miss}%` }} />
-        <div className="bg-violet-500" style={{ width: `${output}%` }} />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span>缓存读取 {formatTokens(usage.cacheHitTokens)}</span>
-        <span>缓存创建 {formatTokens(usage.cacheCreationTokens)}</span>
-        <span>普通输入 {formatTokens(usage.cacheMissTokens)}</span>
-        <span>输出 {formatTokens(usage.outputTokens)}</span>
-      </div>
+    <div className="flex h-1.5 overflow-hidden rounded-full bg-slate-800">
+      <div className="bg-emerald-500" style={{ width: `${hit}%` }} />
+      <div className="bg-amber-500" style={{ width: `${creation}%` }} />
+      <div className="bg-sky-500" style={{ width: `${miss}%` }} />
+      <div className="bg-violet-500" style={{ width: `${output}%` }} />
+    </div>
+  );
+}
+
+function ModelMetric({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] text-slate-600">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium text-slate-300">{value}</div>
+      {sub && <div className="mt-0.5 truncate text-[11px] text-slate-600">{sub}</div>}
     </div>
   );
 }
 
 function ModelRow({ model }: { model: UsageSummary }) {
+  const categoryLabel = model.category === "embedding"
+    ? "向量模型"
+    : model.category === "rerank"
+      ? "重排模型"
+      : "对话模型";
+  const inputLabel = model.category === "chat" ? "输入总量" : "实际输入";
+  const secondaryMetric = model.category === "chat"
+    ? { label: "输出", value: formatTokens(model.outputTokens) }
+    : model.category === "embedding"
+      ? { label: "缓存避免", value: formatTokens(model.cacheHitTokens) }
+      : { label: "输出", value: "不计费" };
+  const cacheMetric = model.category === "rerank"
+    ? { value: "未启用", sub: "当前无缓存" }
+    : {
+        value: `${(model.cacheHitRate * 100).toFixed(1)}%`,
+        sub: `${model.cacheHitCalls} 次命中`,
+      };
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/30 px-4 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="font-medium text-slate-100">{model.modelName}</div>
-          <div className="mt-1 text-xs text-slate-600">{model.model}</div>
+    <div className="px-4 py-4 sm:px-5">
+      <div className="grid grid-cols-2 items-start gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-[minmax(230px,1.5fr)_repeat(4,minmax(90px,.7fr))_minmax(130px,.8fr)] lg:items-center">
+        <div className="col-span-2 min-w-0 sm:col-span-3 lg:col-span-1">
+          <div className="truncate text-sm font-medium text-slate-100">
+            {model.modelName}
+          </div>
+          <div className="mt-1 truncate text-xs text-slate-600">
+            {categoryLabel} · {model.model}
+          </div>
+          {typeof model.inputPriceCnyPerMillionTokens === "number" && (
+            <div className="mt-1 text-[11px] text-slate-600">
+              ¥{model.inputPriceCnyPerMillionTokens.toFixed(2)} / 百万输入 Token
+            </div>
+          )}
         </div>
-        <div className="text-right">
-          <div className="font-semibold text-slate-100">
+        <ModelMetric
+          label="调用"
+          value={`${model.modelCallCount} 次`}
+          sub={`${model.requestCount} 个请求`}
+        />
+        <ModelMetric label={inputLabel} value={formatTokens(model.inputTokens)} />
+        <ModelMetric label={secondaryMetric.label} value={secondaryMetric.value} />
+        <ModelMetric label="缓存" value={cacheMetric.value} sub={cacheMetric.sub} />
+        <div className="min-w-0 text-left lg:text-right">
+          <div className="text-[11px] text-slate-600">估算费用</div>
+          <div className="mt-1 text-base font-semibold text-slate-100">
             {formatCny(model.estimatedCostCny)}
           </div>
-          <div className="mt-1 text-xs text-slate-500">
-            {model.requestCount} 请求 · {model.modelCallCount} 调用
-          </div>
+          {model.cacheSavedCostCny > 0 && (
+            <div className="mt-0.5 text-[11px] text-emerald-500">
+              节省 {formatCny(model.cacheSavedCostCny)}
+            </div>
+          )}
         </div>
       </div>
-      <div className="mt-3">
-        <TokenBar usage={model} />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500 sm:grid-cols-4">
-        <span>总量 {formatTokens(model.totalTokens)}</span>
-        <span>输入 {formatTokens(model.inputTokens)}</span>
-        <span>输出 {formatTokens(model.outputTokens)}</span>
-        <span>命中率 {(model.cacheHitRate * 100).toFixed(1)}%</span>
-      </div>
+      {model.category === "chat" && (
+        <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(230px,1.5fr)_minmax(0,3.6fr)_minmax(130px,.8fr)] lg:items-center">
+          <div className="hidden text-[11px] text-slate-600 lg:block">
+            总量 {formatTokens(model.totalTokens)}
+          </div>
+          <TokenBar usage={model} />
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-600 lg:justify-end">
+            <span className="text-emerald-500/80">缓存 {formatTokens(model.cacheHitTokens)}</span>
+            <span className="text-sky-500/80">输入 {formatTokens(model.cacheMissTokens)}</span>
+            <span className="text-violet-500/80">输出 {formatTokens(model.outputTokens)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -154,10 +209,11 @@ export default function UsagePage() {
   const [error, setError] = useState<string | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const hasLoadedRef = useRef(false);
   const pageSize = 10;
 
   useEffect(() => {
-    const isInitialLoad = !data;
+    const isInitialLoad = !hasLoadedRef.current;
     if (isInitialLoad) {
       setLoading(true);
     } else {
@@ -170,7 +226,10 @@ export default function UsagePage() {
         if (!r.ok) throw new Error(payload.error || "加载失败");
         return payload;
       })
-      .then((payload) => setData(payload))
+      .then((payload) => {
+        setData(payload);
+        hasLoadedRef.current = true;
+      })
       .catch((e) => setError(e.message))
       .finally(() => {
         setLoading(false);
@@ -230,7 +289,7 @@ export default function UsagePage() {
 
         {data && (
           <>
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               <Stat
                 label="DeepSeek 余额"
                 value={formatBalance(primaryBalance, "total_balance")}
@@ -249,7 +308,12 @@ export default function UsagePage() {
                 }
               />
               <Stat label="估算总费用" value={formatCny(data.total.estimatedCostCny)} />
-              <Stat label="真实总 tokens" value={formatTokens(data.total.totalTokens)} />
+              <Stat
+                label="缓存节省金额"
+                value={formatCny(data.total.cacheSavedCostCny)}
+                sub="按未命中价格估算"
+              />
+              <Stat label="供应商 Tokens" value={formatTokens(data.total.totalTokens)} />
               <Stat
                 label="缓存命中率"
                 value={`${(data.total.cacheHitRate * 100).toFixed(1)}%`}
@@ -258,7 +322,7 @@ export default function UsagePage() {
               <Stat
                 label="模型调用"
                 value={String(data.total.modelCallCount)}
-                sub={`${data.total.requestCount} 个请求`}
+                sub={`${data.total.requestCount} 个请求 · ${data.total.cacheHitCalls} 次缓存命中`}
               />
             </div>
 
@@ -266,21 +330,25 @@ export default function UsagePage() {
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-medium text-slate-100">总量构成</h2>
                 <span className="text-xs text-slate-600">
-                  输入 {formatTokens(data.total.inputTokens)} · 输出{" "}
-                  {formatTokens(data.total.outputTokens)}
+                  Trace 估算，不替代供应商账单
                 </span>
               </div>
-              <TokenBar usage={data.total} />
+              <div className="grid grid-cols-2 gap-3 text-xs text-slate-500 sm:grid-cols-4">
+                <span>实际输入 {formatTokens(data.total.inputTokens)}</span>
+                <span>输出 {formatTokens(data.total.outputTokens)}</span>
+                <span>缓存命中 {formatTokens(data.total.cacheHitTokens)}</span>
+                <span>缓存未命中 {formatTokens(data.total.cacheMissTokens)}</span>
+              </div>
             </div>
 
-            <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_1.25fr]">
+            <div className="mt-6 space-y-6">
               <section>
                 <h2 className="mb-3 text-sm font-medium text-slate-100">
                   按模型拆分
                 </h2>
-                <div className="space-y-3">
+                <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/20 divide-y divide-slate-800">
                   {data.models.length === 0 ? (
-                    <div className="rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                    <div className="px-4 py-8 text-center text-sm text-slate-500">
                       还没有可统计的模型 usage。
                     </div>
                   ) : (
@@ -308,8 +376,8 @@ export default function UsagePage() {
                     </span>
                   )}
                 </div>
-                <div className="overflow-hidden rounded-lg border border-slate-800">
-                  <table className="w-full text-left text-xs">
+                <div className="overflow-x-auto rounded-lg border border-slate-800">
+                  <table className="min-w-[760px] w-full text-left text-xs">
                     <thead className="bg-slate-900 text-slate-500">
                       <tr>
                         <th className="px-3 py-2 font-medium">时间</th>
@@ -317,6 +385,7 @@ export default function UsagePage() {
                         <th className="px-3 py-2 font-medium">模型</th>
                         <th className="px-3 py-2 text-right font-medium">Tokens</th>
                         <th className="px-3 py-2 text-right font-medium">费用</th>
+                        <th className="px-3 py-2 text-right font-medium">缓存节省</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800 bg-slate-950/30">
@@ -342,12 +411,15 @@ export default function UsagePage() {
                           <td className="px-3 py-2 text-right text-slate-300">
                             {formatCny(item.usage.estimatedCostCny)}
                           </td>
+                          <td className="px-3 py-2 text-right text-emerald-600">
+                            {formatCny(item.usage.cacheSavedCostCny)}
+                          </td>
                         </tr>
                       ))}
                       {recent.length === 0 && (
                         <tr>
                           <td
-                            colSpan={5}
+                            colSpan={6}
                             className="px-3 py-8 text-center text-slate-500"
                           >
                             还没有带真实 usage 的请求。

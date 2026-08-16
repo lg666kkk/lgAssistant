@@ -185,6 +185,7 @@ export function createRecallMemoryTool(options: {
               memoryCandidateCount: result.candidates.length,
               memorySelectedCount: 0,
               memoryThreshold: result.threshold,
+              memoryEmbeddingUsage: result.embeddingUsage,
               memoryRerank: redactSensitiveValue(result.rerankTrace),
             },
           };
@@ -214,6 +215,7 @@ export function createRecallMemoryTool(options: {
             memorySelectedCount: memories.length,
             memoryThreshold: result.threshold,
             memoryKeys: memories.map((item) => item.key),
+            memoryEmbeddingUsage: result.embeddingUsage,
             memoryRerank: redactSensitiveValue(result.rerankTrace),
           },
         };

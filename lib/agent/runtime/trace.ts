@@ -12,6 +12,7 @@ import type {
 import type { ContextPlan } from "@/lib/agent/context/types";
 import type { MemoryConsolidationOutcome } from "@/lib/agent/memory/memory-flow";
 import type { MemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
+import type { EmbeddingUsage } from "@/lib/knowledge/embedding";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -148,6 +149,7 @@ export type MemoryRecallTraceStep = TraceStepBase & {
   selectedCount: number;
   selectedTypes: Record<string, number>;
   selectedSources: Record<string, number>;
+  embeddingUsage?: EmbeddingUsage;
   rerank: MemoryRerankTrace;
 };
 
