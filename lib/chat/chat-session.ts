@@ -6,6 +6,7 @@ import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
 import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
 import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
+import type { ReasoningEventData } from "@/lib/agent/runtime/events";
 import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
@@ -31,6 +32,7 @@ export interface Message {
     metadata?: Record<string, unknown>;
   }>;
   modelUsages?: ModelUsageEventData[];
+  reasoning?: ReasoningEventData[];
   planSteps?: PlanProgressEventData[];
   plan?: ExecutionPlanData;
 }
@@ -71,6 +73,7 @@ export class ChatSession {
       sources: msg.sources,
       toolCalls: msg.metadata?.toolCalls,
       modelUsages: msg.metadata?.modelUsages,
+      reasoning: msg.metadata?.reasoning,
       planSteps: msg.metadata?.planSteps,
       plan: msg.metadata?.plan,
     };
@@ -199,6 +202,15 @@ export class ChatSession {
           case "text":
             last().content += evt.content;
             break;
+          case "reasoning": {
+            const reasoning = (last().reasoning ??= []);
+            const current = reasoning.find(
+              (item) => item.id === evt.reasoning.id,
+            );
+            if (current) current.content += evt.reasoning.content;
+            else reasoning.push({ ...evt.reasoning });
+            break;
+          }
           case "tool_call":
             (last().toolCalls ??= []).push(evt.toolCall);
             break;
@@ -343,6 +355,7 @@ export class ChatSession {
             ...metadata,
             toolCalls: lastMessage.toolCalls,
             modelUsages: lastMessage.modelUsages,
+            reasoning: lastMessage.reasoning,
             planSteps: lastMessage.planSteps,
             plan: lastMessage.plan,
           },

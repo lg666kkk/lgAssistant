@@ -46,6 +46,9 @@ import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 type ModelMessage = Anthropic.MessageParam;
 type ModelContentBlock = Anthropic.Messages.ContentBlock;
 type ToolUseBlock = Anthropic.Messages.ToolUseBlock;
+type DeepSeekAssistantMessage = Anthropic.MessageParam & {
+  reasoning_content?: string;
+};
 
 export type AgentLoopMetrics = {
   estimatedTokensSpent: number;
@@ -170,13 +173,19 @@ export function extractToolUses(content: ModelContentBlock[]): ToolUseBlock[] {
 
 export function appendToolResults(
   loopMessages: ModelMessage[],
-  assistantResponse: Anthropic.Message,
+  assistantResponse: Anthropic.Message & { reasoning_content?: string },
   toolResultBlocks: ToolResultBlock[],
 ): ModelMessage[] {
   return [
     ...loopMessages,
     // role 必须是字面量类型 "assistant" | "user"，不能是宽泛的 string
-    { role: "assistant" as const, content: assistantResponse.content },
+    {
+      role: "assistant" as const,
+      content: assistantResponse.content,
+      ...(assistantResponse.reasoning_content
+        ? { reasoning_content: assistantResponse.reasoning_content }
+        : {}),
+    } as DeepSeekAssistantMessage,
     { role: "user" as const, content: toolResultBlocks },
   ];
 }
@@ -422,21 +431,23 @@ export async function callModel(
   tools: Anthropic.Tool[],
   system?: string,
   onTextDelta?: (text: string) => void,
+  onReasoningDelta?: (text: string) => void,
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
   telemetryFunctionId?: string,
-): Promise<Anthropic.Message> {
+): Promise<Anthropic.Message & { reasoning_content?: string }> {
   const result = await callModelWithProvider({
     messages,
     tools,
     system,
     onTextDelta,
+    onReasoningDelta,
     model,
     telemetryMetadata,
     telemetryFunctionId,
   });
 
-  return result as Anthropic.Message;
+  return result as Anthropic.Message & { reasoning_content?: string };
 }
 
 const COMPACTION_SYSTEM_PROMPT = `你负责压缩较早的对话上下文，供同一个 agent 继续完成当前任务。
@@ -982,6 +993,7 @@ export async function runAgentLoop(
   initialEvidenceBundles: EvidenceBundle[] = [],
   contextPlan?: ContextPlan,
   initialSatisfiedCapabilities: Iterable<string> = [],
+  onReasoning?: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) => void,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -1222,6 +1234,18 @@ export async function runAgentLoop(
       || mergeEvidenceBundles(evidenceBundles).length > 0;
     const onTextDelta = (text: string) =>
       enqueueEvent({ type: "text", content: text }, enqueueText);
+    const onReasoningDelta = (text: string) => {
+      const reasoning = {
+        id: `${requestId || "agent-loop"}:${metrics.modelCallCount}`,
+        modelCallIndex: metrics.modelCallCount,
+        content: text,
+      };
+      enqueueEvent({
+        type: "reasoning",
+        reasoning,
+      }, enqueueText);
+      onReasoning?.(reasoning);
+    };
     const loopTelemetry = buildAgentLoopTelemetry({
       messages: loopMessages,
     });
@@ -1230,6 +1254,7 @@ export async function runAgentLoop(
       tools,
       system,
       onTextDelta,
+      onReasoningDelta,
       model,
       {
         operation: "agent-loop",
@@ -1369,7 +1394,10 @@ export async function runAgentLoop(
         {
           role: "assistant" as const,
           content: initialResponse.content,
-        },
+          ...(initialResponse.reasoning_content
+            ? { reasoning_content: initialResponse.reasoning_content }
+            : {}),
+        } as DeepSeekAssistantMessage,
       ];
       return {
         loopMessages,
@@ -1627,12 +1655,14 @@ export async function streamModelResponse(
   system?: string,
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
+  onReasoningDelta?: (text: string) => void,
 ) {
   return streamTextWithProvider({
     model,
     messages,
     system,
     telemetryMetadata,
+    onReasoningDelta,
   });
 }
 

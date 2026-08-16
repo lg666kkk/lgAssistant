@@ -734,6 +734,8 @@ export async function POST(req: Request) {
           contextPlan,
           shouldStop: () => req.signal.aborted || closed,
           onProgress: (plan: PlanProgressEventData) => enqueueEvent({ type: "plan_progress", plan }, enqueueText),
+          onReasoning: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) =>
+            enqueueEvent({ type: "reasoning", reasoning }, enqueueText),
         };
         const requiresPlanReview = shouldUsePlanAndExecute(lastUser?.content ?? "");
         if (!approvedPlan && requiresPlanReview) {
@@ -860,12 +862,23 @@ export async function POST(req: Request) {
           || mergeEvidenceBundles(evidenceBundles).length > 0;
         // 调用 LLM API，stream: true 表示启用流式响应（逐块返回，而非等全部生成完）
         let stream;
+        let finalReasoningContent = "";
         stream = await streamModelResponse(loopMessages, systemPrompt, selectedModel, {
           operation: "final-answer",
           requestId,
           sessionId,
           userId: user.id,
           messageCount: loopMessages.length,
+        }, (text) => {
+          finalReasoningContent += text;
+          enqueueEvent({
+            type: "reasoning",
+            reasoning: {
+              id: `${requestId}:final`,
+              modelCallIndex: agentLoopResult.metrics.modelCallCount + 1,
+              content: text,
+            },
+          }, enqueueText);
         });
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
@@ -938,7 +951,11 @@ export async function POST(req: Request) {
         );
         const completedMessages = [
           ...loopMessages,
-          { role: "assistant" as const, content: finalAssistantText },
+          {
+            role: "assistant" as const,
+            content: finalAssistantText,
+            ...(finalReasoningContent ? { reasoning_content: finalReasoningContent } : {}),
+          },
         ];
         await persistSnapshot(completedMessages).catch((error: any) =>
           console.error("[context-snapshot] 保存失败:", error.message));

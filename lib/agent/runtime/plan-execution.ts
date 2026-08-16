@@ -12,6 +12,7 @@ import type {
   ExecutionPlanData,
   PlanExecutionControlData,
   PlanProgressEventData,
+  ReasoningEventData,
   PlanStepResultData,
   PlanStepData,
 } from "@/lib/agent/runtime/events";
@@ -54,6 +55,7 @@ export type PlanAndExecuteInput = {
   contextPlan?: ContextPlan;
   shouldStop?: () => boolean;
   onProgress?: (progress: PlanProgressEventData) => void;
+  onReasoning?: (reasoning: ReasoningEventData) => void;
 };
 
 const MAX_PLAN_STEPS = 4;
@@ -580,6 +582,7 @@ export async function executePlan(
       // capability 跨 step 传递：前一步已经成功获取时间时，后续 Web step 不应
       // 再次调用时间工具。runAgentLoop 只信任这份成功执行集合，不从文本猜测。
       usedCapabilities,
+      input.onReasoning,
     );
     loopMessages = result.loopMessages;
     addMetrics(metrics, result.metrics);

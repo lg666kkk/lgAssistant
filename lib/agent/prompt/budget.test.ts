@@ -43,6 +43,16 @@ describe("prompt hard budget", () => {
     expect(prompt.segments.some((item) => item.source === "user")).toBe(false);
   });
 
+  it("requires reasoning and answers to follow the user's language", () => {
+    const prompt = buildPromptPipe({
+      userMessage: "请分析这个问题",
+      maxTokens: 500,
+    });
+
+    expect(prompt.systemPrompt).toContain("与用户当前消息相同的主要语言");
+    expect(prompt.systemPrompt).toContain("思考过程（reasoning_content）和最终回答都必须使用中文");
+  });
+
   it("includes memory operation results as trusted runtime context", () => {
     const prompt = buildPromptPipe({
       memoryOperation: "系统已完成忘记请求：1 条记忆已软失效。",

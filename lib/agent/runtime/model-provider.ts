@@ -26,11 +26,129 @@ type CompactModelTelemetryMetadata = Record<string, string | number | boolean>;
 export type ModelCallResult = {
   content: ModelContentBlock[];
   stop_reason: Anthropic.Messages.StopReason;
+  reasoning_content?: string;
   usage?: Anthropic.Message["usage"] & {
     cache_read_input_tokens?: number | null;
     cache_creation_input_tokens?: number | null;
   };
 };
+
+export type DeepSeekReasoningEffort = "low" | "high" | "max";
+
+type DeepSeekAssistantMessage = ModelMessage & {
+  reasoning_content?: string;
+};
+
+function isDeepSeekChatCompletionsRequest(input: RequestInfo | URL) {
+  const url = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+  return url.includes("/chat/completions");
+}
+
+function withDeepSeekThinkingBody(
+  body: string,
+  messages: DeepSeekAssistantMessage[] = [],
+) {
+  try {
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    payload.thinking = { type: "enabled" };
+    payload.reasoning_effort = "high";
+    delete payload.temperature;
+    delete payload.top_p;
+    delete payload.presence_penalty;
+    delete payload.frequency_penalty;
+
+    if (Array.isArray(payload.messages)) {
+      const assistantReasoning = messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.reasoning_content);
+      let assistantIndex = 0;
+      payload.messages = payload.messages.map((message) => {
+        if (!message || typeof message !== "object" || Array.isArray(message)) {
+          return message;
+        }
+        if ((message as { role?: unknown }).role !== "assistant") return message;
+        const reasoningContent = assistantReasoning[assistantIndex++];
+        return typeof reasoningContent === "string" && reasoningContent
+          ? { ...message, reasoning_content: reasoningContent }
+          : message;
+      });
+    }
+
+    return JSON.stringify(payload);
+  } catch {
+    return body;
+  }
+}
+
+function reasoningDeltaFromSseLine(line: string) {
+  if (!line.startsWith("data:")) return "";
+  const data = line.slice(5).trim();
+  if (!data || data === "[DONE]") return "";
+  try {
+    const payload = JSON.parse(data) as {
+      choices?: Array<{ delta?: { reasoning_content?: unknown } }>;
+    };
+    const reasoningDelta = payload.choices?.[0]?.delta?.reasoning_content;
+    return typeof reasoningDelta === "string" ? reasoningDelta : "";
+  } catch {
+    return "";
+  }
+}
+
+function observeReasoningStream(
+  response: Response,
+  onReasoningDelta?: (text: string) => void,
+) {
+  if (!response.body || !onReasoningDelta) return response;
+  const decoder = new TextDecoder();
+  let pending = "";
+  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      pending += decoder.decode(chunk, { stream: true });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const reasoningDelta = reasoningDeltaFromSseLine(line);
+        if (reasoningDelta) onReasoningDelta(reasoningDelta);
+      }
+      controller.enqueue(chunk);
+    },
+    flush() {
+      pending += decoder.decode();
+      const reasoningDelta = reasoningDeltaFromSseLine(pending);
+      if (reasoningDelta) onReasoningDelta(reasoningDelta);
+    },
+  }));
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+export function createDeepSeekThinkingFetch(
+  baseFetch: typeof fetch = fetch,
+  messages: DeepSeekAssistantMessage[] = [],
+  onReasoningDelta?: (text: string) => void,
+): typeof fetch {
+  return async (input, init) => {
+    if (
+      !isDeepSeekChatCompletionsRequest(input)
+      || typeof init?.body !== "string"
+    ) {
+      return baseFetch(input, init);
+    }
+    const response = await baseFetch(input, {
+      ...init,
+      body: withDeepSeekThinkingBody(init.body, messages),
+    });
+    return observeReasoningStream(response, onReasoningDelta);
+  };
+}
 
 function resolveOpenAIBaseURL() {
   if (process.env.AI_SDK_BASE_URL) return process.env.AI_SDK_BASE_URL;
@@ -42,11 +160,21 @@ function resolveOpenAIBaseURL() {
   return deepseekConfig.baseURL;
 }
 
-const provider = createOpenAI({
-  name: "deepseek",
-  apiKey: deepseekConfig.apiKey,
-  baseURL: resolveOpenAIBaseURL(),
-});
+function createProvider(
+  messages: ModelMessage[] = [],
+  onReasoningDelta?: (text: string) => void,
+) {
+  return createOpenAI({
+    name: "deepseek",
+    apiKey: deepseekConfig.apiKey,
+    baseURL: resolveOpenAIBaseURL(),
+    fetch: createDeepSeekThinkingFetch(
+      fetch,
+      messages as DeepSeekAssistantMessage[],
+      onReasoningDelta,
+    ),
+  });
+}
 
 function toAIMessage(
   message: ModelMessage,
@@ -56,6 +184,10 @@ function toAIMessage(
     return {
       role: message.role,
       content: message.content,
+      ...(message.role === "assistant"
+        && typeof (message as DeepSeekAssistantMessage).reasoning_content === "string"
+        ? { reasoning_content: (message as DeepSeekAssistantMessage).reasoning_content }
+        : {}),
     };
   }
 
@@ -97,6 +229,10 @@ function toAIMessage(
   return {
     role: hasOnlyToolResults ? "tool" : message.role,
     content,
+    ...(message.role === "assistant"
+      && typeof (message as DeepSeekAssistantMessage).reasoning_content === "string"
+      ? { reasoning_content: (message as DeepSeekAssistantMessage).reasoning_content }
+      : {}),
   };
 }
 
@@ -172,11 +308,17 @@ export async function callModelWithProvider(input: {
   tools: Anthropic.Tool[];
   system?: string;
   onTextDelta?: (text: string) => void;
+  onReasoningDelta?: (text: string) => void;
   model: ChatModelId;
   telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<ModelCallResult> {
   const functionId = input.telemetryFunctionId ?? "agent-loop-model-call";
+  let reasoningContent = "";
+  const provider = createProvider(input.messages, (reasoningDelta) => {
+    reasoningContent += reasoningDelta;
+    input.onReasoningDelta?.(reasoningDelta);
+  });
   const result = streamText({
     model: provider.chat(input.model),
     maxOutputTokens: deepseekConfig.maxTokens,
@@ -236,6 +378,7 @@ export async function callModelWithProvider(input: {
   return {
     content,
     stop_reason: toStopReason(finishReason),
+    reasoning_content: reasoningContent || undefined,
     usage: toAnthropicUsage(usage),
   };
 }
@@ -248,6 +391,7 @@ export async function generateTextWithProvider(input: {
   telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
 }) {
+  const provider = createProvider();
   const result = await generateText({
     model: provider.chat(input.model),
     maxOutputTokens: input.maxOutputTokens,
@@ -272,7 +416,9 @@ export async function streamTextWithProvider(input: {
   system?: string;
   model: ChatModelId;
   telemetryMetadata?: ModelTelemetryMetadata;
+  onReasoningDelta?: (text: string) => void;
 }) {
+  const provider = createProvider(input.messages, input.onReasoningDelta);
   const result = streamText({
     model: provider.chat(input.model),
     maxOutputTokens: deepseekConfig.maxTokens,
@@ -290,8 +436,18 @@ export async function streamTextWithProvider(input: {
     },
   });
 
+  async function* textStream() {
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") {
+        yield part.text;
+      } else if (part.type === "error") {
+        throw part.error;
+      }
+    }
+  }
+
   return {
-    textStream: result.textStream,
+    textStream: textStream(),
     finishReason: result.finishReason,
   };
 }

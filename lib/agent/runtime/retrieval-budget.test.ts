@@ -70,6 +70,11 @@ describe("agent retrieval tool budget", () => {
     );
     expect(toolResultTexts).toHaveLength(2);
     expect(toolResultTexts.some((text) => text.includes("检索预算"))).toBe(true);
+    expect(callModelMock.mock.calls[1][0]).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+      }),
+    );
     expect(result.completed).toBe(true);
   });
 });

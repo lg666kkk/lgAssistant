@@ -11,6 +11,7 @@ import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
 import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
 import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
+import type { ReasoningEventData } from "@/lib/agent/runtime/events";
 import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -92,6 +93,63 @@ function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) {
       <span title="按模型价格估算的本次费用">
         约 ¥{usage.estimatedCostCny.toFixed(4)}
       </span>
+    </div>
+  );
+}
+
+function ReasoningPanel({
+  reasoning,
+  streaming,
+}: {
+  reasoning?: ReasoningEventData[];
+  streaming: boolean;
+}) {
+  const [open, setOpen] = useState(streaming);
+
+  useEffect(() => {
+    if (streaming && reasoning?.length) setOpen(true);
+  }, [streaming, reasoning?.length]);
+
+  if (!reasoning?.length) return null;
+  const content = [...reasoning]
+    .sort((left, right) => left.modelCallIndex - right.modelCallIndex)
+    .map((item) => item.content.trim())
+    .filter(Boolean)
+    .join("\n\n---\n\n");
+  if (!content) return null;
+
+  return (
+    <div className="mb-3 overflow-hidden rounded-lg border border-violet-800/60 bg-violet-950/20">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={open ? "收起思考过程" : "展开思考过程"}
+        title={open ? "收起思考过程" : "展开思考过程"}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-violet-200 hover:bg-violet-900/20"
+      >
+        <span className="font-medium">
+          {streaming ? "正在思考" : "思考过程"}
+        </span>
+        <svg
+          aria-hidden="true"
+          className={`h-4 w-4 shrink-0 text-violet-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="max-h-80 overflow-y-auto border-t border-violet-800/40 px-3 py-2 text-xs leading-6 text-slate-400">
+          <MessageMarkdown content={content} />
+          {streaming && <span className="ml-1 inline-block animate-pulse text-violet-300">●</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -783,7 +841,15 @@ export default function Home() {
                         : "w-full bg-slate-800 text-slate-200"
                     } ${isStreaming ? "streaming-msg" : ""}`}
                   >
-                    <MessageMarkdown content={msg.content || (loading ? "思考中..." : "")} />
+                    {msg.role === "assistant" && (
+                      <ReasoningPanel
+                        reasoning={msg.reasoning}
+                        streaming={isStreaming}
+                      />
+                    )}
+                    <MessageMarkdown
+                      content={msg.content || (isStreaming && !msg.reasoning?.length ? "思考中..." : "")}
+                    />
                     {msg.role === "assistant" && msg.plan && !msg.planSteps?.length && (
                       <PlanReview
                         plan={msg.plan}

@@ -18,6 +18,17 @@ export interface TextEvent {
     content: string;
 }
 
+export interface ReasoningEventData {
+  id: string;
+  modelCallIndex: number;
+  content: string;
+}
+
+export interface ReasoningEvent {
+  type: "reasoning";
+  reasoning: ReasoningEventData;
+}
+
 export interface ToolCallEvent {
     type: "tool_call";
     toolCall: ToolCallEventData;
@@ -110,6 +121,7 @@ export interface DoneEvent {
 
 export type AgentEvent =
   | TextEvent
+  | ReasoningEvent
   | ToolCallEvent
   | SourcesEvent
   | ModelUsageEvent
