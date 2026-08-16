@@ -102,20 +102,15 @@ export function useChatManager() {
   const deleteSession = useCallback(
     async (id: string) => {
       const list = sessionsRef.current;
-      if (list.length <= 1) return;
+      if (list.length <= 1) {
+        throw new Error("至少需要保留一个会话");
+      }
 
       const target = list.find((s) => s.id === id);
       target?.abort();
 
-      // 从数据库删除
-      try {
-        const sessionManager = new SessionManager(user?.id);
-        await sessionManager.deleteSession(id);
-      } catch (error) {
-        console.error('删除会话失败:', error);
-        window.alert(error instanceof Error ? error.message : "删除会话失败，请重试");
-        return;
-      }
+      const sessionManager = new SessionManager(user?.id);
+      await sessionManager.deleteSession(id);
 
       const remainingSessions = list.filter((s) => s.id !== id);
       sessionsRef.current = remainingSessions.length > 0
@@ -128,6 +123,24 @@ export function useChatManager() {
     },
     [activeId, rerender, user?.id],
   );
+
+  const renameSession = useCallback(
+    async (id: string, title: string) => {
+      const normalizedTitle = title.trim().replace(/\s+/g, " ");
+      if (!normalizedTitle) throw new Error("会话名称不能为空");
+      if (normalizedTitle.length > 60) throw new Error("会话名称不能超过 60 个字符");
+
+      const session = sessionsRef.current.find((candidate) => candidate.id === id);
+      if (!session) throw new Error("会话不存在或已被删除");
+      if (session.title === normalizedTitle) return;
+
+      const sessionManager = new SessionManager(user?.id);
+      await sessionManager.updateSessionTitle(id, normalizedTitle);
+      session.title = normalizedTitle;
+      rerender();
+    },
+    [rerender, user?.id],
+  );
   return {
     sessions,
     activeId,
@@ -136,6 +149,7 @@ export function useChatManager() {
     moveSessionToTop,
     switchSession,
     deleteSession,
+    renameSession,
     rerender,
     loading,
   };

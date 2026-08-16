@@ -128,8 +128,15 @@ function ReasoningPanel({
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-violet-200 hover:bg-violet-900/20"
       >
-        <span className="font-medium">
-          {streaming ? "正在思考" : "思考过程"}
+        <span className="flex items-center gap-2 font-medium">
+          <span>{streaming ? "正在思考" : "thinking"}</span>
+          {streaming && (
+            <span aria-hidden="true" className="flex items-center gap-1">
+              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-0.3s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-0.15s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300" />
+            </span>
+          )}
         </span>
         <svg
           aria-hidden="true"
@@ -397,6 +404,7 @@ export default function Home() {
     moveSessionToTop,
     switchSession,
     deleteSession,
+    renameSession,
     rerender,
     loading: sessionsLoading,
   } = useChatManager();
@@ -406,6 +414,14 @@ export default function Home() {
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [confirmingToolKey, setConfirmingToolKey] = useState<string | null>(null);
+  const [sessionDialog, setSessionDialog] = useState<{
+    mode: "rename" | "delete";
+    sessionId: string;
+    title: string;
+  } | null>(null);
+  const [sessionDialogTitle, setSessionDialogTitle] = useState("");
+  const [sessionDialogError, setSessionDialogError] = useState<string | null>(null);
+  const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -507,6 +523,57 @@ export default function Home() {
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
+  const openSessionDialog = (
+    mode: "rename" | "delete",
+    session: { id: string; title: string },
+  ) => {
+    setSessionDialog({ mode, sessionId: session.id, title: session.title });
+    setSessionDialogTitle(session.title);
+    setSessionDialogError(null);
+  };
+
+  const closeSessionDialog = () => {
+    if (sessionDialogBusy) return;
+    setSessionDialog(null);
+    setSessionDialogError(null);
+  };
+
+  useEffect(() => {
+    if (!sessionDialog) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !sessionDialogBusy) {
+        setSessionDialog(null);
+        setSessionDialogError(null);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [sessionDialog, sessionDialogBusy]);
+
+  const submitSessionDialog = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!sessionDialog || sessionDialogBusy) return;
+
+    setSessionDialogBusy(true);
+    setSessionDialogError(null);
+    try {
+      if (sessionDialog.mode === "rename") {
+        await renameSession(sessionDialog.sessionId, sessionDialogTitle);
+      } else {
+        await deleteSession(sessionDialog.sessionId);
+      }
+      setSessionDialog(null);
+    } catch (dialogError) {
+      setSessionDialogError(
+        dialogError instanceof Error ? dialogError.message : "操作失败，请重试",
+      );
+    } finally {
+      setSessionDialogBusy(false);
+    }
+  };
+
   const handleLoadOlderMessages = async () => {
     if (!activeSession || historyLoading) return;
     const container = messagesScrollRef.current;
@@ -585,17 +652,54 @@ export default function Home() {
               )}
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!window.confirm(`确定删除会话“${session.title}”吗？相关本地工具结果也会一并删除。`)) {
-                    return;
-                  }
-                  deleteSession(session.id);
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openSessionDialog("rename", session);
                 }}
-                className="shrink-0 text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                title="删除会话"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 opacity-0 transition-all hover:bg-slate-700/70 hover:text-cyan-300 focus-visible:opacity-100 group-hover:opacity-100"
+                title="重命名会话"
+                aria-label={`重命名会话“${session.title}”`}
               >
-                ✕
+                <svg
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openSessionDialog("delete", session);
+                }}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-20"
+                title="删除会话"
+                aria-label={`删除会话“${session.title}”`}
+                disabled={sessions.length <= 1}
+              >
+                <svg
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                  <path d="M10 11v5M14 11v5" />
+                </svg>
               </button>
             </div>
           ))}
@@ -873,17 +977,65 @@ export default function Home() {
                     {msg.role === "assistant" &&
                       msg.toolCalls &&
                       msg.toolCalls.length > 0 && (
-                        <div className="mt-3 rounded-lg border border-cyan-800 bg-cyan-950/30">
-                          <div className="mb-2 text-xs font-medium text-cyan-300">
-                            🔧 工具调用
+                        <div className="mt-3 rounded-lg bg-slate-900/20 px-3 py-2.5">
+                          <div className="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-slate-400">
+                              <span className="text-cyan-400">
+                                <svg
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M14.7 6.3a4 4 0 0 0-5-5L7.4 3.6l3 3 2.3-2.3a4 4 0 0 0 2 2Z" />
+                                  <path d="m5 12 7 7" />
+                                  <path d="m2 15 3-3 7 7-3 3Z" />
+                                </svg>
+                              </span>
+                              <span>工具调用</span>
+                              <span className="text-slate-600">·</span>
+                              <span className="text-slate-500">{msg.toolCalls.length} 次</span>
                           </div>
-                          <div className="space-y-2">
-                            {msg.toolCalls.map((toolCall, idx) => (
-                              <div key={idx} className="text-xs text-slate-300">
-                                <div>
-                                  <span className="text-slate-400">工具：</span>
-                                  <span className="font-mono text-cyan-300">
-                                    {toolCall.name}
+                          <div className="space-y-0.5">
+                            {msg.toolCalls.map((toolCall, idx) => {
+                              const toolStatus = String(toolCall.metadata?.status ?? "");
+                              const statusLabel = toolStatus === "awaiting_user_input"
+                                ? "等待回答"
+                                : toolStatus === "pending_confirmation"
+                                  ? "待确认"
+                                  : toolStatus === "confirmed"
+                                    ? "已执行"
+                                    : toolCall.ok
+                                      ? "成功"
+                                      : "失败";
+                              const statusClass = toolStatus === "awaiting_user_input"
+                                || toolStatus === "pending_confirmation"
+                                ? "text-amber-300"
+                                : toolStatus === "confirmed" || toolCall.ok
+                                  ? "text-emerald-300"
+                                  : "text-rose-300";
+                              const dotClass = toolStatus === "awaiting_user_input"
+                                || toolStatus === "pending_confirmation"
+                                ? "bg-amber-300"
+                                : toolStatus === "confirmed" || toolCall.ok
+                                  ? "bg-emerald-300"
+                                  : "bg-rose-300";
+
+                              return (
+                              <div
+                                key={idx}
+                                className="py-1 text-xs text-slate-300"
+                              >
+                                <div className="flex min-w-0 items-center gap-2 pl-0.5">
+                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+                                    <span className="truncate font-mono text-[12px] text-slate-300">
+                                      {toolCall.name}
+                                    </span>
+                                  <span className={`shrink-0 text-[10px] ${statusClass}`}>
+                                    {statusLabel}
                                   </span>
                                 </div>
                                 {/* {toolCall.input !== undefined && (
@@ -896,39 +1048,8 @@ export default function Home() {
                                     </code>
                                   </div>
                                 )} */}
-                                <div>
-                                  <span className="text-slate-400">状态：</span>
-                                  <span
-                                    className={
-                                      String(toolCall.metadata?.status) === "awaiting_user_input"
-                                        ? "font-medium text-amber-300"
-                                        : String(toolCall.metadata?.status) ===
-                                      "pending_confirmation"
-                                        ? "font-medium text-amber-300"
-                                        : String(toolCall.metadata?.status) ===
-                                            "confirmed"
-                                          ? "font-medium text-emerald-300"
-                                          : toolCall.ok
-                                            ? "font-medium text-emerald-400"
-                                            : "font-medium text-red-400"
-                                    }
-                                  >
-                                    {String(toolCall.metadata?.status) ===
-                                    "awaiting_user_input"
-                                      ? "等待用户回答"
-                                      : String(toolCall.metadata?.status) ===
-                                    "pending_confirmation"
-                                      ? "待确认"
-                                      : String(toolCall.metadata?.status) ===
-                                          "confirmed"
-                                        ? "已确认执行"
-                                        : toolCall.ok
-                                          ? "成功"
-                                          : "失败"}
-                                  </span>
-                                </div>
                                 {String(toolCall.metadata?.status) === "awaiting_user_input" && (
-                                  <div className="mt-2 space-y-1.5">
+                                  <div className="ml-3.5 mt-1.5 space-y-1.5 rounded-md bg-slate-800/30 px-3 py-2.5">
                                     <div className="text-slate-400">
                                       {String(toolCall.metadata?.question ?? toolCall.content)}
                                     </div>
@@ -959,7 +1080,7 @@ export default function Home() {
                                 <div>
                                   {String(toolCall.metadata?.status) ===
                                     "pending_confirmation" && (
-                                    <div className="mt-2 flex gap-2">
+                                    <div className="ml-3.5 mt-1.5 flex gap-2">
                                       <button
                                         type="button"
                                         disabled={confirmingToolKey === `${i}:${idx}`}
@@ -1000,7 +1121,8 @@ export default function Home() {
                                   )}
                                 </div>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -1066,6 +1188,109 @@ export default function Home() {
           disabled={!input.trim()}
         />
       </main>
+      {sessionDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeSessionDialog();
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-dialog-title"
+            aria-describedby="session-dialog-description"
+            onSubmit={submitSessionDialog}
+            className="w-full max-w-md rounded-2xl border border-slate-700/80 bg-slate-900 p-5 shadow-2xl shadow-black/50"
+          >
+            <div className="flex items-start gap-3">
+              <span
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                  sessionDialog.mode === "delete"
+                    ? "bg-rose-500/10 text-rose-300"
+                    : "bg-cyan-500/10 text-cyan-300"
+                }`}
+              >
+                {sessionDialog.mode === "delete" ? (
+                  <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 id="session-dialog-title" className="text-base font-semibold text-slate-100">
+                  {sessionDialog.mode === "delete" ? "删除会话" : "重命名会话"}
+                </h2>
+                <p id="session-dialog-description" className="mt-1 text-sm leading-6 text-slate-400">
+                  {sessionDialog.mode === "delete"
+                    ? "删除后将无法恢复，该会话的消息和本地工具结果也会一并清理。"
+                    : "输入一个清晰的名称，方便之后快速找到这个会话。"}
+                </p>
+              </div>
+            </div>
+
+            {sessionDialog.mode === "rename" ? (
+              <div className="mt-5">
+                <label htmlFor="session-title" className="mb-2 block text-xs font-medium text-slate-400">
+                  会话名称
+                </label>
+                <input
+                  id="session-title"
+                  autoFocus
+                  maxLength={60}
+                  value={sessionDialogTitle}
+                  onChange={(event) => setSessionDialogTitle(event.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-cyan-500/70 focus:ring-2 focus:ring-cyan-500/10"
+                />
+                <div className="mt-1.5 text-right text-[11px] text-slate-600">
+                  {sessionDialogTitle.trim().length}/60
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-xl bg-slate-950/60 px-3.5 py-3 text-sm text-slate-300">
+                <span className="block text-xs text-slate-500">即将删除</span>
+                <span className="mt-1 block truncate font-medium">{sessionDialog.title}</span>
+              </div>
+            )}
+
+            {sessionDialogError && (
+              <div className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                {sessionDialogError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={sessionDialogBusy}
+                onClick={closeSessionDialog}
+                className="rounded-lg px-3.5 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={sessionDialogBusy || (sessionDialog.mode === "rename" && !sessionDialogTitle.trim())}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  sessionDialog.mode === "delete"
+                    ? "bg-rose-600 hover:bg-rose-500"
+                    : "bg-cyan-600 hover:bg-cyan-500"
+                }`}
+              >
+                {sessionDialogBusy
+                  ? "处理中..."
+                  : sessionDialog.mode === "delete"
+                    ? "确认删除"
+                    : "保存名称"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
     </AuthGate>
   );
