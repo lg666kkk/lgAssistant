@@ -69,14 +69,19 @@ curl http://127.0.0.1:3000
 ## 域名与 HTTPS
 
 1. 将域名 A 记录解析到服务器公网 IP。
-2. 将 `deploy/nginx.conf` 复制到 `/etc/nginx/sites-available/personal-assistant`，并替换其中的 `example.com`。
+2. 将 `deploy/nginx.conf` 复制到 `/etc/nginx/sites-available/personal-assistant`。
 3. 启用站点并申请证书：
 
 ```bash
 ln -s /etc/nginx/sites-available/personal-assistant /etc/nginx/sites-enabled/personal-assistant
 nginx -t && systemctl reload nginx
-certbot --nginx -d example.com
+certbot --nginx --redirect -d aicharleslg.com -d www.aicharleslg.com
 ```
+
+`deploy/nginx.conf` 已配置 `aicharleslg.com` 和 `www.aicharleslg.com`，初始监听
+HTTP 80 端口。`certbot --nginx --redirect` 会申请两个域名的证书、补充 443
+HTTPS 配置，并将 HTTP 请求重定向到 HTTPS。执行 Certbot 前请确保两个域名都已
+解析到本机且安全组放行 80/443 端口。
 
 云服务器安全组只应放行 SSH（22）、HTTP（80）和 HTTPS（443）。不要将 3000
 或 6379 端口暴露到公网。Redis 没有配置宿主机端口映射，只通过 Compose 私有网络

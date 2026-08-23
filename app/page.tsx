@@ -902,7 +902,7 @@ export default function Home() {
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </button>
-          <h1 className="text-lg font-semibold text-white">个人知识助手</h1>
+          <h1 className="text-lg font-semibold text-white">知识助手</h1>
         </header>
 
         <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-4 py-6">
