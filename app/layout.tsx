@@ -3,8 +3,8 @@ import './globals.css';
 import { AuthProvider } from '@/lib/auth/use-auth';
 
 export const metadata: Metadata = {
-  title: 'Personal Assistant',
-  description: 'A Next.js application for building a personal AI assistant',
+  title: '知识助手',
+  description: '用你的知识丰富你的生活',
 };
 
 export default function RootLayout({

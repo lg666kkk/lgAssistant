@@ -1,32 +1,88 @@
 "use client";
 import { memo, useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import css from "react-syntax-highlighter/dist/esm/languages/prism/css";
+import javascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import jsx from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
+import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
+import markup from "react-syntax-highlighter/dist/esm/languages/prism/markup";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import sql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
+import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 import { useChatManager } from "./_hooks/use-chat-manager";
 import remarkGfm from "remark-gfm";
 import { ChatInput } from "./_components/chat/chat-input";
+import { ImagePreviewDialog, type PreviewImage } from "./_components/chat/image-preview-dialog";
 import type { ModelUsageEventData } from "@/lib/agent/runtime/events";
 import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
 import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
 import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
 import type { ReasoningEventData } from "@/lib/agent/runtime/events";
-import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
+import {
+  defaultChatModel,
+  supportsImageInput,
+  type ChatModelId,
+} from "@/lib/agent/models";
+import {
+  MAX_IMAGE_COUNT,
+  MAX_SINGLE_IMAGE_BYTES,
+  MAX_TOTAL_IMAGE_BYTES,
+  SUPPORTED_IMAGE_MEDIA_TYPES,
+  type ChatImageAttachment,
+  type SupportedImageMediaType,
+} from "@/lib/agent/multimodal";
+import { Image as ImageIcon } from "lucide-react";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { useAuth } from "@/lib/auth/use-auth";
+import { detectCodeLanguage } from "@/lib/markdown/code-language";
 
-const SyntaxHighlighter = dynamic(
-  () => import("react-syntax-highlighter").then((module) => module.Prism),
-  {
-    ssr: false,
-    loading: () => (
-      <pre className="overflow-x-auto rounded bg-slate-950 p-3 text-sm text-slate-300">
-        正在加载代码高亮...
-      </pre>
-    ),
-  },
-);
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("css", css);
+SyntaxHighlighter.registerLanguage("javascript", javascript);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("jsx", jsx);
+SyntaxHighlighter.registerLanguage("markdown", markdown);
+SyntaxHighlighter.registerLanguage("markup", markup);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("sql", sql);
+SyntaxHighlighter.registerLanguage("tsx", tsx);
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
+
+function CodeBlock({
+  language,
+  children,
+}: {
+  language: string;
+  children?: React.ReactNode;
+}) {
+  const code = String(children).replace(/\n$/, "");
+
+  return (
+    <SyntaxHighlighter language={language} style={oneDark}>
+      {code}
+    </SyntaxHighlighter>
+  );
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string"
+      ? resolve(reader.result)
+      : reject(new Error("读取图片失败"));
+    reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
+}
 
 function formatCompactNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
@@ -374,14 +430,16 @@ const markdownComponents = {
     return <td className="border border-slate-700 px-3 py-2 align-top text-slate-200">{children}</td>;
   },
   code({ className, children }: { className?: string; children?: React.ReactNode }) {
-    const language = className?.replace("language-", "");
-    if (!language) {
+    const code = String(children);
+    const declaredLanguage = className?.replace("language-", "");
+    const isBlock = Boolean(declaredLanguage) || code.includes("\n");
+    if (!isBlock) {
       return <code className="rounded bg-slate-700 px-1.5 py-0.5 text-sm">{children}</code>;
     }
     return (
-      <SyntaxHighlighter language={language} style={oneDark}>
-        {String(children).replace(/\n$/, "")}
-      </SyntaxHighlighter>
+      <CodeBlock language={declaredLanguage || detectCodeLanguage(code)}>
+        {children}
+      </CodeBlock>
     );
   },
 };
@@ -424,6 +482,9 @@ export default function Home() {
   const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
+  const [attachments, setAttachments] = useState<ChatImageAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLDivElement>(null);
@@ -456,16 +517,69 @@ export default function Home() {
   }, [accountMenuOpen]);
 
   const handleSend = async () => {
-    if (!input.trim() || loading || historyLoading || !activeSession) return;
+    if ((!input.trim() && attachments.length === 0) || loading || historyLoading || !activeSession) return;
     const text = input;
+    const pendingAttachments = attachments;
     setInput("");
+    setAttachments([]);
+    setAttachmentError(null);
     moveSessionToTop(activeSession.id);
     requestAnimationFrame(() => inputRef.current?.focus());
     await activeSession.send(text, rerender, {
       webSearchEnabled,
       model: selectedModel,
+      attachments: pendingAttachments,
     });
     requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleImagesSelected = async (files: File[]) => {
+    if (files.length === 0) return;
+    setAttachmentError(null);
+    if (attachments.length + files.length > MAX_IMAGE_COUNT) {
+      setAttachmentError(`每次最多上传 ${MAX_IMAGE_COUNT} 张图片`);
+      return;
+    }
+    const allowedTypes = new Set<string>(SUPPORTED_IMAGE_MEDIA_TYPES);
+    const unsupported = files.find((file) => !allowedTypes.has(file.type));
+    if (unsupported) {
+      setAttachmentError(`${unsupported.name} 不是支持的 JPEG、PNG、GIF 或 WebP 图片`);
+      return;
+    }
+    const oversized = files.find((file) => file.size > MAX_SINGLE_IMAGE_BYTES);
+    if (oversized) {
+      setAttachmentError(`${oversized.name} 超过 32 MiB`);
+      return;
+    }
+    const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.size, 0)
+      + files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+      setAttachmentError("图片总大小不能超过 32 MiB");
+      return;
+    }
+    try {
+      const nextAttachments = await Promise.all(files.map(async (file) => ({
+        id: crypto.randomUUID(),
+        name: file.name,
+        mediaType: file.type as SupportedImageMediaType,
+        size: file.size,
+        dataUrl: await readFileAsDataUrl(file),
+      })));
+      setAttachments((current) => [...current, ...nextAttachments]);
+      setSelectedModel("deepseek-v4-flash-vision-exp");
+    } catch (readError) {
+      setAttachmentError(readError instanceof Error ? readError.message : "读取图片失败");
+    }
+  };
+
+  const handleSelectedModelChange = (model: ChatModelId) => {
+    setSelectedModel(model);
+    if (attachments.length > 0 && !supportsImageInput(model)) {
+      setAttachments([]);
+      setAttachmentError("切换到文本模型后，已移除图片附件");
+    } else {
+      setAttachmentError(null);
+    }
   };
 
   const handleExecutePlan = async (plan: ExecutionPlanData) => {
@@ -951,9 +1065,45 @@ export default function Home() {
                         streaming={isStreaming}
                       />
                     )}
-                    <MessageMarkdown
-                      content={msg.content || (isStreaming && !msg.reasoning?.length ? "思考中..." : "")}
-                    />
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className={`mb-2 grid gap-2 ${msg.attachments.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                        {msg.attachments.map((attachment) => attachment.dataUrl ? (
+                          <button
+                            key={attachment.id}
+                            type="button"
+                            onClick={() => setPreviewImage({
+                              src: attachment.dataUrl!,
+                              alt: attachment.name,
+                            })}
+                            className="relative h-64 min-w-48 cursor-zoom-in overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                            title={`预览 ${attachment.name}`}
+                            aria-label={`预览图片 ${attachment.name}`}
+                          >
+                            <Image
+                              src={attachment.dataUrl}
+                              alt={attachment.name}
+                              fill
+                              unoptimized
+                              sizes="(max-width: 768px) 78vw, 640px"
+                              className="object-contain transition-transform hover:scale-[1.02]"
+                            />
+                          </button>
+                        ) : (
+                          <div
+                            key={attachment.id}
+                            className="flex min-w-0 items-center gap-2 rounded-md bg-cyan-700/40 px-3 py-2 text-xs text-cyan-50"
+                          >
+                            <ImageIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{attachment.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(msg.content || isStreaming) && (
+                      <MessageMarkdown
+                        content={msg.content || (isStreaming && !msg.reasoning?.length ? "思考中..." : "")}
+                      />
+                    )}
                     {msg.role === "assistant" && msg.plan && !msg.planSteps?.length && (
                       <PlanReview
                         plan={msg.plan}
@@ -1181,11 +1331,22 @@ export default function Home() {
           onWebSearchEnabledChange={setWebSearchEnabled}
           contextUsage={contextUsage}
           selectedModel={selectedModel}
-          onSelectedModelChange={setSelectedModel}
+          onSelectedModelChange={handleSelectedModelChange}
+          attachments={attachments}
+          attachmentError={attachmentError}
+          onImagesSelected={(files) => void handleImagesSelected(files)}
+          onRemoveAttachment={(id) => {
+            setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+            setAttachmentError(null);
+          }}
           onSend={handleSend}
           onStop={handleStop}
           isRunning={Boolean(loading || streaming || historyLoading)}
-          disabled={!input.trim()}
+          disabled={!input.trim() && attachments.length === 0}
+        />
+        <ImagePreviewDialog
+          image={previewImage}
+          onClose={() => setPreviewImage(null)}
         />
       </main>
       {sessionDialog && (

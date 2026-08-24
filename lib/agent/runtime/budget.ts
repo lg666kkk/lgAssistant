@@ -65,7 +65,26 @@ export function estimateTokensFromText(text: string) {
  * messages / content block 通常是对象或数组，所以先序列化成 JSON 再估算。
  */
 export function estimateTokens(value: unknown): number {
-  return countTokensForValue(value);
+  let imageCount = 0;
+  const seen = new WeakSet<object>();
+  const normalize = (item: unknown): unknown => {
+    if (!item || typeof item !== "object") return item;
+    if (seen.has(item)) return "[circular]";
+    seen.add(item);
+    if (Array.isArray(item)) return item.map(normalize);
+    const record = item as Record<string, unknown>;
+    if (
+      record.type === "image"
+      && record.source
+      && typeof record.source === "object"
+      && (record.source as Record<string, unknown>).type === "base64"
+    ) {
+      imageCount += 1;
+      return { type: "image", source: "[inline image]" };
+    }
+    return Object.fromEntries(Object.entries(record).map(([key, nested]) => [key, normalize(nested)]));
+  };
+  return countTokensForValue(normalize(value)) + imageCount * 384;
 }
 
 /**

@@ -11,11 +11,13 @@ import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { createUuid } from "@/lib/platform/uuid";
+import type { ChatImageAttachment } from "@/lib/agent/multimodal";
 export interface Message {
   id?: string;
   createdAt?: string;
   role: "user" | "assistant";
   content: string;
+  attachments?: ChatImageAttachment[];
   sources?: Array<{
     title: string;
     notionPageId: string;
@@ -70,6 +72,7 @@ export class ChatSession {
       createdAt: msg.created_at,
       role: msg.role,
       content: msg.content,
+      attachments: msg.metadata?.attachments,
       sources: msg.sources,
       toolCalls: msg.metadata?.toolCalls,
       modelUsages: msg.metadata?.modelUsages,
@@ -138,18 +141,20 @@ export class ChatSession {
     options: {
       webSearchEnabled?: boolean;
       model?: ChatModelId;
+      attachments?: ChatImageAttachment[];
       approvedPlan?: ExecutionPlanData;
       planExecution?: PlanExecutionControlData;
     } = {},
   ) {
-    if (!input.trim() || this.loading) return;
+    const attachments = options.attachments ?? [];
+    if ((!input.trim() && attachments.length === 0) || this.loading) return;
 
     this.loading = true;
     this.currentModel = options.model ?? null;
     this.manuallyAborted = false;
     this.error = null;
     let assistantMessageSaved = false;
-    const userMessage: Message = { role: "user", content: input };
+    const userMessage: Message = { role: "user", content: input, attachments };
     this.messages.push(userMessage);
 
     // 如果是新会话，先创建数据库记录
@@ -164,7 +169,13 @@ export class ChatSession {
 
     // 保存用户消息到数据库
     try {
-      const savedUserMessage = await this.sessionManager.saveUserMessage(this.id, input);
+      const savedUserMessage = await this.sessionManager.saveUserMessage(this.id, input, {
+        metadata: attachments.length > 0
+          ? {
+              attachments: attachments.map(({ dataUrl: _dataUrl, ...attachment }) => attachment),
+            }
+          : undefined,
+      });
       userMessage.id = savedUserMessage.id;
       userMessage.createdAt = savedUserMessage.created_at;
     } catch (error) {
@@ -172,7 +183,7 @@ export class ChatSession {
     }
 
     if (this.messages.length === 1) {
-      this.title = input.slice(0, 20) || "新对话";
+      this.title = input.trim().slice(0, 20) || attachments[0]?.name.slice(0, 20) || "图片对话";
       // 更新数据库中的标题
       try {
         await this.sessionManager.updateSessionTitle(this.id, this.title);

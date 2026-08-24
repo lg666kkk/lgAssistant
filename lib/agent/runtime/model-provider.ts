@@ -176,7 +176,7 @@ function createProvider(
   });
 }
 
-function toAIMessage(
+export function toAIMessage(
   message: ModelMessage,
   toolNameByCallId: Map<string, string>,
 ): any {
@@ -200,6 +200,17 @@ function toAIMessage(
     .map((block: any) => {
       if (block.type === "text") {
         return { type: "text", text: String(block.text ?? "") };
+      }
+      if (
+        block.type === "image"
+        && block.source?.type === "base64"
+        && typeof block.source.data === "string"
+      ) {
+        return {
+          type: "image",
+          image: block.source.data,
+          mediaType: block.source.media_type,
+        };
       }
       if (block.type === "tool_use") {
         toolNameByCallId.set(block.id, block.name);

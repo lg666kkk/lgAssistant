@@ -183,7 +183,11 @@ export class SessionManager {
   /**
    * 保存用户消息
    */
-  async saveUserMessage(sessionId: string, content: string): Promise<Message> {
+  async saveUserMessage(
+    sessionId: string,
+    content: string,
+    options: { metadata?: any } = {},
+  ): Promise<Message> {
     const userId = await this.getUserId();
     const { data, error } = await this.supabase
       .from('messages')
@@ -192,6 +196,7 @@ export class SessionManager {
         session_id: sessionId,
         role: 'user',
         content,
+        metadata: options.metadata,
       })
       .select()
       .single();

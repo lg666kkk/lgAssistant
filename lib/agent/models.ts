@@ -1,6 +1,7 @@
 export type ChatModelId =
   | "deepseek-v4-pro"
-  | "deepseek-v4-flash";
+  | "deepseek-v4-flash"
+  | "deepseek-v4-flash-vision-exp";
 
 export type ModelUsageBreakdown = {
   inputTokens: number;
@@ -51,6 +52,17 @@ export const chatModelOptions: ChatModelOption[] = [
       inputCacheMiss: 1,
       output: 2,
     },
+  },
+  {
+    id: "deepseek-v4-flash-vision-exp",
+    name: "DeepSeek V4 Flash Vision",
+    description: "实验多模态模型，支持图片理解和工具调用",
+    badge: "视觉",
+    pricing: {
+      inputCacheHit: 0.02,
+      inputCacheMiss: 1,
+      output: 2,
+    },
   }
 ];
 
@@ -60,6 +72,7 @@ export function getModelContextWindowTokens(model: ChatModelId): number {
   switch (model) {
     case "deepseek-v4-pro":
     case "deepseek-v4-flash":
+    case "deepseek-v4-flash-vision-exp":
       return 128_000;
     default:
       return 32_000;
@@ -74,6 +87,10 @@ export function resolveChatModel(model: unknown): ChatModelId {
 
 export function getChatModelOption(model: ChatModelId) {
   return chatModelOptions.find((option) => option.id === model);
+}
+
+export function supportsImageInput(model: ChatModelId) {
+  return model === "deepseek-v4-flash-vision-exp";
 }
 
 export function getModelPricing(model: ChatModelId): ModelPricingCnyPerMillionTokens {

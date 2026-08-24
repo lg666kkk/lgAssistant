@@ -31,6 +31,12 @@ import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
 import { createEmptyMemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
+import { supportsImageInput } from "@/lib/agent/models";
+import {
+  buildMultimodalUserContent,
+  stripInlineImagesForPersistence,
+  validateImageAttachments,
+} from "@/lib/agent/multimodal";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import { readKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 import {
@@ -77,6 +83,7 @@ import {
   saveContextSnapshot,
 } from "@/lib/agent/context/snapshot-store";
 import type { ContextPlan } from "@/lib/agent/context/types";
+import type Anthropic from "@anthropic-ai/sdk";
 
 // 单例：整个进程复用同一个 Redis 连接，不要每次请求都 new
 const sessionStore = new RedisSessionStore();
@@ -86,6 +93,16 @@ type SessionHistoryMessage = {
   role: "user" | "assistant";
   content: string;
 };
+
+type ModelMessage = Anthropic.MessageParam;
+
+function textFromMessageContent(content: unknown) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((block: any) => block?.type === "text" ? [String(block.text ?? "")] : [])
+    .join("\n");
+}
 
 async function persistSessionTurn(input: {
   userId: string;
@@ -192,7 +209,7 @@ async function hydrateRedisSessionHistory(input: {
 async function resolveLoopMessages(input: {
   userId: string;
   sessionId?: string;
-  messages: SessionHistoryMessage[];
+  messages: ModelMessage[];
 }) {
   if (!input.sessionId) {
     return {
@@ -213,7 +230,8 @@ async function resolveLoopMessages(input: {
     const lastSnapshotMessage = snapshotMessages[snapshotMessages.length - 1];
     const duplicateCurrent = currentMessage
       && lastSnapshotMessage?.role === currentMessage.role
-      && lastSnapshotMessage.content === currentMessage.content;
+      && textFromMessageContent(lastSnapshotMessage.content) === textFromMessageContent(currentMessage.content)
+      && !Array.isArray(currentMessage.content);
     return {
       messages: currentMessage && !duplicateCurrent
         ? [...snapshotMessages, currentMessage]
@@ -232,7 +250,7 @@ async function resolveLoopMessages(input: {
     });
     if (restoredHistory.length > 0) {
       source = "database";
-      const currentUserContent = input.messages[0]?.content;
+      const currentUserContent = textFromMessageContent(input.messages[0]?.content);
       history = restoredHistory.filter(
         (message, index) => !(
           index === restoredHistory.length - 1
@@ -292,9 +310,14 @@ export async function POST(req: Request) {
     );
   }
 
-  // 校验消息格式
+  // 校验消息格式和图片附件。图片只允许出现在 user 消息中。
+  const requestMessages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    attachments: ReturnType<typeof validateImageAttachments>["attachments"];
+  }> = [];
   for (const msg of messages) {
-    if (!msg.role || !msg.content || typeof msg.content !== "string") {
+    if (!msg?.role || typeof msg.content !== "string") {
       return new Response(
         JSON.stringify({
           error: "消息格式错误，每条消息需要 role 和 content 字段",
@@ -308,6 +331,30 @@ export async function POST(req: Request) {
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
+    const attachmentResult = validateImageAttachments(msg.attachments);
+    if (attachmentResult.error) {
+      return new Response(
+        JSON.stringify({ error: attachmentResult.error }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (msg.role !== "user" && attachmentResult.attachments.length > 0) {
+      return new Response(
+        JSON.stringify({ error: "图片附件只能放在 user 消息中" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (!msg.content.trim() && attachmentResult.attachments.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "消息内容和图片附件不能同时为空" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    requestMessages.push({
+      role: msg.role,
+      content: msg.content,
+      attachments: attachmentResult.attachments,
+    });
   }
   if (
     sessionId
@@ -318,10 +365,20 @@ export async function POST(req: Request) {
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }
-  const modelMessages = messages.map((msg: any) => ({
-    role: msg.role as "user" | "assistant",
-    content: msg.content,
-  }));
+  const hasImageAttachments = requestMessages.some((message) => message.attachments.length > 0);
+  if (hasImageAttachments && !supportsImageInput(selectedModel)) {
+    return new Response(
+      JSON.stringify({ error: "当前模型不支持图片，请选择 DeepSeek V4 Flash Vision" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  const modelMessages = requestMessages.map((message) => ({
+    role: message.role,
+    content: message.role === "user"
+      ? buildMultimodalUserContent(message.content, message.attachments)
+      : message.content,
+  })) as ModelMessage[];
+  const requestTextMessages = requestMessages.map(({ role, content }) => ({ role, content }));
   let hydratedContext: Awaited<ReturnType<typeof resolveLoopMessages>> = {
     messages: [...modelMessages],
     source: "client",
@@ -382,7 +439,7 @@ export async function POST(req: Request) {
     { webEnabled: enableWebSearch },
   );
   const routeTools = toolRegistry.listForModel(routeToolDefinitions);
-  const latestUserQuery = [...modelMessages]
+  const latestUserQuery = [...requestTextMessages]
     .reverse()
     .find((message) => message.role === "user")?.content ?? "";
   const tools = filterToolsForUserIntent(
@@ -463,7 +520,7 @@ export async function POST(req: Request) {
           sessionId,
           userId: user.id,
           model: selectedModel,
-          messages: modelMessages,
+          messages: requestTextMessages,
         });
         const safeTraceInput = redactSensitiveValue(traceInput);
         const safeRetrievalPlan = redactSensitiveValue(retrievalPlan);
@@ -530,7 +587,7 @@ export async function POST(req: Request) {
         let allToolSources: ToolSourceType[] = [];
 
         // ① 召回：用最后一条 user 消息当 query，捞出相关记忆，拼成 system 注入
-        const lastUser = [...messages]
+        const lastUser = [...requestMessages]
           .reverse()
           .find((m: any) => m.role === "user");
         let explicitForgetResult: ExplicitForgetResult = { handled: false };
@@ -754,7 +811,7 @@ export async function POST(req: Request) {
             userId: user.id,
             sessionId,
             model: selectedModel,
-            messages: snapshotMessages,
+            messages: stripInlineImagesForPersistence(snapshotMessages),
           });
           await saveContextSnapshot(snapshot);
           hydratedContext.snapshot = snapshot;
@@ -878,7 +935,9 @@ export async function POST(req: Request) {
         pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
 
-        const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user")?.content;
+        const lastUserMessage = [...requestMessages]
+          .reverse()
+          .find((message) => message.role === "user")?.content;
 
         if (agentLoopResult.completed) {
           const assistantMessage = extractLastAssistantText(agentLoopResult.loopMessages);

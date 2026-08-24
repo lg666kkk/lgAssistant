@@ -1,9 +1,13 @@
 "use client";
 
-import { forwardRef, useEffect, useRef, type ForwardedRef } from "react";
+import { forwardRef, useEffect, useRef, useState, type ForwardedRef } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import Image from "next/image";
 import { type ChatModelId } from "@/lib/agent/models";
+import type { ChatImageAttachment } from "@/lib/agent/multimodal";
+import { ImagePlus, X } from "lucide-react";
 import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
+import { ImagePreviewDialog, type PreviewImage } from "./image-preview-dialog";
 import { ModelPicker } from "./model-picker";
 
 type ChatInputProps = {
@@ -13,9 +17,13 @@ type ChatInputProps = {
   webSearchEnabled: boolean;
   contextUsage?: ContextUsageEventData | null;
   selectedModel: ChatModelId;
+  attachments: ChatImageAttachment[];
+  attachmentError?: string | null;
   onChange: (value: string) => void;
   onWebSearchEnabledChange: (enabled: boolean) => void;
   onSelectedModelChange: (model: ChatModelId) => void;
+  onImagesSelected: (files: File[]) => void;
+  onRemoveAttachment: (id: string) => void;
   onSend: () => void;
   onStop: () => void;
 };
@@ -46,15 +54,21 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       webSearchEnabled,
       contextUsage,
       selectedModel,
+      attachments,
+      attachmentError,
       onChange,
       onWebSearchEnabledChange,
       onSelectedModelChange,
+      onImagesSelected,
+      onRemoveAttachment,
       onSend,
       onStop,
     },
     ref,
   ) {
     const inputRef = useRef<HTMLDivElement | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
 
     useEffect(() => {
       const el = inputRef.current;
@@ -81,6 +95,51 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       <div className="border-t border-slate-800 bg-slate-950 px-4 py-5">
         <div className="mx-auto max-w-4xl">
           <div className="rounded-[28px] border border-slate-700/80 bg-slate-900 px-5 py-4 shadow-2xl shadow-black/30 transition-colors focus-within:border-cyan-500/70">
+            {attachments.length > 0 && (
+              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-slate-700 bg-slate-950"
+                  >
+                    {attachment.dataUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({
+                          src: attachment.dataUrl!,
+                          alt: attachment.name,
+                        })}
+                        className="relative block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400"
+                        title={`预览 ${attachment.name}`}
+                        aria-label={`预览图片 ${attachment.name}`}
+                      >
+                        <Image
+                          src={attachment.dataUrl}
+                          alt={attachment.name}
+                          fill
+                          unoptimized
+                          sizes="80px"
+                          className="object-cover transition-transform group-hover:scale-105"
+                        />
+                      </button>
+                    ) : (
+                      <span className="flex h-full items-center justify-center px-2 text-center text-[10px] text-slate-400">
+                        {attachment.name}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveAttachment(attachment.id)}
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/85 text-slate-200 opacity-80 hover:bg-rose-600 hover:text-white group-hover:opacity-100"
+                      title={`移除 ${attachment.name}`}
+                      aria-label={`移除图片 ${attachment.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div
               ref={(node) => {
                 inputRef.current = node;
@@ -185,24 +244,25 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     </Tooltip.Portal>
                   </Tooltip.Root>
                 </Tooltip.Provider>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    onImagesSelected(Array.from(event.target.files ?? []));
+                    event.target.value = "";
+                  }}
+                />
                 <button
                   type="button"
+                  onClick={() => fileInputRef.current?.click()}
                   className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
-                  title="添加附件"
+                  title="添加图片"
+                  aria-label="添加图片"
                 >
-                  <svg
-                    aria-hidden="true"
-                    width="22"
-                    height="22"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m21.4 11.6-8.8 8.8a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.5 9.5a2 2 0 0 1-2.8-2.8l8.8-8.8" />
-                  </svg>
+                  <ImagePlus className="h-[22px] w-[22px]" aria-hidden="true" />
                 </button>
                 {isRunning ? (
                   <button
@@ -239,7 +299,14 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 )}
               </div>
             </div>
+            {attachmentError && (
+              <p className="mt-2 px-1 text-xs text-rose-300">{attachmentError}</p>
+            )}
           </div>
+          <ImagePreviewDialog
+            image={previewImage}
+            onClose={() => setPreviewImage(null)}
+          />
         </div>
       </div>
     );

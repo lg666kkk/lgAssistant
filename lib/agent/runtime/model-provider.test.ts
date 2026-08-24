@@ -1,7 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDeepSeekThinkingFetch } from "./model-provider";
+import { createDeepSeekThinkingFetch, toAIMessage } from "./model-provider";
 
 describe("DeepSeek thinking request adapter", () => {
+  it("maps an internal image block to the AI SDK image part", () => {
+    const message = toAIMessage({
+      role: "user",
+      content: [
+        { type: "text", text: "描述图片" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+        },
+      ],
+    } as never, new Map());
+
+    expect(message.content).toEqual([
+      { type: "text", text: "描述图片" },
+      { type: "image", image: "aGVsbG8=", mediaType: "image/png" },
+    ]);
+  });
+
   it("enables thinking and carries reasoning across tool continuations", async () => {
     const baseFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response("ok"));
