@@ -118,7 +118,7 @@ export default function SettingsPage() {
 
   return (
     <AuthGate>
-    <div className="h-screen overflow-y-auto bg-zinc-950 text-zinc-200">
+    <div className="h-full overflow-y-auto bg-zinc-950 text-zinc-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="flex items-center gap-4 text-sm">
           <Link href="/" className="text-zinc-500 hover:text-zinc-200">

@@ -233,7 +233,7 @@ export default function SchedulePage() {
 
   return (
     <AuthGate>
-      <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
+      <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
         <div className="mx-auto max-w-7xl px-6 py-8">
           <div className="flex items-center gap-4 text-sm">
             <Link href="/" className="text-slate-500 hover:text-slate-200">

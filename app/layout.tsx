@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { SiteFooter } from '@/app/_components/site-footer';
 import { AuthProvider } from '@/lib/auth/use-auth';
 
 export const metadata: Metadata = {
@@ -14,7 +15,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body><AuthProvider>{children}</AuthProvider></body>
+      <body>
+        <AuthProvider>
+          <div className="grid h-[100dvh] grid-rows-[minmax(0,1fr)_auto] bg-slate-950">
+            <div className="min-h-0 overflow-hidden">{children}</div>
+            <SiteFooter />
+          </div>
+        </AuthProvider>
+      </body>
     </html>
   );
 }

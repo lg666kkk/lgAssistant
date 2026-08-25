@@ -709,7 +709,7 @@ export default function Home() {
   // 加载中状态
   if (sessionsLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-950">
+      <div className="flex h-full items-center justify-center bg-slate-950">
         <div className="text-slate-400">加载中...</div>
       </div>
     );
@@ -717,7 +717,7 @@ export default function Home() {
 
   return (
     <AuthGate>
-    <div className="flex h-screen bg-slate-950">
+    <div className="flex h-full bg-slate-950">
       {/* 侧边栏 */}
       <aside
         className={`flex flex-col border-r border-slate-800 bg-slate-900 transition-all duration-300 ${

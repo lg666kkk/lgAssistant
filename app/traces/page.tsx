@@ -148,7 +148,7 @@ export default function TracesPage() {
 
   return (
     <AuthGate>
-    <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
+    <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
           <div>

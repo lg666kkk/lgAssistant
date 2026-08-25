@@ -253,7 +253,7 @@ export default function UsagePage() {
 
   return (
     <AuthGate>
-    <div className="h-screen overflow-y-auto bg-slate-950 text-slate-200">
+    <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <div>
