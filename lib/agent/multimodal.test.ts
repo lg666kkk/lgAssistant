@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_IMAGE_COUNT,
+  MAX_SINGLE_IMAGE_BYTES,
   buildMultimodalUserContent,
   stripInlineImagesForPersistence,
   toPersistedImageAttachment,
@@ -9,6 +11,33 @@ import {
 const dataUrl = "data:image/png;base64,aGVsbG8=";
 
 describe("DeepSeek multimodal messages", () => {
+  it("limits one request to ten images and each image to five MiB", () => {
+    expect(MAX_IMAGE_COUNT).toBe(10);
+    expect(MAX_SINGLE_IMAGE_BYTES).toBe(5 * 1024 * 1024);
+
+    const result = validateImageAttachments(Array.from(
+      { length: MAX_IMAGE_COUNT + 1 },
+      (_, index) => ({
+        id: `image-${index}`,
+        name: `image-${index}.png`,
+        mediaType: "image/png",
+        size: 5,
+        dataUrl,
+      }),
+    ));
+    expect(result.error).toBe("每次最多上传 10 张图片");
+
+    const oversizedBase64Length = Math.ceil((MAX_SINGLE_IMAGE_BYTES + 1) / 3) * 4;
+    const oversized = validateImageAttachments([{
+      id: "image-large",
+      name: "large.png",
+      mediaType: "image/png",
+      size: MAX_SINGLE_IMAGE_BYTES + 1,
+      dataUrl: `data:image/png;base64,${"A".repeat(oversizedBase64Length)}`,
+    }]);
+    expect(oversized.error).toBe("图片 large.png 超过 5 MiB");
+  });
+
   it("validates inline image attachments and builds image blocks", () => {
     const result = validateImageAttachments([{
       id: "image-1",

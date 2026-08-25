@@ -763,7 +763,9 @@ export default function Home() {
     }
     const oversized = files.find((file) => file.size > MAX_SINGLE_IMAGE_BYTES);
     if (oversized) {
-      setAttachmentError(`${oversized.name} 超过 32 MiB`);
+      setAttachmentError(
+        `${oversized.name} 超过 ${MAX_SINGLE_IMAGE_BYTES / 1024 / 1024} MiB`,
+      );
       return;
     }
     const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.size, 0)

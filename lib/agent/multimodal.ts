@@ -34,7 +34,7 @@ export type InlineImageBlock = {
 };
 
 export const MAX_IMAGE_COUNT = 10;
-export const MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024;
+export const MAX_SINGLE_IMAGE_BYTES = 5 * 1024 * 1024;
 // Base64 expands by about 4/3; 32 MiB stays below DeepSeek's 48 MiB body limit.
 export const MAX_TOTAL_IMAGE_BYTES = 32 * 1024 * 1024;
 
@@ -86,7 +86,10 @@ export function validateImageAttachments(value: unknown): {
     const parsed = parseDataUrl(dataUrl, mediaType as SupportedImageMediaType);
     if (!parsed) return { attachments: [], error: `图片 ${attachment.name} 的编码无效` };
     if (parsed.size > MAX_SINGLE_IMAGE_BYTES) {
-      return { attachments: [], error: `图片 ${attachment.name} 超过 32 MiB` };
+      return {
+        attachments: [],
+        error: `图片 ${attachment.name} 超过 ${MAX_SINGLE_IMAGE_BYTES / 1024 / 1024} MiB`,
+      };
     }
     totalBytes += parsed.size;
     if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {

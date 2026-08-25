@@ -12,7 +12,7 @@ VALUES (
   'chat-images',
   'chat-images',
   false,
-  33554432,
+  5242880,
   ARRAY['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 )
 ON CONFLICT (id) DO UPDATE
