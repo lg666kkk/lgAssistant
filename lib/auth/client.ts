@@ -4,6 +4,22 @@ import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 let browserClient: SupabaseClient | null = null;
+const STORAGE_REQUEST_TIMEOUT_MS = 30_000;
+
+function fetchWithStorageTimeout(input: RequestInfo | URL, init?: RequestInit) {
+  const requestUrl = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+  if (!requestUrl.includes("/storage/v1/") || init?.signal) {
+    return fetch(input, init);
+  }
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(STORAGE_REQUEST_TIMEOUT_MS),
+  });
+}
 
 export function getBrowserSupabase() {
   if (browserClient) return browserClient;
@@ -17,7 +33,9 @@ export function getBrowserSupabase() {
     throw new Error("缺少 Supabase 浏览器端环境变量");
   }
 
-  browserClient = createBrowserClient(supabaseUrl, supabaseKey);
+  browserClient = createBrowserClient(supabaseUrl, supabaseKey, {
+    global: { fetch: fetchWithStorageTimeout },
+  });
   return browserClient;
 }
 

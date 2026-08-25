@@ -18,6 +18,13 @@ function managerWithGetMessages(
   return { getMessages } as SessionManager;
 }
 
+function managerForImageSaveFailure(input: {
+  saveUserMessage: SessionManager["saveUserMessage"];
+  deleteChatImagePaths: SessionManager["deleteChatImagePaths"];
+}): SessionManager {
+  return input as SessionManager;
+}
+
 describe("ChatSession history loading", () => {
   it("loads only the newest page for an existing session", async () => {
     const page = Array.from({ length: 50 }, (_, index) => databaseMessage(index));
@@ -88,5 +95,35 @@ describe("ChatSession history loading", () => {
       "message-50",
     ]);
     expect(session.hasOlderMessages).toBe(false);
+  });
+
+  it("rolls back stored images when the user message cannot be persisted", async () => {
+    const saveUserMessage = vi.fn(async () => {
+      throw new Error("database unavailable");
+    });
+    const deleteChatImagePaths = vi.fn(async () => undefined);
+    const session = new ChatSession(
+      "session-1",
+      "user-1",
+      managerForImageSaveFailure({ saveUserMessage, deleteChatImagePaths }),
+    );
+
+    await session.send("分析图片", vi.fn(), {
+      attachments: [{
+        id: "image-1",
+        name: "chart.png",
+        mediaType: "image/png",
+        size: 5,
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        storagePath: "user-1/session-1/image-1.png",
+      }],
+    });
+
+    expect(deleteChatImagePaths).toHaveBeenCalledWith([
+      "user-1/session-1/image-1.png",
+    ]);
+    expect(session.messages).toEqual([]);
+    expect(session.error).toBe("database unavailable");
+    expect(session.loading).toBe(false);
   });
 });

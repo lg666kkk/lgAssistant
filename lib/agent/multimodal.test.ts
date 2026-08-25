@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMultimodalUserContent,
   stripInlineImagesForPersistence,
+  toPersistedImageAttachment,
   validateImageAttachments,
 } from "./multimodal";
 
@@ -57,5 +58,23 @@ describe("DeepSeek multimodal messages", () => {
     const persistent = stripInlineImagesForPersistence(messages);
     expect(JSON.stringify(persistent)).not.toContain("aGVsbG8=");
     expect(JSON.stringify(persistent)).toContain("图片附件已处理：chart.png");
+  });
+
+  it("persists storage identity without temporary image URLs", () => {
+    expect(toPersistedImageAttachment({
+      id: "image-1",
+      name: "chart.png",
+      mediaType: "image/png",
+      size: 5,
+      storagePath: "user-1/session-1/image-1.png",
+      dataUrl,
+      previewUrl: "https://signed.example/image-1.png",
+    })).toEqual({
+      id: "image-1",
+      name: "chart.png",
+      mediaType: "image/png",
+      size: 5,
+      storagePath: "user-1/session-1/image-1.png",
+    });
   });
 });

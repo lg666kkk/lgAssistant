@@ -3,6 +3,10 @@ import { clearContextSnapshotCache } from "@/lib/agent/context/snapshot-store";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { requireUser } from "@/lib/auth/server";
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
+import {
+  collectOwnedChatImagePaths,
+  deleteChatImages,
+} from "@/lib/chat/image-storage";
 
 export const runtime = "nodejs";
 
@@ -28,6 +32,29 @@ export async function DELETE(
   if (!hasSupabaseConfig()) {
     return Response.json({ error: "未配置 Supabase，无法删除会话" }, { status: 503 });
   }
+  const supabase = getSupabase();
+
+  const { data: ownedSession, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id")
+    .eq("id", sessionId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (sessionError) {
+    return Response.json({ error: `读取会话失败: ${sessionError.message}` }, { status: 500 });
+  }
+  if (!ownedSession) return Response.json({ deleted: false });
+
+  const { data: messages, error: messagesError } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("session_id", sessionId)
+    .eq("user_id", user.id);
+  if (messagesError) {
+    return Response.json({ error: `读取会话图片失败: ${messagesError.message}` }, { status: 500 });
+  }
+
+  const imagePaths = collectOwnedChatImagePaths(messages ?? [], user.id, sessionId);
 
   // artifact 是会话记录的外部依赖；失败时保留数据库记录，允许用户重试删除。
   try {
@@ -37,12 +64,19 @@ export async function DELETE(
     return Response.json({ error: "清理会话本地数据失败，请重试" }, { status: 500 });
   }
 
+  try {
+    await deleteChatImages(supabase, imagePaths);
+  } catch (storageError) {
+    console.error("[session] 清理 Supabase Storage 图片失败:", storageError);
+    return Response.json({ error: "清理会话图片失败，请重试" }, { status: 500 });
+  }
+
   // Redis 只承担短期会话缓存，不应影响正式会话和 artifact 的删除。
   await sessionStore.clear(user.id, sessionId).catch((error) =>
     console.error("[session] 清理 Redis 会话缓存失败:", error),
   );
 
-  const { data, error } = await getSupabase()
+  const { data, error } = await supabase
     .from("sessions")
     .delete()
     .eq("id", sessionId)

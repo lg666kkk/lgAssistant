@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { X } from "lucide-react";
@@ -19,10 +19,33 @@ export function ImagePreviewDialog({
 }) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [viewportSize, setViewportSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    setNaturalSize(null);
+  }, [image?.src]);
+
+  useEffect(() => {
+    if (!image) return;
+    const updateViewportSize = () => setViewportSize({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+    updateViewportSize();
+    window.addEventListener("resize", updateViewportSize);
+    return () => window.removeEventListener("resize", updateViewportSize);
+  }, [image]);
 
   useEffect(() => {
     if (!image) return;
@@ -52,6 +75,20 @@ export function ImagePreviewDialog({
 
   if (!image) return null;
 
+  const previewSize = naturalSize && viewportSize
+    ? (() => {
+        const scale = Math.min(
+          (viewportSize.width - 32) / naturalSize.width,
+          (viewportSize.height - 32) / naturalSize.height,
+          1,
+        );
+        return {
+          width: Math.max(1, Math.round(naturalSize.width * scale)),
+          height: Math.max(1, Math.round(naturalSize.height * scale)),
+        };
+      })()
+    : null;
+
   return createPortal(
     <div
       role="dialog"
@@ -62,7 +99,15 @@ export function ImagePreviewDialog({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="relative h-[calc(100dvh-2rem)] w-full max-w-7xl">
+      <div
+        className="relative max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-sm"
+        style={previewSize
+          ? { height: previewSize.height, width: previewSize.width }
+          : {
+              height: "calc(100dvh - 2rem)",
+              width: "min(80rem, calc(100vw - 2rem))",
+            }}
+      >
         <Image
           src={image.src}
           alt={image.alt}
@@ -71,12 +116,18 @@ export function ImagePreviewDialog({
           unoptimized
           sizes="100vw"
           className="object-contain"
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth > 0 && naturalHeight > 0) {
+              setNaturalSize({ width: naturalWidth, height: naturalHeight });
+            }
+          }}
         />
         <button
           ref={closeButtonRef}
           type="button"
           onClick={onClose}
-          className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/80 text-slate-100 shadow-lg transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+          className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-slate-950/80 text-slate-100 shadow-lg transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           title="关闭预览"
           aria-label="关闭图片预览"
         >

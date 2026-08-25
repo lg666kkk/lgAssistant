@@ -4,7 +4,13 @@
  */
 
 import { authFetch, getBrowserSupabase } from "@/lib/auth/client";
+import type { ChatImageAttachment } from "@/lib/agent/multimodal";
 import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
+import {
+  applyChatImageSignedUrls,
+  createChatImageSignedUrlMap,
+  deleteChatImages,
+} from "./image-storage";
 
 /**
  * 会话类型
@@ -156,6 +162,10 @@ export class SessionManager {
     throw new Error(payload.error || "删除会话失败");
   }
 
+  async deleteChatImagePaths(paths: string[]): Promise<void> {
+    await deleteChatImages(this.supabase, paths);
+  }
+
   /**
    * 获取会话的所有消息
    */
@@ -177,7 +187,36 @@ export class SessionManager {
       .limit(limit);
 
     if (error) throw error;
-    return (data || []).reverse();
+    const messages = (data || []).reverse() as Message[];
+    const storagePaths = messages.flatMap((message) => {
+      const attachments = message.metadata?.attachments;
+      if (!Array.isArray(attachments)) return [];
+      return attachments.flatMap((attachment: ChatImageAttachment) =>
+        typeof attachment?.storagePath === "string" ? [attachment.storagePath] : []);
+    });
+    if (storagePaths.length === 0) return messages;
+
+    try {
+      const signedUrls = await createChatImageSignedUrlMap(this.supabase, {
+        userId,
+        sessionId,
+        paths: storagePaths,
+      });
+      return messages.map((message) => {
+        const attachments = message.metadata?.attachments;
+        if (!Array.isArray(attachments)) return message;
+        return {
+          ...message,
+          metadata: {
+            ...message.metadata,
+            attachments: applyChatImageSignedUrls(attachments, signedUrls),
+          },
+        };
+      });
+    } catch (storageError) {
+      console.error("加载历史图片失败:", storageError);
+      return messages;
+    }
   }
 
   /**

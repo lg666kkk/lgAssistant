@@ -4,8 +4,8 @@ import { forwardRef, useEffect, useRef, useState, type ForwardedRef } from "reac
 import * as Tooltip from "@radix-ui/react-tooltip";
 import Image from "next/image";
 import { type ChatModelId } from "@/lib/agent/models";
-import type { ChatImageAttachment } from "@/lib/agent/multimodal";
-import { ImagePlus, X } from "lucide-react";
+import type { ComposerImageAttachment } from "@/lib/chat/image-storage";
+import { AlertCircle, ImagePlus, LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
 import { ImagePreviewDialog, type PreviewImage } from "./image-preview-dialog";
 import { ModelPicker } from "./model-picker";
@@ -17,13 +17,15 @@ type ChatInputProps = {
   webSearchEnabled: boolean;
   contextUsage?: ContextUsageEventData | null;
   selectedModel: ChatModelId;
-  attachments: ChatImageAttachment[];
+  attachments: ComposerImageAttachment[];
+  attachmentsUploading?: boolean;
   attachmentError?: string | null;
   onChange: (value: string) => void;
   onWebSearchEnabledChange: (enabled: boolean) => void;
   onSelectedModelChange: (model: ChatModelId) => void;
   onImagesSelected: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
+  onRetryAttachment: (id: string) => void;
   onSend: () => void;
   onStop: () => void;
 };
@@ -55,12 +57,14 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       contextUsage,
       selectedModel,
       attachments,
+      attachmentsUploading = false,
       attachmentError,
       onChange,
       onWebSearchEnabledChange,
       onSelectedModelChange,
       onImagesSelected,
       onRemoveAttachment,
+      onRetryAttachment,
       onSend,
       onStop,
     },
@@ -102,11 +106,11 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     key={attachment.id}
                     className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-slate-700 bg-slate-950"
                   >
-                    {attachment.dataUrl ? (
+                    {attachment.uploadStatus === "ready" && attachment.previewUrl ? (
                       <button
                         type="button"
                         onClick={() => setPreviewImage({
-                          src: attachment.dataUrl!,
+                          src: attachment.previewUrl!,
                           alt: attachment.name,
                         })}
                         className="relative block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400"
@@ -114,7 +118,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                         aria-label={`预览图片 ${attachment.name}`}
                       >
                         <Image
-                          src={attachment.dataUrl}
+                          src={attachment.previewUrl}
                           alt={attachment.name}
                           fill
                           unoptimized
@@ -122,15 +126,35 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                           className="object-cover transition-transform group-hover:scale-105"
                         />
                       </button>
+                    ) : attachment.uploadStatus === "uploading" ? (
+                      <div
+                        className="flex h-full flex-col items-center justify-center gap-1.5 bg-slate-900 text-slate-400"
+                        role="status"
+                        aria-label={`${attachment.name} 正在上传`}
+                      >
+                        <LoaderCircle className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                        <span className="max-w-full truncate px-2 text-[10px]">上传中</span>
+                      </div>
                     ) : (
-                      <span className="flex h-full items-center justify-center px-2 text-center text-[10px] text-slate-400">
-                        {attachment.name}
-                      </span>
+                      <div className="flex h-full flex-col items-center justify-center gap-1 bg-rose-950/40 px-2 text-rose-300">
+                        <AlertCircle className="h-5 w-5" aria-hidden="true" />
+                        <span className="text-[10px]">上传失败</span>
+                        <button
+                          type="button"
+                          onClick={() => onRetryAttachment(attachment.id)}
+                          className="absolute bottom-1 left-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/90 text-slate-200 hover:bg-cyan-600 hover:text-white"
+                          title={`重试上传 ${attachment.name}`}
+                          aria-label={`重试上传 ${attachment.name}`}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </div>
                     )}
                     <button
                       type="button"
                       onClick={() => onRemoveAttachment(attachment.id)}
-                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/85 text-slate-200 opacity-80 hover:bg-rose-600 hover:text-white group-hover:opacity-100"
+                      disabled={attachment.uploadStatus === "uploading"}
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/85 text-slate-200 opacity-80 hover:bg-rose-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 group-hover:opacity-100"
                       title={`移除 ${attachment.name}`}
                       aria-label={`移除图片 ${attachment.name}`}
                     >
@@ -258,11 +282,16 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={attachmentsUploading}
                   className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
-                  title="添加图片"
-                  aria-label="添加图片"
+                  title={attachmentsUploading ? "正在上传图片" : "添加图片"}
+                  aria-label={attachmentsUploading ? "正在上传图片" : "添加图片"}
                 >
-                  <ImagePlus className="h-[22px] w-[22px]" aria-hidden="true" />
+                  {attachmentsUploading ? (
+                    <LoaderCircle className="h-[22px] w-[22px] animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  ) : (
+                    <ImagePlus className="h-[22px] w-[22px]" aria-hidden="true" />
+                  )}
                 </button>
                 {isRunning ? (
                   <button

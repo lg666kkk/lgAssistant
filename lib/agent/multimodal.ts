@@ -15,6 +15,12 @@ export type ChatImageAttachment = {
   mediaType: SupportedImageMediaType;
   size: number;
   dataUrl?: string;
+  storagePath?: string;
+  previewUrl?: string;
+};
+
+export type ValidatedChatImageAttachment = ChatImageAttachment & {
+  dataUrl: string;
 };
 
 export type InlineImageBlock = {
@@ -50,7 +56,7 @@ function parseDataUrl(value: string, mediaType: SupportedImageMediaType) {
 }
 
 export function validateImageAttachments(value: unknown): {
-  attachments: Required<ChatImageAttachment>[];
+  attachments: ValidatedChatImageAttachment[];
   error?: string;
 } {
   if (value === undefined) return { attachments: [] };
@@ -59,7 +65,7 @@ export function validateImageAttachments(value: unknown): {
     return { attachments: [], error: `每次最多上传 ${MAX_IMAGE_COUNT} 张图片` };
   }
 
-  const attachments: Required<ChatImageAttachment>[] = [];
+  const attachments: ValidatedChatImageAttachment[] = [];
   let totalBytes = 0;
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -99,7 +105,7 @@ export function validateImageAttachments(value: unknown): {
 
 export function buildMultimodalUserContent(
   text: string,
-  attachments: Required<ChatImageAttachment>[],
+  attachments: ValidatedChatImageAttachment[],
 ) {
   if (attachments.length === 0) return text;
   const content: Array<{ type: "text"; text: string } | InlineImageBlock> = [];
@@ -118,6 +124,13 @@ export function buildMultimodalUserContent(
     });
   }
   return content;
+}
+
+export function toPersistedImageAttachment(
+  attachment: ChatImageAttachment,
+): Omit<ChatImageAttachment, "dataUrl" | "previewUrl"> {
+  const { dataUrl: _dataUrl, previewUrl: _previewUrl, ...persisted } = attachment;
+  return persisted;
 }
 
 export function stripInlineImagesForPersistence(

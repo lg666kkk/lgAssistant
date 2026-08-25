@@ -1,5 +1,5 @@
 "use client";
-import { memo, useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect, useLayoutEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
@@ -39,10 +39,33 @@ import {
   type ChatImageAttachment,
   type SupportedImageMediaType,
 } from "@/lib/agent/multimodal";
-import { Image as ImageIcon } from "lucide-react";
+import {
+  buildChatImageStoragePath,
+  deleteChatImages,
+  createChatImageSignedUrlMap,
+  getChatImagePreviewUrl,
+  uploadChatImage,
+  type ComposerImageAttachment,
+} from "@/lib/chat/image-storage";
+import {
+  Activity,
+  Bot,
+  ChartNoAxesColumnIncreasing,
+  Clock3,
+  Database,
+  Image as ImageIcon,
+  MessageCircle,
+  Plus,
+  Plug,
+  Search,
+  Sparkles,
+  SquareTerminal,
+  type LucideIcon,
+} from "lucide-react";
 import { AuthGate } from "@/lib/auth/auth-gate";
 import { useAuth } from "@/lib/auth/use-auth";
 import { detectCodeLanguage } from "@/lib/markdown/code-language";
+import { createUuid } from "@/lib/platform/uuid";
 
 SyntaxHighlighter.registerLanguage("bash", bash);
 SyntaxHighlighter.registerLanguage("css", css);
@@ -161,42 +184,54 @@ function ReasoningPanel({
   streaming: boolean;
 }) {
   const [open, setOpen] = useState(streaming);
+  const wasStreamingRef = useRef(streaming);
 
   useEffect(() => {
-    if (streaming && reasoning?.length) setOpen(true);
-  }, [streaming, reasoning?.length]);
+    if (streaming) {
+      setOpen(true);
+    } else if (wasStreamingRef.current) {
+      setOpen(false);
+    }
+    wasStreamingRef.current = streaming;
+  }, [streaming]);
 
   if (!reasoning?.length) return null;
-  const content = [...reasoning]
+  const entries = [...reasoning]
     .sort((left, right) => left.modelCallIndex - right.modelCallIndex)
-    .map((item) => item.content.trim())
-    .filter(Boolean)
-    .join("\n\n---\n\n");
-  if (!content) return null;
+    .map((item) => ({ ...item, content: item.content.trim() }))
+    .filter((item) => Boolean(item.content));
+  if (!entries.length) return null;
 
   return (
-    <div className="mb-3 overflow-hidden rounded-lg border border-violet-800/60 bg-violet-950/20">
+    <div className="mb-3 border-l border-slate-600/70">
       <button
         type="button"
         aria-expanded={open}
         aria-label={open ? "收起思考过程" : "展开思考过程"}
         title={open ? "收起思考过程" : "展开思考过程"}
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-violet-200 hover:bg-violet-900/20"
+        className="group flex h-8 w-full items-center justify-between text-left text-xs text-slate-400 transition-colors hover:text-slate-200"
       >
-        <span className="flex items-center gap-2 font-medium">
-          <span>{streaming ? "正在思考" : "thinking"}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <Sparkles
+            className={`h-3.5 w-3.5 shrink-0 ${streaming ? "text-cyan-300" : "text-slate-500"}`}
+            aria-hidden="true"
+          />
+          <span className="font-medium text-slate-300">
+            {streaming ? "正在思考" : "思考过程"}
+          </span>
           {streaming && (
-            <span aria-hidden="true" className="flex items-center gap-1">
-              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-0.3s]" />
-              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-0.15s]" />
-              <span className="h-1 w-1 animate-bounce rounded-full bg-violet-300" />
+            <span aria-hidden="true" className="flex items-center gap-0.5">
+              <span className="h-1 w-1 animate-bounce rounded-full bg-cyan-300 [animation-delay:-0.3s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-cyan-300 [animation-delay:-0.15s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-cyan-300" />
             </span>
           )}
+          {!streaming && <span className="text-slate-600">· 已完成</span>}
         </span>
         <svg
           aria-hidden="true"
-          className={`h-4 w-4 shrink-0 text-violet-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 shrink-0 text-slate-600 transition-transform duration-200 group-hover:text-slate-400 ${open ? "rotate-180" : ""}`}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -208,9 +243,20 @@ function ReasoningPanel({
         </svg>
       </button>
       {open && (
-        <div className="max-h-80 overflow-y-auto border-t border-violet-800/40 px-3 py-2 text-xs leading-6 text-slate-400">
-          <MessageMarkdown content={content} />
-          {streaming && <span className="ml-1 inline-block animate-pulse text-violet-300">●</span>}
+        <div className="max-h-64 overflow-y-auto border-t border-slate-700/50 pb-1 pl-[22px] pr-3 pt-3 text-[13px] leading-6 text-slate-400">
+          <div className="space-y-4">
+            {entries.map((entry, index) => (
+              <section key={`${entry.modelCallIndex}-${index}`}>
+                {entries.length > 1 && (
+                  <div className="mb-1.5 text-[11px] font-medium text-slate-600">
+                    阶段 {index + 1}
+                  </div>
+                )}
+                <ReasoningMarkdown content={entry.content} />
+              </section>
+            ))}
+          </div>
+          {streaming && <span className="ml-1 inline-block animate-pulse text-cyan-300">●</span>}
         </div>
       )}
     </div>
@@ -452,6 +498,86 @@ const MessageMarkdown = memo(function MessageMarkdown({ content }: { content: st
   );
 });
 
+const reasoningMarkdownComponents = {
+  ...markdownComponents,
+  h1({ children }: { children?: React.ReactNode }) {
+    return <h1 className="mb-1.5 mt-3 text-[13px] font-semibold text-slate-300 first:mt-0">{children}</h1>;
+  },
+  h2({ children }: { children?: React.ReactNode }) {
+    return <h2 className="mb-1.5 mt-3 text-[13px] font-semibold text-slate-300 first:mt-0">{children}</h2>;
+  },
+  h3({ children }: { children?: React.ReactNode }) {
+    return <h3 className="mb-1.5 mt-3 text-[13px] font-medium text-slate-300 first:mt-0">{children}</h3>;
+  },
+  p({ children }: { children?: React.ReactNode }) {
+    return <p className="mb-2 last:mb-0">{children}</p>;
+  },
+  ul({ children }: { children?: React.ReactNode }) {
+    return <ul className="my-2 list-disc space-y-0.5 pl-5">{children}</ul>;
+  },
+  ol({ children }: { children?: React.ReactNode }) {
+    return <ol className="my-2 list-decimal space-y-0.5 pl-5">{children}</ol>;
+  },
+  li({ children }: { children?: React.ReactNode }) {
+    return <li className="pl-0.5 leading-6 marker:text-slate-600">{children}</li>;
+  },
+  strong({ children }: { children?: React.ReactNode }) {
+    return <strong className="font-semibold text-slate-300">{children}</strong>;
+  },
+  blockquote({ children }: { children?: React.ReactNode }) {
+    return <blockquote className="my-2 border-l border-slate-700 pl-3 text-slate-500">{children}</blockquote>;
+  },
+};
+
+const ReasoningMarkdown = memo(function ReasoningMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={reasoningMarkdownComponents}>
+      {content}
+    </ReactMarkdown>
+  );
+});
+
+type PrimaryCapability = "chat" | "connections";
+type ConnectionTabId =
+  | "language-model"
+  | "embedding"
+  | "search-engine"
+  | "usage"
+  | "mcp"
+  | "skills"
+  | "schedule"
+  | "traces";
+
+const connectionTabGroups: Array<{
+  label: string;
+  items: Array<{ id: ConnectionTabId; label: string; icon: LucideIcon }>;
+}> = [
+  {
+    label: "API 密钥",
+    items: [
+      { id: "language-model", label: "大语言模型", icon: Bot },
+      { id: "embedding", label: "向量嵌入", icon: Database },
+      { id: "search-engine", label: "搜索引擎", icon: Search },
+      { id: "usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
+    ],
+  },
+  {
+    label: "集成",
+    items: [
+      { id: "mcp", label: "MCP 服务", icon: SquareTerminal },
+      { id: "skills", label: "技能", icon: Sparkles },
+      { id: "schedule", label: "定时任务", icon: Clock3 },
+      { id: "traces", label: "Trace 观测", icon: Activity },
+    ],
+  },
+];
+
+function getConnectionTabLabel(tabId: ConnectionTabId) {
+  return connectionTabGroups
+    .flatMap((group) => group.items)
+    .find((item) => item.id === tabId)?.label ?? "连接";
+}
+
 export default function Home() {
   const { user, supabase } = useAuth();
   const {
@@ -469,6 +595,9 @@ export default function Home() {
 
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeCapability, setActiveCapability] = useState<PrimaryCapability>("chat");
+  const [activeConnectionTab, setActiveConnectionTab] =
+    useState<ConnectionTabId>("language-model");
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [confirmingToolKey, setConfirmingToolKey] = useState<string | null>(null);
@@ -482,23 +611,37 @@ export default function Home() {
   const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   const [selectedModel, setSelectedModel] =
     useState<ChatModelId>(defaultChatModel);
-  const [attachments, setAttachments] = useState<ChatImageAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const sessionScrollPositionsRef = useRef(new Map<string, number>());
   const inputRef = useRef<HTMLDivElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   const { messages, loading, streaming, error, contextUsage } = activeSession || {};
   const historyLoading = activeSession?.historyLoading ?? false;
-  const lastMessageContent = messages?.length
-    ? messages[messages.length - 1]?.content
-    : "";
+  const historyLoaded = activeSession?.historyLoaded ?? false;
+  const attachmentsUploading = attachments.some(
+    (attachment) => attachment.uploadStatus === "uploading",
+  );
+  const attachmentsReady = attachments.every(
+    (attachment) => attachment.uploadStatus === "ready",
+  );
+  const mainTitle = activeCapability === "chat"
+    ? activeSession?.title ?? "新对话"
+    : getConnectionTabLabel(activeConnectionTab);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lastMessageContent]);
+  useLayoutEffect(() => {
+    if (activeCapability !== "chat" || !activeId || !historyLoaded) return;
+    const container = messagesScrollRef.current;
+    if (!container) return;
+
+    const savedPosition = sessionScrollPositionsRef.current.get(activeId);
+    const nextPosition = savedPosition ?? container.scrollHeight;
+    container.scrollTop = nextPosition;
+    sessionScrollPositionsRef.current.set(activeId, container.scrollTop);
+  }, [activeCapability, activeId, historyLoaded]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -517,9 +660,29 @@ export default function Home() {
   }, [accountMenuOpen]);
 
   const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || loading || historyLoading || !activeSession) return;
+    if (
+      (!input.trim() && attachments.length === 0)
+      || loading
+      || historyLoading
+      || attachmentsUploading
+      || !activeSession
+      || !user
+    ) return;
     const text = input;
-    const pendingAttachments = attachments;
+    if (!attachmentsReady) {
+      setAttachmentError("请等待图片上传完成，或移除上传失败的图片");
+      return;
+    }
+    const pendingAttachments: ChatImageAttachment[] = attachments.map((attachment) => {
+      const {
+        file: _file,
+        uploadStatus: _uploadStatus,
+        uploadError: _uploadError,
+        ...readyAttachment
+      } = attachment;
+      return readyAttachment;
+    });
+
     setInput("");
     setAttachments([]);
     setAttachmentError(null);
@@ -533,9 +696,61 @@ export default function Home() {
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
+  const uploadComposerAttachment = async (attachment: ComposerImageAttachment) => {
+    if (!user || !activeSession) return;
+    setAttachments((current) => current.map((candidate) =>
+      candidate.id === attachment.id
+        ? { ...candidate, uploadStatus: "uploading", uploadError: undefined }
+        : candidate));
+    setAttachmentError(null);
+
+    try {
+      const [dataUrl, storagePath] = await Promise.all([
+        readFileAsDataUrl(attachment.file),
+        uploadChatImage(supabase, {
+          userId: user.id,
+          sessionId: activeSession.id,
+          imageId: attachment.id,
+          mediaType: attachment.mediaType,
+          file: attachment.file,
+        }),
+      ]);
+      const signedUrls = await createChatImageSignedUrlMap(supabase, {
+        userId: user.id,
+        sessionId: activeSession.id,
+        paths: [storagePath],
+      });
+      const previewUrl = signedUrls.get(storagePath);
+      if (!previewUrl) throw new Error(`无法加载图片 ${attachment.name} 的远端预览`);
+
+      setAttachments((current) => current.map((candidate) =>
+        candidate.id === attachment.id
+          ? {
+              ...candidate,
+              dataUrl,
+              storagePath,
+              previewUrl,
+              uploadStatus: "ready",
+              uploadError: undefined,
+            }
+          : candidate));
+    } catch (uploadError) {
+      const message = uploadError instanceof Error ? uploadError.message : "上传图片失败";
+      setAttachments((current) => current.map((candidate) =>
+        candidate.id === attachment.id
+          ? { ...candidate, uploadStatus: "error", uploadError: message }
+          : candidate));
+      setAttachmentError(message);
+    }
+  };
+
   const handleImagesSelected = async (files: File[]) => {
     if (files.length === 0) return;
     setAttachmentError(null);
+    if (!user || !activeSession) {
+      setAttachmentError("请先登录并选择会话");
+      return;
+    }
     if (attachments.length + files.length > MAX_IMAGE_COUNT) {
       setAttachmentError(`每次最多上传 ${MAX_IMAGE_COUNT} 张图片`);
       return;
@@ -557,29 +772,65 @@ export default function Home() {
       setAttachmentError("图片总大小不能超过 32 MiB");
       return;
     }
-    try {
-      const nextAttachments = await Promise.all(files.map(async (file) => ({
-        id: crypto.randomUUID(),
+    const nextAttachments = files.map((file) => {
+      const id = createUuid();
+      const mediaType = file.type as SupportedImageMediaType;
+      return {
+        id,
         name: file.name,
-        mediaType: file.type as SupportedImageMediaType,
+        mediaType,
         size: file.size,
-        dataUrl: await readFileAsDataUrl(file),
-      })));
-      setAttachments((current) => [...current, ...nextAttachments]);
-      setSelectedModel("deepseek-v4-flash-vision-exp");
-    } catch (readError) {
-      setAttachmentError(readError instanceof Error ? readError.message : "读取图片失败");
+        file,
+        storagePath: buildChatImageStoragePath({
+          userId: user.id,
+          sessionId: activeSession.id,
+          imageId: id,
+          mediaType,
+        }),
+        uploadStatus: "uploading" as const,
+      };
+    });
+    setAttachments((current) => [...current, ...nextAttachments]);
+    setSelectedModel("deepseek-v4-flash-vision-exp");
+    await Promise.allSettled(nextAttachments.map(uploadComposerAttachment));
+  };
+
+  const handleRemoveAttachment = async (id: string) => {
+    const attachment = attachments.find((candidate) => candidate.id === id);
+    setAttachments((current) => current.filter((candidate) => candidate.id !== id));
+    setAttachmentError(null);
+    if (attachment?.storagePath) {
+      await deleteChatImages(supabase, [attachment.storagePath]).catch((cleanupError) => {
+        console.error("清理已移除图片失败:", cleanupError);
+        setAttachmentError("图片已移除，但远端文件清理失败");
+      });
     }
   };
 
-  const handleSelectedModelChange = (model: ChatModelId) => {
-    setSelectedModel(model);
-    if (attachments.length > 0 && !supportsImageInput(model)) {
-      setAttachments([]);
-      setAttachmentError("切换到文本模型后，已移除图片附件");
-    } else {
-      setAttachmentError(null);
+  const handleRetryAttachment = async (id: string) => {
+    const attachment = attachments.find((candidate) => candidate.id === id);
+    if (!attachment || attachment.uploadStatus === "uploading") return;
+    await uploadComposerAttachment(attachment);
+  };
+
+  const handleSelectedModelChange = async (model: ChatModelId) => {
+    if (attachmentsUploading) {
+      setAttachmentError("图片正在处理中，请稍候");
+      return;
     }
+    if (attachments.length > 0 && !supportsImageInput(model)) {
+      try {
+        await clearPendingAttachments();
+      } catch (cleanupError) {
+        setAttachmentError(
+          cleanupError instanceof Error ? cleanupError.message : "清理待发送图片失败",
+        );
+        return;
+      }
+      setAttachmentError("切换到文本模型后，已移除图片附件");
+    }
+    setSelectedModel(model);
+    if (attachments.length === 0) setAttachmentError(null);
   };
 
   const handleExecutePlan = async (plan: ExecutionPlanData) => {
@@ -630,9 +881,50 @@ export default function Home() {
     activeSession?.abort();
   };
 
-  const handleSwitchSession = (id: string) => {
+  const clearPendingAttachments = async () => {
+    const storagePaths = attachments.flatMap((attachment) =>
+      attachment.storagePath ? [attachment.storagePath] : []);
+    if (storagePaths.length > 0) {
+      await deleteChatImages(supabase, storagePaths);
+    }
+    setAttachments([]);
+  };
+
+  const handleCreateSession = async () => {
+    if (attachmentsUploading) {
+      setAttachmentError("图片正在处理中，请稍候");
+      return;
+    }
+    try {
+      await clearPendingAttachments();
+    } catch (cleanupError) {
+      setAttachmentError(
+        cleanupError instanceof Error ? cleanupError.message : "清理待发送图片失败",
+      );
+      return;
+    }
+    setAttachmentError(null);
+    createSession();
+    setInput("");
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleSwitchSession = async (id: string) => {
+    if (attachmentsUploading) {
+      setAttachmentError("图片正在处理中，请稍候");
+      return;
+    }
+    try {
+      await clearPendingAttachments();
+    } catch (cleanupError) {
+      setAttachmentError(
+        cleanupError instanceof Error ? cleanupError.message : "清理待发送图片失败",
+      );
+      return;
+    }
     switchSession(id);
     setInput("");
+    setAttachmentError(null);
     setAccountMenuOpen(false);
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -676,6 +968,12 @@ export default function Home() {
       if (sessionDialog.mode === "rename") {
         await renameSession(sessionDialog.sessionId, sessionDialogTitle);
       } else {
+        if (attachmentsUploading && sessionDialog.sessionId === activeId) {
+          throw new Error("图片正在处理中，请稍候");
+        }
+        if (sessionDialog.sessionId === activeId) {
+          await clearPendingAttachments();
+        }
         await deleteSession(sessionDialog.sessionId);
       }
       setSessionDialog(null);
@@ -703,7 +1001,16 @@ export default function Home() {
 
   const handleSignOut = async () => {
     setAccountMenuOpen(false);
-    await supabase.auth.signOut();
+    if (attachmentsUploading) {
+      setAttachmentError("图片正在处理中，请稍候");
+      return;
+    }
+    try {
+      await clearPendingAttachments();
+      await supabase.auth.signOut();
+    } catch (signOutError) {
+      setAttachmentError(signOutError instanceof Error ? signOutError.message : "退出前清理图片失败");
+    }
   };
 
   // 加载中状态
@@ -720,23 +1027,74 @@ export default function Home() {
     <div className="flex h-full bg-slate-950">
       {/* 侧边栏 */}
       <aside
-        className={`flex flex-col border-r border-slate-800 bg-slate-900 transition-all duration-300 ${
+        className={`flex shrink-0 flex-col border-r border-slate-800 bg-slate-900 transition-all duration-300 ${
           sidebarOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
         }`}
       >
-        <div className="p-4">
+        <div className="border-b border-slate-800 px-3 py-4">
+          <div className="mb-4 flex items-center gap-3 px-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">
+              <span className="text-sm font-semibold">AI</span>
+            </div>
+            <span className="truncate text-sm font-semibold text-slate-100">
+              知识助手
+            </span>
+          </div>
+          <nav aria-label="主要功能" className="space-y-1">
+            <button
+              type="button"
+              aria-current={activeCapability === "chat" ? "page" : undefined}
+              onClick={() => {
+                setActiveCapability("chat");
+                setAccountMenuOpen(false);
+              }}
+              className={`flex h-11 w-full items-center gap-3 rounded-lg border px-3 text-left text-sm font-medium transition-colors ${
+                activeCapability === "chat"
+                  ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-200"
+                  : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <MessageCircle className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+              <span>对话</span>
+            </button>
+            <button
+              type="button"
+              aria-current={activeCapability === "connections" ? "page" : undefined}
+              onClick={() => {
+                setActiveCapability("connections");
+                setAccountMenuOpen(false);
+              }}
+              className={`flex h-11 w-full items-center gap-3 rounded-lg border px-3 text-left text-sm font-medium transition-colors ${
+                activeCapability === "connections"
+                  ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-200"
+                  : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <Plug className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+              <span>连接</span>
+            </button>
+          </nav>
+        </div>
+
+        {activeCapability === "chat" ? (
+          <>
+          <div className="px-3 pb-2 pt-4">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="text-xs font-medium text-slate-500">最近对话</span>
+          </div>
           <button
-            onClick={createSession}
-            className="w-full rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 transition-colors whitespace-nowrap"
+            onClick={() => void handleCreateSession()}
+            className="flex h-10 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-700 px-3 text-sm text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white"
           >
-            + 新对话
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            <span>新对话</span>
           </button>
         </div>
-        <nav className="flex-1 overflow-y-auto px-2 space-y-1">
+          <nav aria-label="对话列表" className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
           {sessions.map((session) => (
             <div
               key={session.id}
-              onClick={() => handleSwitchSession(session.id)}
+              onClick={() => void handleSwitchSession(session.id)}
               className={`group flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm cursor-pointer transition-colors whitespace-nowrap ${
                 session.id === activeId
                   ? "bg-slate-800 text-white"
@@ -817,7 +1175,51 @@ export default function Home() {
               </button>
             </div>
           ))}
-        </nav>
+          </nav>
+          </>
+        ) : (
+          <nav aria-label="连接设置" className="flex-1 overflow-y-auto px-2 py-4">
+            {connectionTabGroups.map((group, groupIndex) => (
+              <section
+                key={group.label}
+                aria-labelledby={`connection-group-${groupIndex}`}
+                className={groupIndex === 0 ? "" : "mt-6"}
+              >
+                <h2
+                  id={`connection-group-${groupIndex}`}
+                  className="mb-2 px-3 text-xs font-medium text-slate-500"
+                >
+                  {group.label}
+                </h2>
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const selected = item.id === activeConnectionTab;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => setActiveConnectionTab(item.id)}
+                        className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors ${
+                          selected
+                            ? "bg-slate-800 text-white"
+                            : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                        }`}
+                      >
+                        <Icon
+                          className={`h-[18px] w-[18px] shrink-0 ${selected ? "text-cyan-300" : "text-slate-500"}`}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </nav>
+        )}
         <div ref={accountMenuRef} className="relative border-t border-slate-800 p-3">
           {accountMenuOpen && (
             <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-2xl border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
@@ -996,11 +1398,12 @@ export default function Home() {
       </aside>
 
       {/* 主区域 */}
-      <main className="flex flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b border-slate-800 px-6 py-4">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="text-slate-400 hover:text-white transition-colors"
+            className="shrink-0 text-slate-400 transition-colors hover:text-white"
+            aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
           >
             <svg
               width="20"
@@ -1016,10 +1419,25 @@ export default function Home() {
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </button>
-          <h1 className="text-lg font-semibold text-white">知识助手</h1>
+          <h1
+            className="min-w-0 truncate text-lg font-semibold text-white"
+            title={mainTitle}
+          >
+            {mainTitle}
+          </h1>
         </header>
 
-        <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-4 py-6">
+        {activeCapability === "chat" ? (
+          <>
+        <div
+          ref={messagesScrollRef}
+          onScroll={(event) => {
+            if (activeId) {
+              sessionScrollPositionsRef.current.set(activeId, event.currentTarget.scrollTop);
+            }
+          }}
+          className="flex-1 overflow-y-auto px-4 py-6"
+        >
           <div className="mx-auto max-w-4xl space-y-4">
             {activeSession?.hasOlderMessages && (
               <div className="flex justify-center">
@@ -1052,13 +1470,11 @@ export default function Home() {
                     key={msg.id ?? `${msg.role}-${msg.createdAt ?? i}`}
                     className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                  <div
-                    className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "max-w-[78%] bg-cyan-600 text-white"
-                        : "w-full bg-slate-800 text-slate-200"
-                    } ${isStreaming ? "streaming-msg" : ""}`}
-                  >
+                  <div className={
+                    msg.role === "user"
+                      ? "flex max-w-[78%] flex-col items-end gap-2"
+                      : `w-full rounded-2xl bg-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 ${isStreaming ? "streaming-msg" : ""}`
+                  }>
                     {msg.role === "assistant" && (
                       <ReasoningPanel
                         reasoning={msg.reasoning}
@@ -1066,44 +1482,58 @@ export default function Home() {
                       />
                     )}
                     {msg.attachments && msg.attachments.length > 0 && (
-                      <div className={`mb-2 grid gap-2 ${msg.attachments.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
-                        {msg.attachments.map((attachment) => attachment.dataUrl ? (
-                          <button
-                            key={attachment.id}
-                            type="button"
-                            onClick={() => setPreviewImage({
-                              src: attachment.dataUrl!,
-                              alt: attachment.name,
-                            })}
-                            className="relative h-64 min-w-48 cursor-zoom-in overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                            title={`预览 ${attachment.name}`}
-                            aria-label={`预览图片 ${attachment.name}`}
-                          >
-                            <Image
-                              src={attachment.dataUrl}
-                              alt={attachment.name}
-                              fill
-                              unoptimized
-                              sizes="(max-width: 768px) 78vw, 640px"
-                              className="object-contain transition-transform hover:scale-[1.02]"
-                            />
-                          </button>
-                        ) : (
-                          <div
-                            key={attachment.id}
-                            className="flex min-w-0 items-center gap-2 rounded-md bg-cyan-700/40 px-3 py-2 text-xs text-cyan-50"
-                          >
-                            <ImageIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                            <span className="truncate">{attachment.name}</span>
-                          </div>
-                        ))}
+                      <div className={
+                        msg.attachments.length > 1
+                          ? "flex max-w-[22rem] flex-wrap justify-end gap-2"
+                          : "h-20 w-20"
+                      }>
+                        {msg.attachments.map((attachment) => {
+                          const previewUrl = getChatImagePreviewUrl(attachment);
+                          return previewUrl ? (
+                            <button
+                              key={attachment.id}
+                              type="button"
+                              onClick={() => setPreviewImage({
+                                src: previewUrl,
+                                alt: attachment.name,
+                              })}
+                              className="group relative block h-20 w-20 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-slate-700/80 bg-slate-900 shadow-lg shadow-black/20 transition hover:border-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                              title={`预览 ${attachment.name}`}
+                              aria-label={`预览图片 ${attachment.name}`}
+                            >
+                              <Image
+                                src={previewUrl}
+                                alt={attachment.name}
+                                fill
+                                unoptimized
+                                sizes="80px"
+                                className="object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                              />
+                              <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/65 px-3 py-1.5 text-left text-[11px] text-white/80 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                                {attachment.name}
+                              </span>
+                            </button>
+                          ) : (
+                            <div
+                              key={attachment.id}
+                              className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 p-2 text-[10px] text-slate-300"
+                            >
+                              <ImageIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{attachment.name}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
-                    {(msg.content || isStreaming) && (
+                    {(msg.content || isStreaming) && (msg.role === "user" ? (
+                      <div className="max-w-full rounded-2xl rounded-tr-md bg-cyan-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm shadow-black/10">
+                        <MessageMarkdown content={msg.content} />
+                      </div>
+                    ) : (
                       <MessageMarkdown
                         content={msg.content || (isStreaming && !msg.reasoning?.length ? "思考中..." : "")}
                       />
-                    )}
+                    ))}
                     {msg.role === "assistant" && msg.plan && !msg.planSteps?.length && (
                       <PlanReview
                         plan={msg.plan}
@@ -1312,7 +1742,6 @@ export default function Home() {
                   </div>
                 );
               })}
-            <div ref={messagesEndRef} />
             {error && (
               <div className="flex justify-start">
                 <div className="w-full rounded-2xl bg-red-900/30 px-4 py-3 text-sm text-red-400">
@@ -1333,21 +1762,28 @@ export default function Home() {
           selectedModel={selectedModel}
           onSelectedModelChange={handleSelectedModelChange}
           attachments={attachments}
+          attachmentsUploading={attachmentsUploading}
           attachmentError={attachmentError}
           onImagesSelected={(files) => void handleImagesSelected(files)}
-          onRemoveAttachment={(id) => {
-            setAttachments((current) => current.filter((attachment) => attachment.id !== id));
-            setAttachmentError(null);
-          }}
+          onRemoveAttachment={(id) => void handleRemoveAttachment(id)}
+          onRetryAttachment={(id) => void handleRetryAttachment(id)}
           onSend={handleSend}
           onStop={handleStop}
           isRunning={Boolean(loading || streaming || historyLoading)}
-          disabled={!input.trim() && attachments.length === 0}
+          disabled={
+            attachmentsUploading
+            || !attachmentsReady
+            || (!input.trim() && attachments.length === 0)
+          }
         />
         <ImagePreviewDialog
           image={previewImage}
           onClose={() => setPreviewImage(null)}
         />
+          </>
+        ) : (
+          <div className="flex-1 bg-slate-950" aria-label={`${mainTitle}内容区域`} />
+        )}
       </main>
       {sessionDialog && (
         <div

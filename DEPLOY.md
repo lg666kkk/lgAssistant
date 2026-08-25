@@ -41,6 +41,19 @@ openssl rand -base64 32
 将生成结果填入 `CONFIG_ENCRYPTION_KEY`。使用设置页前，先在 Supabase SQL Editor
 中执行 `docs/schemas/migrations/20260719-runtime-config.sql`。
 
+## 聊天图片存储
+
+多模态聊天的历史图片使用 Supabase Storage 私有 Bucket。首次启用前，在 Supabase
+SQL Editor 中执行：
+
+```text
+docs/schemas/migrations/20260825-chat-images-storage.sql
+```
+
+该迁移创建 `chat-images` Bucket，并将读、写、删除权限限制在当前登录用户自己的
+一级目录。应用只把 `storagePath` 保存到消息 metadata；Base64 和 Signed URL 不会
+持久化到数据库。
+
 ## 构建并启动
 
 ```bash

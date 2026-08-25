@@ -11,7 +11,10 @@ import type { AgentEvent } from "@/lib/agent/runtime/events";
 import { SessionManager } from "./session-manager";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { createUuid } from "@/lib/platform/uuid";
-import type { ChatImageAttachment } from "@/lib/agent/multimodal";
+import {
+  toPersistedImageAttachment,
+  type ChatImageAttachment,
+} from "@/lib/agent/multimodal";
 export interface Message {
   id?: string;
   createdAt?: string;
@@ -172,7 +175,7 @@ export class ChatSession {
       const savedUserMessage = await this.sessionManager.saveUserMessage(this.id, input, {
         metadata: attachments.length > 0
           ? {
-              attachments: attachments.map(({ dataUrl: _dataUrl, ...attachment }) => attachment),
+              attachments: attachments.map(toPersistedImageAttachment),
             }
           : undefined,
       });
@@ -180,6 +183,17 @@ export class ChatSession {
       userMessage.createdAt = savedUserMessage.created_at;
     } catch (error) {
       console.error("保存用户消息失败:", error);
+      const imagePaths = attachments.flatMap((attachment) =>
+        attachment.storagePath ? [attachment.storagePath] : []);
+      if (imagePaths.length > 0) {
+        await this.sessionManager.deleteChatImagePaths(imagePaths).catch((cleanupError) =>
+          console.error("回滚未保存的图片失败:", cleanupError));
+        this.messages = this.messages.filter((message) => message !== userMessage);
+        this.error = error instanceof Error ? error.message : "保存图片消息失败";
+        this.loading = false;
+        onUpdate();
+        return;
+      }
     }
 
     if (this.messages.length === 1) {
