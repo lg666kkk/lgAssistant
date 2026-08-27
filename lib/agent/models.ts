@@ -1,7 +1,6 @@
-export type ChatModelId =
-  | "deepseek-v4-pro"
-  | "deepseek-v4-flash"
-  | "deepseek-v4-flash-vision-exp";
+import { getRememberedModelMetadata } from "@/lib/llm/model-metadata-cache";
+
+export type ChatModelId = string;
 
 export type ModelUsageBreakdown = {
   inputTokens: number;
@@ -69,6 +68,8 @@ export const chatModelOptions: ChatModelOption[] = [
 export const defaultChatModel: ChatModelId = "deepseek-v4-pro";
 
 export function getModelContextWindowTokens(model: ChatModelId): number {
+  const configured = getRememberedModelMetadata(model);
+  if (configured) return configured.contextWindow;
   switch (model) {
     case "deepseek-v4-pro":
     case "deepseek-v4-flash":
@@ -90,11 +91,16 @@ export function getChatModelOption(model: ChatModelId) {
 }
 
 export function supportsImageInput(model: ChatModelId) {
-  return model === "deepseek-v4-flash-vision-exp";
+  return getRememberedModelMetadata(model)?.supportsImages
+    ?? model === "deepseek-v4-flash-vision-exp";
 }
 
 export function getModelPricing(model: ChatModelId): ModelPricingCnyPerMillionTokens {
-  return getChatModelOption(model)?.pricing ?? chatModelOptions[0].pricing;
+  return getChatModelOption(model)?.pricing ?? {
+    inputCacheHit: 0,
+    inputCacheMiss: 0,
+    output: 0,
+  };
 }
 
 export function calculateModelUsageCost(

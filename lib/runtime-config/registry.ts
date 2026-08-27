@@ -7,27 +7,10 @@ export type RuntimeConfigDefinition = {
   type: "text" | "select";
   options?: string[];
   environmentKey?: string;
+  surface?: "settings" | "langfuse";
 };
 
 export const runtimeConfigDefinitions: RuntimeConfigDefinition[] = [
-  {
-    key: "ANTHROPIC_BASE_URL",
-    label: "LLM Base URL",
-    group: "模型",
-    description: "兼容 Anthropic Messages API 的模型服务地址。",
-    secret: false,
-    type: "text",
-    environmentKey: "ANTHROPIC_BASE_URL",
-  },
-  {
-    key: "ANTHROPIC_API_KEY",
-    label: "LLM API Key",
-    group: "模型",
-    description: "模型服务访问密钥。保存后只显示是否已配置。",
-    secret: true,
-    type: "text",
-    environmentKey: "ANTHROPIC_API_KEY",
-  },
   {
     key: "DASHSCOPE_BASE_URL",
     label: "DashScope Base URL",
@@ -54,15 +37,6 @@ export const runtimeConfigDefinitions: RuntimeConfigDefinition[] = [
     secret: true,
     type: "text",
     environmentKey: "NOTION_API_KEY",
-  },
-  {
-    key: "TAVILY_API_KEY",
-    label: "Tavily API Key",
-    group: "联网搜索",
-    description: "联网搜索服务访问密钥。",
-    secret: true,
-    type: "text",
-    environmentKey: "TAVILY_API_KEY",
   },
   {
     key: "RAG_FUSION_STRATEGY",

@@ -94,9 +94,7 @@ function normalizeChatUsage(model: string, usage: any): NormalizedUsage {
   const totalTokens = usage?.totalTokens == null
     ? inputTokens + outputTokens
     : toNumber(usage.totalTokens);
-  const resolvedModel = chatModelOptions.some((item) => item.id === model)
-    ? model as ChatModelId
-    : "deepseek-v4-pro";
+  const resolvedModel = model as ChatModelId;
   const estimated = typeof usage?.estimatedCostCny === "number"
     ? usage.estimatedCostCny
     : calculateModelUsageCost(resolvedModel, {

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RotateCcw, Save } from "lucide-react";
-import { AuthGate } from "@/lib/auth/auth-gate";
 import { authFetch } from "@/lib/auth/client";
 
 type KnowledgePage = {
@@ -127,7 +126,7 @@ function eventTone(event: SyncEvent) {
   return "text-zinc-200";
 }
 
-export default function KnowledgePage() {
+export function KnowledgeCenter() {
   const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [wikiEdgeCount, setWikiEdgeCount] = useState(0);
@@ -412,14 +411,9 @@ export default function KnowledgePage() {
     .find((event) => event.type === "page_start" || event.type === "page_read" || event.type === "chunking_start" || event.type === "embedding_start" || event.type.startsWith("db_"));
 
   return (
-    <AuthGate>
     <div className="h-full overflow-y-auto bg-zinc-950 text-zinc-200">
       <div className="mx-auto max-w-6xl px-6 py-8">
-        <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">
-          ← 返回对话
-        </Link>
-
-        <div className="mt-6 flex items-end justify-between gap-4">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-slate-100">知识库</h1>
             <p className="mt-1 text-sm text-slate-500">
@@ -989,6 +983,5 @@ export default function KnowledgePage() {
         )}
       </div>
     </div>
-    </AuthGate>
   );
 }

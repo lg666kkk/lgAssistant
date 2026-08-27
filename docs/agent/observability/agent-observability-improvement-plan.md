@@ -54,7 +54,7 @@ POST /api/chat
 
 - `lib/agent/runtime/trace.ts` 定义领域 Trace 语义；
 - `lib/agent/runtime/trace-store.ts` 将完整 Trace 保存到 Supabase；
-- `instrumentation.ts` 注册 `LangfuseSpanProcessor`；
+- `lib/langfuse/client.ts` 按当前用户配置创建隔离 Langfuse Client；
 - `lib/agent/runtime/model-provider.ts` 为 AI SDK 模型调用开启 telemetry；
 - `/traces` 支持按会话查看运行结果；
 - Trace 详情能展示 system segments、模型 usage、工具输入输出、压缩和 RAG debug；

@@ -4,8 +4,9 @@ import {
   DEFAULT_CHUNK_OVERLAP_TOKENS,
 } from "@/lib/knowledge/chunking";
 import { EMBEDDING_MODEL } from "@/lib/knowledge/embedding";
-import { deepseekConfig, ragConfig } from "@/lib/platform/config";
+import { ragConfig } from "@/lib/platform/config";
 import { requireUser } from "@/lib/auth/server";
+import { listUserLlmCatalog } from "@/lib/llm/config-service";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,9 @@ export async function GET(req: Request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const dashscopeBaseUrl =
     process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+  const llmCatalog = await listUserLlmCatalog(user.id).catch(() => null);
+  const defaultModel = llmCatalog?.models.find((model) =>
+    model.id === llmCatalog.preferences.defaultModelId) ?? llmCatalog?.models[0];
 
   return Response.json(
     {
@@ -181,27 +185,29 @@ export async function GET(req: Request) {
           ],
         },
         {
-          title: "LLM 编译",
+          title: "用户模型",
           items: [
             {
-              key: "DEEPSEEK_API_KEY/ANTHROPIC_API_KEY",
-              label: "LLM API Key",
-              value: maskSecret(process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY),
-              configured: has(process.env.DEEPSEEK_API_KEY) || has(process.env.ANTHROPIC_API_KEY),
-              sensitive: true,
-            },
-            {
-              key: "DEEPSEEK_BASE_URL/ANTHROPIC_BASE_URL",
-              label: "LLM Base URL",
-              value: deepseekConfig.baseURL,
-              configured: true,
+              key: "USER_LLM_PROVIDERS",
+              label: "Provider",
+              value: `${llmCatalog?.providers.length ?? 0} 个 Provider`,
+              configured: Boolean(llmCatalog?.providers.length),
               sensitive: false,
             },
             {
-              key: "LLM_MODEL",
-              label: "编译模型",
-              value: deepseekConfig.model,
-              configured: true,
+              key: "USER_LLM_MODELS",
+              label: "已启用模型",
+              value: `${llmCatalog?.models.length ?? 0} 个模型`,
+              configured: Boolean(llmCatalog?.models.length),
+              sensitive: false,
+            },
+            {
+              key: "USER_LLM_DEFAULT_MODEL",
+              label: "默认模型",
+              value: defaultModel
+                ? `${defaultModel.providerName} / ${defaultModel.displayName}`
+                : "未配置",
+              configured: Boolean(defaultModel),
               sensitive: false,
             },
           ],

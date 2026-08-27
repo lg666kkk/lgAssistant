@@ -124,7 +124,7 @@ export default function SettingsPage() {
           <Link href="/" className="text-zinc-500 hover:text-zinc-200">
             返回对话
           </Link>
-          <Link href="/knowledge" className="text-zinc-500 hover:text-zinc-200">
+          <Link href="/?panel=knowledge" className="text-zinc-500 hover:text-zinc-200">
             知识库
           </Link>
         </div>

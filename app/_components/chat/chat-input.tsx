@@ -9,6 +9,7 @@ import { AlertCircle, ImagePlus, LoaderCircle, RefreshCw, X } from "lucide-react
 import type { ContextUsageEventData } from "@/lib/agent/runtime/events";
 import { ImagePreviewDialog, type PreviewImage } from "./image-preview-dialog";
 import { ModelPicker } from "./model-picker";
+import type { UserLlmModel } from "@/lib/llm/types";
 
 type ChatInputProps = {
   value: string;
@@ -17,6 +18,8 @@ type ChatInputProps = {
   webSearchEnabled: boolean;
   contextUsage?: ContextUsageEventData | null;
   selectedModel: ChatModelId;
+  models: UserLlmModel[];
+  modelsLoading?: boolean;
   attachments: ComposerImageAttachment[];
   attachmentsUploading?: boolean;
   attachmentError?: string | null;
@@ -56,6 +59,8 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       webSearchEnabled,
       contextUsage,
       selectedModel,
+      models,
+      modelsLoading = false,
       attachments,
       attachmentsUploading = false,
       attachmentError,
@@ -215,6 +220,8 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 </button>
                 <ModelPicker
                   selectedModel={selectedModel}
+                  models={models}
+                  loading={modelsLoading}
                   onSelectedModelChange={onSelectedModelChange}
                 />
               </div>

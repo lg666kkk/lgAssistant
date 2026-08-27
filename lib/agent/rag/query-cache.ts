@@ -15,6 +15,7 @@ export type RetrievalCacheKey = {
   threshold?: number;
   limit?: number;
   searchDepth?: "basic" | "advanced";
+  provider?: string;
   strategyVersion: string;
 };
 
@@ -68,6 +69,7 @@ export function buildCacheKey(key: RetrievalCacheKey) {
       threshold: key.threshold,
       limit: key.limit,
       searchDepth: key.searchDepth,
+      provider: key.provider,
       strategyVersion: key.strategyVersion,
     }))
     .digest("hex");

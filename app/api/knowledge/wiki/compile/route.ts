@@ -1,8 +1,7 @@
 import { compileWiki } from "@/lib/knowledge/wiki-compiler";
 import { requireUser } from "@/lib/auth/server";
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { withUserLangfuseTrace } from "@/lib/langfuse/client";
 import {
-  toSharedTraceMetadata,
   withSpanLabel,
 } from "@/lib/agent/observability/span-labels";
 
@@ -43,7 +42,18 @@ export async function POST(req: Request) {
         force,
       };
 
-      await startActiveObservation("knowledge-wiki-compile", async (langfuseTrace) => {
+      await withUserLangfuseTrace({
+        userId: user.id,
+        name: "knowledge-wiki-compile",
+        traceInput,
+        tags: ["knowledge", "wiki-compile"],
+        metadata: withSpanLabel("knowledge-wiki-compile", {
+          requestId,
+          userId: user.id,
+          pageCount: pageIds?.length,
+          force,
+        }),
+      }, async (langfuseTrace) => {
         langfuseTrace.update({
           input: traceInput,
           metadata: withSpanLabel("knowledge-wiki-compile", {
@@ -55,17 +65,6 @@ export async function POST(req: Request) {
         });
         langfuseTrace.setTraceIO({ input: traceInput });
 
-        await propagateAttributes({
-          userId: user.id,
-          traceName: "knowledge-wiki-compile",
-          tags: ["knowledge", "wiki-compile"],
-          // spanLabel 是 observation 私有标签，不能随公共 metadata 传播给子 span。
-          metadata: toSharedTraceMetadata({
-            requestId,
-            pageCount: String(pageIds?.length ?? "all"),
-            force: String(force),
-          }),
-        }, async () => {
           try {
             const results = await compileWiki({
               pageIds,
@@ -111,8 +110,7 @@ export async function POST(req: Request) {
           } finally {
             controller.close();
           }
-        });
-      }, { asType: "span" });
+      });
     },
   });
 

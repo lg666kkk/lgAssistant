@@ -26,8 +26,9 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-将已有的服务商密钥填入 `.env.production`。该文件会在 Next.js 构建和容器运行时
-使用，但不会被复制进最终镜像。生产环境的 `REDIS_URL` 保持为
+将基础设施密钥填入 `.env.production`。LLM Provider 的 Base URL、API Key 和模型
+不再放在环境变量中，由登录用户在「连接 → 大语言模型」里配置。`.env.production`
+会在 Next.js 构建和容器运行时使用，但不会被复制进最终镜像。生产环境的 `REDIS_URL` 保持为
 `redis://redis:6379`；不需要配置 `UPSTASH_REDIS_REST_URL` 或
 `UPSTASH_REDIS_REST_TOKEN`。
 
@@ -40,6 +41,45 @@ openssl rand -base64 32
 
 将生成结果填入 `CONFIG_ENCRYPTION_KEY`。使用设置页前，先在 Supabase SQL Editor
 中执行 `docs/schemas/migrations/20260719-runtime-config.sql`。
+
+Langfuse 使用独立的用户配置表。在 Supabase SQL Editor 中执行：
+
+```text
+docs/schemas/migrations/20260828-user-langfuse-config.sql
+```
+
+当前登录用户可在「连接 → 日志 → Langfuse 配置」中保存自己的 Base URL、Public Key
+和 Secret Key。密钥使用 `CONFIG_ENCRYPTION_KEY` 加密，保存后下一次请求立即生效，
+不再读取 `LANGFUSE_*` 环境变量，也不需要重启应用。
+
+## 用户级模型配置
+
+在 Supabase SQL Editor 中执行：
+
+```text
+docs/schemas/migrations/20260826-user-llm-config.sql
+docs/schemas/migrations/20260826-user-llm-model-discovery.sql
+docs/schemas/migrations/20260827-user-llm-tools-default.sql
+```
+
+这些迁移创建用户隔离的 Provider、模型、默认路由和审计表，并将早期通过模型发现
+功能添加的模型统一初始化为支持工具调用。Provider API Key 使用
+`CONFIG_ENCRYPTION_KEY` 进行 AES-256-GCM 加密，浏览器只会看到是否已配置及脱敏提示。
+每个用户需要登录后在「连接 → 大语言模型」中至少配置一个启用模型，聊天和记忆
+抽取才会调用模型。
+
+## 用户级搜索引擎配置
+
+在 Supabase SQL Editor 中执行：
+
+```text
+docs/schemas/migrations/20260827-user-search-config.sql
+```
+
+该迁移创建用户隔离的搜索 Provider 和默认路由表。Tavily、Exa、Brave Search 的
+API Key 使用 `CONFIG_ENCRYPTION_KEY` 加密，浏览器不会读取密文。用户登录后可在
+「连接 → 搜索引擎」中启用服务并选择默认 Provider。迁移期间服务器环境变量
+`TAVILY_API_KEY`、`EXA_API_KEY`、`BRAVE_SEARCH_API_KEY` 仍可作为后备。
 
 ## 聊天图片存储
 

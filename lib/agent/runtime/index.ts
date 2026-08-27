@@ -490,7 +490,7 @@ export async function callCompressionModel(input: {
   telemetryMetadata?: ModelTelemetryMetadata;
 }): Promise<string> {
   return generateTextWithProvider({
-    model: input.model ?? "deepseek-v4-flash",
+    model: input.model ?? defaultChatModel,
     maxOutputTokens: Math.min(Math.max(256, input.summaryTokenBudget), 2_000),
     telemetryFunctionId: "conversation-context-compress",
     system: COMPACTION_SYSTEM_PROMPT,
@@ -1066,11 +1066,11 @@ export async function runAgentLoop(
       minNewMessagesSinceLastCompression: 8,
       lastCompactedMessageCount,
       force,
-      compressionModel: "deepseek-v4-flash",
+      compressionModel: model,
       compressor: (input) =>
         callCompressionModel({
           ...input,
-          model: "deepseek-v4-flash",
+          model,
           telemetryMetadata: {
             operation: force ? "context-compaction-budget-guard" : "context-compaction",
             requestId,
@@ -1116,7 +1116,6 @@ export async function runAgentLoop(
       getModelContextWindowTokens(model),
       CONTEXT_COMPACTION_WINDOW_CAP,
     );
-    const compressionModel: ChatModelId = "deepseek-v4-flash";
     const compacted = await compactWithObservation();
     loopMessages = compacted.messages;
     if (compacted.compacted) {

@@ -1,8 +1,8 @@
-import { chatModelOptions, type ChatModelId } from "@/lib/agent/models";
 import { meteredModelOptions } from "@/lib/agent/observability/metered-models";
 import { aggregateUsageTraces } from "@/lib/agent/observability/usage-aggregation";
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
 import { requireUser } from "@/lib/auth/server";
+import { listUserLlmCatalog } from "@/lib/llm/config-service";
 
 // GET /api/usage?limit=500&page=1&pageSize=20
 // 基于 agent_traces 聚合真实 token usage 和估算费用。
@@ -40,6 +40,7 @@ export async function GET(req: Request) {
   }
 
   const aggregated = aggregateUsageTraces(data ?? []);
+  const llmCatalog = await listUserLlmCatalog(user.id).catch(() => null);
   const recentRequests = aggregated.requests.slice(
     (page - 1) * pageSize,
     page * pageSize,
@@ -58,11 +59,11 @@ export async function GET(req: Request) {
       hasNextPage: page * pageSize < aggregated.requests.length,
     },
     knownModels: [
-      ...chatModelOptions.map((item) => ({
-        id: item.id satisfies ChatModelId,
-        name: item.name,
+      ...(llmCatalog?.models ?? []).map((item) => ({
+        id: item.id,
+        name: `${item.providerName} / ${item.displayName}`,
         category: "chat" as const,
-        pricing: item.pricing,
+        pricing: { inputCacheHit: 0, inputCacheMiss: 0, output: 0 },
       })),
       ...meteredModelOptions.map((item) => ({
         id: item.id,

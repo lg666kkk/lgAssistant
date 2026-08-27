@@ -28,7 +28,7 @@ RAG 专项：routing cases + retrieval golden set + groundedness cases
 - `AgentTrace` 是执行器级 Trace，在 `runAgentLoop()` 或 `executePlan()` 内创建；Langfuse 根 observation 覆盖了更早的路由和记忆阶段，但本地 Trace 仍不是完整请求生命周期。
 - 本地 Trace 已记录 model、tool、context compaction、plan、retrieval、answer validation，并保存 token、费用估算、工具耗时和 ContextPlan；步骤仍是平铺时间线，不是真正的 span tree。
 - `/api/chat` 会等待保存最终 `pendingTrace`，再上报 Langfuse online scores；但 trace 表仍只有 `completed + stop_reason` 的粗粒度终态，没有结构化 error class、retryability、release descriptor 和统一的 OTel 关联字段。
-- `instrumentation.ts` 已用 OpenTelemetry NodeSDK 注册 Langfuse span processor；尚未显式定义 service/version/environment、采样、脱敏策略和 shutdown/flush 生命周期。
+- Langfuse 已改为按当前用户请求创建隔离 Client，避免多租户共享全局 OTel Processor 导致 Trace 串线；模型 SDK 的自动 OTel 子 Span 暂不导出，业务级 Trace/Span 显式上报并在请求终态 flush。
 - 通用 Agent Eval 只有 3 条 live case，默认执行的 mock 轨只有 1 条编排测试；它验证工具调用和循环行为，不足以证明生产答案质量。
 - Langfuse Dataset 能同步 Agent 与 routing cases，但 Agent 执行边界仍是 `runAgentLoop`，没有经过认证、会话恢复、记忆召回、Prompt Pipe、SSE、持久化等 `/api/chat` 生产路径。
 - 在线 Score 包含完成状态、工具失败率、模型调用次数、延迟；有答案校验时再记录 groundedness、citation precision、citation coverage 和 evidence status。这些是代理信号，不是人工标注的真实正确率。
@@ -380,7 +380,7 @@ RAG 专项：routing cases + retrieval golden set + groundedness cases
 | Planning Trace | `lib/agent/runtime/plan-execution.ts` | plan created/executed/verified，子循环步骤重编号合并 |
 | Trace 持久化 | `lib/agent/runtime/trace-store.ts` | Supabase JSONB、脱敏、保留期兼容；缺 canonical run/OTel 字段 |
 | Trace 查询 | `app/api/traces/`、`app/traces/` | 用户隔离的列表/详情/删除和可视化 |
-| OTel/Langfuse | `instrumentation.ts` | NodeSDK + LangfuseSpanProcessor，生产资源/采样/生命周期待完善 |
+| Langfuse | `lib/langfuse/client.ts` | 用户级隔离 Client + 显式业务 Trace/Span；自动 OTel 模型子 Span 暂不导出 |
 | 通用 Eval | `lib/agent/eval/datasets/agent.ts`、`runner.ts` | 3 条 live case，执行边界是 `runAgentLoop` |
 | Mock/Live 双轨 | `lib/agent/eval/run-eval.test.ts` | 默认 1 条 mock；live 需 `EVAL_LIVE=1` |
 | Dataset Run | `scripts/langfuse-eval.ts` | 同步 Agent/routing cases，记录 executionBoundary |

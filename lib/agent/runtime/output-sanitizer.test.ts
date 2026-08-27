@@ -8,6 +8,18 @@ describe("sanitizeModelText", () => {
     expect(sanitizeModelText(text)).toBe("已完成\n报告正文\n");
   });
 
+  it("removes full-width DeepSeek DSML protocol markers", () => {
+    const text = `<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜\n<｜｜DSML｜｜zh-CN</｜｜DSML｜｜\n<｜｜DSML｜｜Asia/Shanghai</｜｜DSML｜｜\n</｜｜DSML｜｜\n</｜｜DSML｜｜tool_calls>`;
+
+    expect(sanitizeModelText(text).trim()).toBe("zh-CN\nAsia/Shanghai");
+  });
+
+  it("removes full-width DSML parameter wrappers", () => {
+    const text = `<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜parameter name="limit" string="false">5</｜｜DSML｜｜\n<｜｜DSML｜｜黄金价格 最新趋势</｜｜DSML｜｜\n</｜｜DSML｜｜tool_calls>`;
+
+    expect(sanitizeModelText(text).trim()).toBe("parameter name=\"limit\" string=\"false\">5\n黄金价格 最新趋势");
+  });
+
   it("keeps normal Markdown unchanged", () => {
     expect(sanitizeModelText("## 报告\n\n正常正文")).toBe("## 报告\n\n正常正文");
   });

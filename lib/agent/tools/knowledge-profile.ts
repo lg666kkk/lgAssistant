@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getSupabase } from "@/lib/platform/supabase";
-import { defaultChatModel } from "@/lib/agent/models";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
 
 type CompiledWikiProfileRow = {
@@ -367,8 +367,9 @@ async function compressSummariesWithLLM(input: {
   });
   if (stored) return stored;
 
+  const fastModel = await resolveUserLlmModel(input.userId, undefined, "fast");
   const text = await generateTextWithProvider({
-    model: defaultChatModel,
+    model: fastModel.id,
     maxOutputTokens: 520,
     telemetryFunctionId: "knowledge-profile-compress",
     system: [
@@ -386,6 +387,7 @@ async function compressSummariesWithLLM(input: {
       profileInput,
     ].join("\n"),
     telemetryMetadata: {
+      userId: input.userId,
       operation: "knowledge-profile-compress",
       profileType: PROFILE_TYPE,
       sourceHash: hash.slice(0, 12),

@@ -1,5 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { deepseekConfig } from "@/lib/platform/config";
+import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import type { CrossEncoderReranker } from "@/lib/knowledge/reranker";
 import type { EmbeddingUsage } from "@/lib/knowledge/embedding";
 import { LongTermStore } from "./longterm-store";
@@ -36,11 +36,6 @@ const memoryRerankConfig = getMemoryRerankConfig();
 const memoryReranker = createConfiguredMemoryReranker(memoryRerankConfig);
 // 长期层 + 语义层的写入统一走原子写入器（单事务），不再各写各的
 const writer = new MemoryWriter();
-const client = new Anthropic({
-  apiKey: deepseekConfig.apiKey,
-  baseURL: deepseekConfig.baseURL,
-});
-const EXTRACT_MODEL = deepseekConfig.model;
 const DEFAULT_RECALL_LIMIT = 3;
 const DEFAULT_RECALL_THRESHOLD = 0.68;
 const DEFAULT_WRITE_CONFIDENCE = 0.72;
@@ -1441,31 +1436,30 @@ async function decideMemoryWrite(
   fact: ExtractedFact,
   candidates: MemoryRecord[],
   mutationAuthorizedKeys = new Set(candidates.map((candidate) => candidate.key)),
+  userId?: string,
 ): Promise<MemoryWriteDecision> {
   const deterministic = deterministicWriteDecision(fact, candidates, mutationAuthorizedKeys);
   if (deterministic) return deterministic;
 
-  const response = await client.messages.create({
-    model: EXTRACT_MODEL,
-    max_tokens: 300,
+  if (!userId) return { action: "NOOP", reason: "缺少用户模型上下文，跳过模型决策" };
+  const fastModel = await resolveUserLlmModel(userId, undefined, "fast");
+  const text = await generateTextWithProvider({
+    model: fastModel.id,
+    maxOutputTokens: 300,
     system: DECISION_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: escapeMemoryData({
-          newFact: fact,
-          candidates: candidates.map(({ key, content, type, status, score }) => ({
-            key,
-            content,
-            type,
-            status,
-            score,
-          })),
-        }),
-      },
-    ],
+    prompt: escapeMemoryData({
+      newFact: fact,
+      candidates: candidates.map(({ key, content, type, status, score }) => ({
+        key,
+        content,
+        type,
+        status,
+        score,
+      })),
+    }),
+    telemetryFunctionId: "memory-write-decision",
+    telemetryMetadata: { userId, operation: "memory-write-decision" },
   });
-  const text = (response.content.find((block: any) => block.type === "text") as any)?.text ?? "";
   const parsed = parseWriteDecision(text, fact, candidates, mutationAuthorizedKeys);
   if (parsed) return parsed;
   // 兜底不再 ADD。原先「决策输出无效就按稳定 key 幂等写入」在 candidates 非空时
@@ -1542,6 +1536,8 @@ export async function handleExplicitForgetRequest(input: {
         intent: "forget",
       },
       candidates,
+      undefined,
+      input.userId,
     );
     if (decision.action !== "INVALIDATE") {
       return {
@@ -1666,20 +1662,24 @@ export async function consolidate(
 
   let facts: ExtractedFact[];
   try {
-    const response = await client.messages.create({
-      model: EXTRACT_MODEL,
-      max_tokens: 1400,
+    const fastModel = await resolveUserLlmModel(opts.userId, undefined, "fast");
+    const text = await generateTextWithProvider({
+      model: fastModel.id,
+      maxOutputTokens: 1400,
       system: EXTRACT_PROMPT,
-      messages: [{
-        role: "user",
-        content: escapeMemoryData({
-          userMessages,
-          executionContext,
-          observationTime: effectiveAt,
-        }),
-      }],
+      prompt: escapeMemoryData({
+        userMessages,
+        executionContext,
+        observationTime: effectiveAt,
+      }),
+      telemetryFunctionId: "memory-extraction",
+      telemetryMetadata: {
+        userId: opts.userId,
+        requestId: opts.requestId,
+        sessionId: opts.sessionId,
+        operation: "memory-extraction",
+      },
     });
-    const text = (response.content.find((block: any) => block.type === "text") as any)?.text ?? "";
     facts = parseExtractedFacts(text, userMessages).filter(
       (fact) => fact.confidence >= writeConfidence,
     );
@@ -1736,7 +1736,12 @@ export async function consolidate(
       mutationAuthorizedKeys,
     });
     candidateDetails.push(candidateTrace);
-    const decision = await decideMemoryWrite(fact, candidates, mutationAuthorizedKeys);
+    const decision = await decideMemoryWrite(
+      fact,
+      candidates,
+      mutationAuthorizedKeys,
+      opts.userId,
+    );
     candidateTrace.decision = {
       action: decision.action,
       targetKey: "targetKey" in decision ? decision.targetKey : null,

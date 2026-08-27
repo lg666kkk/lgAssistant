@@ -19,6 +19,7 @@ type CliOptions = {
   dataset: string;
   runName: string;
   kind?: LangfuseEvalInput["kind"];
+  userId?: string;
 };
 
 function parseArgs(argv: string[]): CliOptions {
@@ -37,6 +38,7 @@ function parseArgs(argv: string[]): CliOptions {
     else if (arg === "--live") options.live = true;
     else if (arg === "--dataset") options.dataset = argv[++index] ?? options.dataset;
     else if (arg === "--run-name") options.runName = argv[++index] ?? options.runName;
+    else if (arg === "--user-id") options.userId = argv[++index];
     else if (arg === "--kind") {
       const kind = argv[++index];
       if (kind !== "agent" && kind !== "routing") throw new Error("--kind 必须是 agent 或 routing");
@@ -52,11 +54,16 @@ function parseArgs(argv: string[]): CliOptions {
   return options;
 }
 
-function createLangfuse() {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  if (!publicKey || !secretKey) throw new Error("缺少 LANGFUSE_PUBLIC_KEY 或 LANGFUSE_SECRET_KEY");
-  return new Langfuse({ publicKey, secretKey, baseUrl: process.env.LANGFUSE_BASE_URL });
+async function createLangfuse(userId?: string) {
+  if (!userId) throw new Error("请通过 --user-id 指定使用哪位用户的 Langfuse 配置");
+  const { resolveUserLangfuseConfig } = await import("../lib/langfuse/config");
+  const config = await resolveUserLangfuseConfig(userId);
+  if (!config) throw new Error("该用户尚未启用 Langfuse");
+  return new Langfuse({
+    publicKey: config.publicKey,
+    secretKey: config.secretKey,
+    baseUrl: config.baseUrl,
+  });
 }
 
 async function syncDataset(langfuse: Langfuse, datasetName: string) {
@@ -179,7 +186,7 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const langfuse = createLangfuse();
+  const langfuse = await createLangfuse(options.userId);
   if (options.sync) await syncDataset(langfuse, options.dataset);
   if (options.run) await runDataset(langfuse, options);
 }

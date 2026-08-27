@@ -2,9 +2,8 @@ import { syncNotionPageTree, syncNotionPages } from "@/lib/knowledge/sync";
 import { enqueueKnowledgeProfileRefresh } from "@/lib/agent/tools/knowledge-profile";
 import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
 import { requireUser } from "@/lib/auth/server";
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { withUserLangfuseTrace } from "@/lib/langfuse/client";
 import {
-  toSharedTraceMetadata,
   withSpanLabel,
 } from "@/lib/agent/observability/span-labels";
 
@@ -52,25 +51,19 @@ export async function POST(req: Request) {
         force,
       };
 
-      await startActiveObservation("knowledge-sync", async (langfuseTrace) => {
+      await withUserLangfuseTrace({
+        userId: user.id,
+        name: "knowledge-sync",
+        traceInput,
+        tags: ["knowledge", "notion-sync"],
+        metadata: withSpanLabel("knowledge-sync", traceInput),
+      }, async (langfuseTrace) => {
         langfuseTrace.update({
           input: traceInput,
           metadata: withSpanLabel("knowledge-sync", traceInput),
         });
         langfuseTrace.setTraceIO({ input: traceInput });
 
-        await propagateAttributes({
-          userId: user.id,
-          traceName: "knowledge-sync",
-          tags: ["knowledge", "notion-sync"],
-          // spanLabel 是 observation 私有标签，不能随公共 metadata 传播给子 span。
-          metadata: toSharedTraceMetadata({
-            requestId,
-            pageId,
-            tree: String(syncTree),
-            force: String(force),
-          }),
-        }, async () => {
           try {
             streamEvent(controller, encoder, {
               type: "input_parsed",
@@ -133,8 +126,7 @@ export async function POST(req: Request) {
           } finally {
             controller.close();
           }
-        });
-      }, { asType: "span" });
+      });
     },
   });
 

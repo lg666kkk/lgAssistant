@@ -14,13 +14,9 @@ function validateEnv() {
   ];
 
   const missing = required.filter(key => !process.env[key]);
-  const missingGroups = [
-    process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY ? null : 'DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY',
-  ].filter(Boolean);
-
-  if (missing.length > 0 || missingGroups.length > 0) {
+  if (missing.length > 0) {
     throw new Error(
-      `缺少必需的环境变量: ${[...missing, ...missingGroups].join(', ')}\n` +
+      `缺少必需的环境变量: ${missing.join(', ')}\n` +
       `请检查 .env.local 文件是否正确配置`
     );
   }
@@ -30,17 +26,6 @@ function validateEnv() {
 if (typeof window === 'undefined') {
   validateEnv();
 }
-
-/**
- * DeepSeek API 配置
- */
-export const deepseekConfig = {
-  apiKey: process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY!,
-  baseURL: process.env.DEEPSEEK_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.deepseek.com/anthropic',
-  model: 'deepseek-v4-pro',
-  maxTokens: 4096,
-  temperature: 0.7,
-} as const;
 
 /**
  * Supabase 配置

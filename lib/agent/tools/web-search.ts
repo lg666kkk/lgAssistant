@@ -1,4 +1,3 @@
-import { tavily } from "@tavily/core";
 import {
   createEvidenceBundle,
   createWebEvidenceItems,
@@ -19,6 +18,11 @@ import {
   type ToolExecutionContext,
   type ToolResult,
 } from "./types";
+import { resolveUserSearchProvider } from "@/lib/search/config-service";
+import {
+  createSearchProviderClient,
+  type SearchProviderClient,
+} from "@/lib/search/providers";
 
 export type WebSearchInput = {
   query: string;
@@ -28,10 +32,12 @@ export type WebSearchInput = {
 
 export type WebSearchResponse = {
   results?: WebEvidenceResult[];
+  provider?: string;
   [key: string]: unknown;
 };
 
-type WebSearchClient = {
+type WebSearchClient = Pick<SearchProviderClient, "search"> & {
+  id?: string;
   search(query: string, options: Record<string, unknown>): Promise<WebSearchResponse>;
 };
 
@@ -131,16 +137,12 @@ export function createWebSearchTool(options: {
       if (!parsed.query.trim()) {
         return { ok: false, content: "搜索关键词不能为空" };
       }
-      if (!options.client && !process.env.TAVILY_API_KEY) {
-        return {
-          ok: false,
-          content: "缺少环境变量 TAVILY_API_KEY",
-          error: "Missing TAVILY_API_KEY",
-        };
-      }
-
       try {
-        const client = options.client ?? tavily({ apiKey: process.env.TAVILY_API_KEY! });
+        const resolved = options.client
+          ? null
+          : await resolveUserSearchProvider(context?.userId);
+        const client = options.client ?? createSearchProviderClient(resolved!.id, resolved!.apiKey);
+        const providerId = client.id ?? resolved?.id ?? "custom";
         const queries = webQueries(parsed.query, options.retrievalPlan);
         const attempts: RetrievalAttempt[] = [];
         const merged = new Map<string, WebEvidenceResult>();
@@ -156,6 +158,7 @@ export function createWebSearchTool(options: {
             filters: options.retrievalPlan?.steps.find((step) => step.source === "web")?.filters,
             limit: parsed.limit,
             searchDepth: parsed.searchDepth,
+            provider: providerId,
             strategyVersion: AGENTIC_RAG_VERSION,
           };
           const cache = options.cache ?? webResultCache;
@@ -224,6 +227,7 @@ export function createWebSearchTool(options: {
             evidenceBundle: summarizeEvidenceBundle(bundle),
             retrievalAttempts: attempts,
             evidenceSufficient: finalGrade.sufficient,
+            searchProvider: providerId,
           },
         };
       } catch (error) {

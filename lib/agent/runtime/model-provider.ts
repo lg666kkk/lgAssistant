@@ -1,5 +1,3 @@
-import "@/instrumentation";
-import { deepseekConfig } from "@/lib/platform/config";
 import type { ChatModelId } from "@/lib/agent/models";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
@@ -10,6 +8,9 @@ import {
 } from "ai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
+import { createSafeProviderFetch } from "@/lib/llm/url-safety";
+import type { ResolvedUserLlmModel } from "@/lib/llm/types";
 import {
   SPAN_LABEL_METADATA_KEY,
   resolveSpanLabel,
@@ -150,30 +151,47 @@ export function createDeepSeekThinkingFetch(
   };
 }
 
-function resolveOpenAIBaseURL() {
-  if (process.env.AI_SDK_BASE_URL) return process.env.AI_SDK_BASE_URL;
-  if (process.env.DEEPSEEK_OPENAI_BASE_URL)
-    return process.env.DEEPSEEK_OPENAI_BASE_URL;
-  if (deepseekConfig.baseURL.endsWith("/anthropic")) {
-    return deepseekConfig.baseURL.replace(/\/anthropic$/, "/v1");
-  }
-  return deepseekConfig.baseURL;
+type ExecutionModel = Pick<
+  ResolvedUserLlmModel,
+  "modelId" | "baseUrl" | "apiKey" | "maxOutputTokens" | "temperature" | "reasoningMode"
+>;
+
+async function resolveExecutionModel(
+  model: ChatModelId,
+  telemetryMetadata?: ModelTelemetryMetadata,
+): Promise<ExecutionModel> {
+  const userId = typeof telemetryMetadata?.userId === "string"
+    ? telemetryMetadata.userId
+    : undefined;
+  if (!userId) throw new Error("当前模型调用缺少用户配置上下文");
+  return resolveUserLlmModel(userId, model);
 }
 
-function createProvider(
+async function createProvider(
+  model: ChatModelId,
+  telemetryMetadata?: ModelTelemetryMetadata,
   messages: ModelMessage[] = [],
   onReasoningDelta?: (text: string) => void,
 ) {
-  return createOpenAI({
-    name: "deepseek",
-    apiKey: deepseekConfig.apiKey,
-    baseURL: resolveOpenAIBaseURL(),
-    fetch: createDeepSeekThinkingFetch(
-      fetch,
-      messages as DeepSeekAssistantMessage[],
-      onReasoningDelta,
-    ),
+  const runtimeModel = await resolveExecutionModel(model, telemetryMetadata);
+  const safeFetch = createSafeProviderFetch(runtimeModel.baseUrl);
+  const providerFetch = runtimeModel.reasoningMode === "deepseek"
+    ? createDeepSeekThinkingFetch(
+        safeFetch,
+        messages as DeepSeekAssistantMessage[],
+        onReasoningDelta,
+      )
+    : safeFetch;
+  const provider = createOpenAI({
+    name: "user-openai-compatible",
+    apiKey: runtimeModel.apiKey,
+    baseURL: runtimeModel.baseUrl,
+    fetch: providerFetch,
   });
+  return {
+    model: provider.chat(runtimeModel.modelId),
+    runtimeModel,
+  };
 }
 
 export function toAIMessage(
@@ -326,14 +344,14 @@ export async function callModelWithProvider(input: {
 }): Promise<ModelCallResult> {
   const functionId = input.telemetryFunctionId ?? "agent-loop-model-call";
   let reasoningContent = "";
-  const provider = createProvider(input.messages, (reasoningDelta) => {
+  const provider = await createProvider(input.model, input.telemetryMetadata, input.messages, (reasoningDelta) => {
     reasoningContent += reasoningDelta;
     input.onReasoningDelta?.(reasoningDelta);
   });
   const result = streamText({
-    model: provider.chat(input.model),
-    maxOutputTokens: deepseekConfig.maxTokens,
-    temperature: deepseekConfig.temperature,
+    model: provider.model,
+    maxOutputTokens: provider.runtimeModel.maxOutputTokens,
+    temperature: provider.runtimeModel.temperature,
     system: input.system,
     messages: toAIMessages(input.messages),
     tools: toAITools(input.tools),
@@ -402,11 +420,11 @@ export async function generateTextWithProvider(input: {
   telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
 }) {
-  const provider = createProvider();
+  const provider = await createProvider(input.model, input.telemetryMetadata);
   const result = await generateText({
-    model: provider.chat(input.model),
+    model: provider.model,
     maxOutputTokens: input.maxOutputTokens,
-    temperature: deepseekConfig.temperature,
+    temperature: provider.runtimeModel.temperature,
     system: input.system,
     prompt: input.prompt,
     experimental_telemetry: {
@@ -429,11 +447,16 @@ export async function streamTextWithProvider(input: {
   telemetryMetadata?: ModelTelemetryMetadata;
   onReasoningDelta?: (text: string) => void;
 }) {
-  const provider = createProvider(input.messages, input.onReasoningDelta);
+  const provider = await createProvider(
+    input.model,
+    input.telemetryMetadata,
+    input.messages,
+    input.onReasoningDelta,
+  );
   const result = streamText({
-    model: provider.chat(input.model),
-    maxOutputTokens: deepseekConfig.maxTokens,
-    temperature: deepseekConfig.temperature,
+    model: provider.model,
+    maxOutputTokens: provider.runtimeModel.maxOutputTokens,
+    temperature: provider.runtimeModel.temperature,
     system: input.system,
     messages: toAIMessages(input.messages),
     experimental_telemetry: {

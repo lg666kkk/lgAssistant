@@ -266,7 +266,7 @@ export default function UsagePage() {
           </div>
           <div className="flex gap-2">
             <Link
-              href="/traces"
+              href="/?panel=traces"
               className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
             >
               Trace
@@ -396,7 +396,7 @@ export default function UsagePage() {
                           </td>
                           <td className="max-w-[220px] truncate px-3 py-2 text-slate-400">
                             <Link
-                              href={`/traces/${item.id}`}
+                              href={`/?panel=traces&traceId=${encodeURIComponent(item.id)}`}
                               className="hover:text-slate-200"
                             >
                               {item.sessionTitle ?? item.requestId}

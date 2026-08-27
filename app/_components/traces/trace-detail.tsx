@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { AuthGate } from "@/lib/auth/auth-gate";
 import { authFetch } from "@/lib/auth/client";
 
 type ModelStep = {
@@ -780,17 +778,13 @@ function SystemContext({ step }: { step: ModelStep }) {
   );
 }
 
-export default function TraceDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    authFetch(`/api/traces/${params.id}`)
+    authFetch(`/api/traces/${id}`)
       .then(async (r) => {
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || "加载失败");
@@ -799,18 +793,18 @@ export default function TraceDetailPage({
       .then((data) => setTrace(data.trace))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [params.id]);
+  }, [id]);
 
   return (
-    <AuthGate>
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-4xl px-6 py-8">
-        <Link
-          href="/traces"
+        <button
+          type="button"
+          onClick={onBack}
           className="text-sm text-slate-400 hover:text-slate-200"
         >
           ← 返回 Trace 列表
-        </Link>
+        </button>
 
         {loading && <div className="mt-6 text-slate-500">加载中...</div>}
         {error && (
@@ -1202,6 +1196,5 @@ export default function TraceDetailPage({
         )}
       </div>
     </div>
-    </AuthGate>
   );
 }

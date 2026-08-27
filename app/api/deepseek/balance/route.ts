@@ -1,4 +1,6 @@
 import { requireUser } from "@/lib/auth/server";
+import { listUserLlmCatalog, resolveUserLlmModel } from "@/lib/llm/config-service";
+import { createSafeProviderFetch } from "@/lib/llm/url-safety";
 
 type DeepSeekBalanceInfo = {
   currency: string;
@@ -16,21 +18,33 @@ export async function GET(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
 
-  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const catalog = await listUserLlmCatalog(user.id).catch(() => null);
+  const deepseekProvider = catalog?.providers.find((provider) => {
+    try {
+      return new URL(provider.baseUrl).hostname === "api.deepseek.com";
+    } catch {
+      return false;
+    }
+  });
+  const model = deepseekProvider?.models.find((candidate) => candidate.enabled);
+  if (!deepseekProvider || !model) {
     return Response.json(
-      { error: "缺少环境变量 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY" },
+      { error: "当前用户未配置 DeepSeek Provider" },
       { status: 503 },
     );
   }
 
   try {
-    const response = await fetch("https://api.deepseek.com/user/balance", {
+    const resolved = await resolveUserLlmModel(user.id, model.id);
+    const response = await createSafeProviderFetch("https://api.deepseek.com", 15_000)(
+      "https://api.deepseek.com/user/balance",
+      {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${resolved.apiKey}`,
       },
       cache: "no-store",
-    });
+      },
+    );
 
     const data = (await response.json().catch(() => null)) as
       | DeepSeekBalanceResponse

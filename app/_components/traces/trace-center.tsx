@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { AuthGate } from "@/lib/auth/auth-gate";
 import { authFetch } from "@/lib/auth/client";
+import { TraceDetail } from "./trace-detail";
 
 // 列表页用的 trace 概览（对应 /api/traces 返回的精简字段）
 type TraceListItem = {
@@ -67,7 +66,7 @@ function groupBySession(traces: TraceListItem[]): SessionGroup[] {
   );
 }
 
-function SessionBlock({ group }: { group: SessionGroup }) {
+function SessionBlock({ group, onSelect }: { group: SessionGroup; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(true);
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/30">
@@ -87,10 +86,11 @@ function SessionBlock({ group }: { group: SessionGroup }) {
       {open && (
         <div className="space-y-1.5 px-3 pb-3">
           {group.traces.map((t) => (
-            <Link
+            <button
               key={t.id}
-              href={`/traces/${t.id}`}
-              className="block rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2.5 transition-colors hover:border-slate-700 hover:bg-slate-900"
+              type="button"
+              onClick={() => onSelect(t.id)}
+              className="block w-full rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2.5 text-left transition-colors hover:border-slate-700 hover:bg-slate-900"
             >
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
@@ -119,7 +119,7 @@ function SessionBlock({ group }: { group: SessionGroup }) {
                   <span title="总耗时">{t.total_duration_ms ?? "?"}ms</span>
                 </div>
               </div>
-            </Link>
+            </button>
           ))}
         </div>
       )}
@@ -127,10 +127,11 @@ function SessionBlock({ group }: { group: SessionGroup }) {
   );
 }
 
-export default function TracesPage() {
+export function TraceCenter({ initialTraceId = null }: { initialTraceId?: string | null }) {
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(initialTraceId);
 
   useEffect(() => {
     authFetch("/api/traces?limit=200")
@@ -146,8 +147,11 @@ export default function TracesPage() {
 
   const groups = useMemo(() => groupBySession(traces), [traces]);
 
+  if (selectedTraceId) {
+    return <TraceDetail id={selectedTraceId} onBack={() => setSelectedTraceId(null)} />;
+  }
+
   return (
-    <AuthGate>
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
       <div className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
@@ -159,12 +163,6 @@ export default function TracesPage() {
               按会话分组，每条是一次 runAgentLoop 的执行轨迹，点击查看逐步明细
             </p>
           </div>
-          <Link
-            href="/"
-            className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
-          >
-            ← 返回对话
-          </Link>
         </div>
 
         {loading && <div className="text-slate-500">加载中...</div>}
@@ -182,11 +180,10 @@ export default function TracesPage() {
 
         <div className="space-y-3">
           {groups.map((g) => (
-            <SessionBlock key={g.sessionId ?? "__none__"} group={g} />
+            <SessionBlock key={g.sessionId ?? "__none__"} group={g} onSelect={setSelectedTraceId} />
           ))}
         </div>
       </div>
     </div>
-    </AuthGate>
   );
 }

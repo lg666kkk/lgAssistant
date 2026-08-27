@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { getSupabase } from "@/lib/platform/supabase";
 import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
-import { defaultChatModel } from "@/lib/agent/models";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import { buildKnowledgeProfileForTool } from "@/lib/agent/tools/knowledge-profile";
 
 const COMPILER_VERSION = "llm-wiki-page-v1";
@@ -196,6 +196,7 @@ async function compileOnePage(page: SourcePage, options: WikiCompileOptions) {
     page,
     sourceText: sourceText.slice(0, MAX_SOURCE_CHARS),
     slug,
+    userId: options.userId,
   });
   const normalized = normalizeCompiledWiki(compiled, page, slug);
 
@@ -280,7 +281,9 @@ async function compileWithLLM(input: {
   page: SourcePage;
   sourceText: string;
   slug: string;
+  userId?: string;
 }): Promise<CompiledWiki> {
+  if (!input.userId) throw new Error("Wiki 编译需要明确的用户 ID 和用户模型配置");
   const prompt = [
     `页面标题：${input.page.page_title}`,
     `页面链接：${input.page.page_url}`,
@@ -289,8 +292,9 @@ async function compileWithLLM(input: {
     input.sourceText,
   ].join("\n");
 
+  const fastModel = await resolveUserLlmModel(input.userId, undefined, "fast");
   const text = await generateTextWithProvider({
-    model: defaultChatModel,
+    model: fastModel.id,
     maxOutputTokens: 3000,
     telemetryFunctionId: "wiki-page-compile",
     system: [
@@ -302,6 +306,7 @@ async function compileWithLLM(input: {
     ].join("\n"),
     prompt,
     telemetryMetadata: {
+      userId: input.userId,
       operation: "wiki-compile",
       sourceSlug: input.slug,
       pageId: input.page.page_id,

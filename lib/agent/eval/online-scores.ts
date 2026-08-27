@@ -8,22 +8,6 @@ export type OnlineScore = {
 
 type LangfuseScoreClient = Pick<Langfuse, "score" | "flushAsync">;
 
-let client: LangfuseScoreClient | undefined;
-
-function getClient(): LangfuseScoreClient | undefined {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  if (!publicKey || !secretKey) return undefined;
-
-  // 评分仅在请求终态才需要；延迟初始化避免未配置 Langfuse 的环境产生副作用。
-  client ??= new Langfuse({
-    publicKey,
-    secretKey,
-    baseUrl: process.env.LANGFUSE_BASE_URL,
-  });
-  return client;
-}
-
 function latestValidation(trace: AgentTrace) {
   // 一个请求可能有多段执行，末次 answer_validation 才对应最终回答。
   return [...trace.steps]
@@ -67,7 +51,7 @@ export async function reportOnlineScores(input: {
   environment?: string;
   scoreClient?: LangfuseScoreClient;
 }) {
-  const scoreClient = input.scoreClient ?? getClient();
+  const scoreClient = input.scoreClient;
   if (!scoreClient) return;
 
   for (const score of buildOnlineScores(input.trace)) {

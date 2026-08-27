@@ -30,8 +30,7 @@ import {
 import { summarizeMemoryConsolidation } from "@/lib/agent/memory/observability";
 import { createEmptyMemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
-import { getModelContextWindowTokens, resolveChatModel } from "@/lib/agent/models";
-import { supportsImageInput } from "@/lib/agent/models";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import {
   buildMultimodalUserContent,
   stripInlineImagesForPersistence,
@@ -51,10 +50,7 @@ import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
 import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
 import { redactSensitiveValue } from "@/lib/agent/rag/governance";
-import {
-  toSharedTraceMetadata,
-  withSpanLabel,
-} from "@/lib/agent/observability/span-labels";
+import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import {
@@ -72,10 +68,8 @@ import {
   summarizeRetrieval,
 } from "@/lib/agent/observability/agent-trace-summary";
 import {
-  getActiveTraceId,
-  propagateAttributes,
-  startActiveObservation,
-} from "@langfuse/tracing";
+  withUserLangfuseTrace,
+} from "@/lib/langfuse/client";
 import { buildContextPlan } from "@/lib/agent/context/plan";
 import {
   createContextSnapshot,
@@ -301,7 +295,19 @@ export async function POST(req: Request) {
   const requestReceivedAt = new Date().toISOString();
   const { messages, sessionId } = body;
   const enableWebSearch = body.enableWebSearch !== false;
-  const selectedModel = resolveChatModel(body.model);
+  let selectedRuntimeModel;
+  try {
+    selectedRuntimeModel = await resolveUserLlmModel(
+      user.id,
+      typeof body.model === "string" ? body.model : undefined,
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "无法解析用户模型配置" },
+      { status: 400 },
+    );
+  }
+  const selectedModel = selectedRuntimeModel.id;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(
@@ -366,9 +372,9 @@ export async function POST(req: Request) {
     );
   }
   const hasImageAttachments = requestMessages.some((message) => message.attachments.length > 0);
-  if (hasImageAttachments && !supportsImageInput(selectedModel)) {
+  if (hasImageAttachments && !selectedRuntimeModel.supportsImages) {
     return new Response(
-      JSON.stringify({ error: "当前模型不支持图片，请选择 DeepSeek V4 Flash Vision" }),
+      JSON.stringify({ error: "当前模型未启用图片输入能力，请选择视觉模型" }),
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -442,10 +448,12 @@ export async function POST(req: Request) {
   const latestUserQuery = [...requestTextMessages]
     .reverse()
     .find((message) => message.role === "user")?.content ?? "";
-  const tools = filterToolsForUserIntent(
-    routeTools,
-    approvedPlanObjective || latestUserQuery,
-  );
+  const tools = selectedRuntimeModel.supportsTools
+    ? filterToolsForUserIntent(
+        routeTools,
+        approvedPlanObjective || latestUserQuery,
+      )
+    : [];
   const approvedPlan = body.approvedPlan === undefined
     ? undefined
     : normalizeExecutionPlan(body.approvedPlan, new Set(tools.map((tool) => tool.name)));
@@ -469,6 +477,7 @@ export async function POST(req: Request) {
     async start(controller) {
       let closed = false;
       let pendingTrace: AgentTrace | undefined;
+      let langfuseClient: import("langfuse").Langfuse | null = null;
       // OTel/Langfuse 根 observation 的 ID，用来把本地 AgentTrace 的评分写回同一条线上 Trace。
       let langfuseTraceId: string | undefined;
       const enqueueText = (text: string) => {
@@ -507,24 +516,39 @@ export async function POST(req: Request) {
           await reportOnlineScores({
             traceId: langfuseTraceId,
             trace,
+            scoreClient: langfuseClient ?? undefined,
           }).catch((error: any) =>
             console.error("[langfuse] 在线评分失败，跳过:", error.message));
         }
       };
 
-      await startActiveObservation("agent-chat", async (langfuseTrace) => {
-        // 必须在 active observation 内读取，才能拿到本次请求对应的 Langfuse trace ID。
-        langfuseTraceId = getActiveTraceId();
-        const traceInput = buildLangfuseTraceInput({
+      const traceInput = buildLangfuseTraceInput({
           requestId,
           sessionId,
           userId: user.id,
           model: selectedModel,
           messages: requestTextMessages,
-        });
-        const safeTraceInput = redactSensitiveValue(traceInput);
-        const safeRetrievalPlan = redactSensitiveValue(retrievalPlan);
-        const traceDisplayInput = safeTraceInput.query || "(空消息)";
+      });
+      const safeTraceInput = redactSensitiveValue(traceInput);
+      const safeRetrievalPlan = redactSensitiveValue(retrievalPlan);
+      const traceDisplayInput = safeTraceInput.query || "(空消息)";
+      await withUserLangfuseTrace({
+        userId: user.id,
+        name: "agent-chat",
+        sessionId,
+        traceInput: traceDisplayInput,
+        tags: ["api-chat", "agent"],
+        metadata: withSpanLabel("agent-chat", {
+          requestId,
+          sessionId,
+          userId: user.id,
+          model: selectedModel,
+          traceInput: safeTraceInput,
+          retrievalPlan: safeRetrievalPlan,
+        }),
+      }, async (langfuseTrace, client) => {
+        langfuseClient = client;
+        langfuseTraceId = langfuseTrace.id;
         langfuseTrace.update({
           input: traceDisplayInput,
           metadata: withSpanLabel("agent-chat", {
@@ -562,19 +586,6 @@ export async function POST(req: Request) {
           }
         };
 
-        await propagateAttributes({
-          userId: user.id,
-          sessionId,
-          traceName: "agent-chat",
-          tags: ["api-chat", "agent"],
-          // propagateAttributes 的 metadata 会继承到所有后代 observation。spanLabel
-          // 属于当前 observation，不能作为公共属性传播，否则会覆盖每个子 span
-          // 自己通过 withSpanLabel() 设置的标签。
-          metadata: toSharedTraceMetadata({
-            requestId,
-            model: selectedModel,
-          }),
-        }, async () => {
       try {
         const routeObservation = langfuseTrace.startObservation("retrieval.route", {
           metadata: withSpanLabel("retrieval.route", { requestId, planId: retrievalPlan.id }),
@@ -795,7 +806,7 @@ export async function POST(req: Request) {
         const systemSegments = prompt.segments;
         const contextPlan = buildContextPlan({
           model: selectedModel,
-          windowTokens: getModelContextWindowTokens(selectedModel),
+          windowTokens: selectedRuntimeModel.contextWindow,
           outputReserveTokens: 4_096,
           messages: loopMessages,
           originalMessageCount: hydratedContext.originalMessageCount,
@@ -1173,8 +1184,7 @@ export async function POST(req: Request) {
         });
         closeStream();
       }
-        });
-      }, { asType: "agent" });
+      });
     },
   });
 

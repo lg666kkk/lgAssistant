@@ -1,10 +1,3 @@
-import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { NodeSDK } from "@opentelemetry/sdk-node";
-
-export const langfuseSpanProcessor = new LangfuseSpanProcessor();
-
-const sdk = new NodeSDK({
-  spanProcessors: [langfuseSpanProcessor],
-});
-
-sdk.start();
+export async function register() {
+  // Langfuse 使用当前用户的请求级 Client，不注册全局 OTel Processor，避免跨租户串线。
+}

@@ -150,4 +150,24 @@ describe("web_search evidence loop", () => {
 
     expect(client.search).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps cache entries independent across search providers", async () => {
+    const cache = new QueryResultCache<WebSearchResponse>();
+    const tavilyClient = {
+      id: "tavily",
+      search: vi.fn().mockResolvedValue({ results: [] }),
+    };
+    const exaClient = {
+      id: "exa",
+      search: vi.fn().mockResolvedValue({ results: [] }),
+    };
+    const tavilyTool = createWebSearchTool({ client: tavilyClient, cache });
+    const exaTool = createWebSearchTool({ client: exaClient, cache });
+
+    await tavilyTool.execute({ query: "AI Agent news" }, { userId: "user-1" });
+    await exaTool.execute({ query: "AI Agent news" }, { userId: "user-1" });
+
+    expect(tavilyClient.search).toHaveBeenCalledTimes(1);
+    expect(exaClient.search).toHaveBeenCalledTimes(1);
+  });
 });
