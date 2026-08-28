@@ -66,6 +66,29 @@ describe("prompt hard budget", () => {
     }));
   });
 
+  it("injects the user-maintained profile as a distinct, budgeted segment", () => {
+    const prompt = buildPromptPipe({
+      userProfile: "# 关于我\n\n- 称呼：小林\n- 偏好：先给结论",
+      userProfileMetadata: { revision: 3 },
+      maxTokens: 1_000,
+    });
+
+    expect(prompt.systemPrompt).toContain("<user_profile>");
+    expect(prompt.systemPrompt).toContain("先给结论");
+    expect(prompt.segments).toContainEqual(expect.objectContaining({
+      kind: "user-profile",
+      title: "用户画像",
+      source: "user-profile",
+      trust: "user",
+      metadata: { revision: 3 },
+    }));
+  });
+
+  it("does not create a user profile segment when the profile is empty", () => {
+    const prompt = buildPromptPipe({ userProfile: "   ", maxTokens: 500 });
+    expect(prompt.segments.some((segment) => segment.kind === "user-profile")).toBe(false);
+  });
+
   it("does not inject tool-specific routing instructions", () => {
     const prompt = buildPromptPipe({
       retrievalPlan: {

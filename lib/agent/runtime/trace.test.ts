@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { createTrace, formatTraceTree, prependMemoryRecallTraceStep } from "./trace";
+import {
+  createTrace,
+  formatTraceTree,
+  prependMemoryRecallTraceStep,
+  prependUserProfileTraceStep,
+} from "./trace";
 
 describe("trace 冒烟测试", () => {
   it("createTrace 初始化一棵空树", () => {
@@ -81,5 +86,37 @@ describe("trace 冒烟测试", () => {
       ["memory_recall", 0],
       ["model", 1],
     ]);
+  });
+
+  it("records the injected user profile as a dedicated first trace step", () => {
+    const trace = createTrace("req-profile");
+    trace.steps.push({
+      type: "model",
+      index: 0,
+      startedAt: 2,
+      textSummary: "ok",
+      textTruncated: false,
+      textOriginalChars: 2,
+      requestedToolCalls: [],
+      estimatedContextTokens: 1,
+    });
+
+    prependUserProfileTraceStep(trace, {
+      type: "user_profile",
+      startedAt: 1,
+      configured: true,
+      injected: true,
+      revision: 4,
+      updatedAt: "2026-08-28T00:00:00.000Z",
+      contentChars: 20,
+      injectedChars: 80,
+      content: "<user_profile>\n先给结论\n</user_profile>",
+    });
+
+    expect(trace.steps.map((step) => [step.type, step.index])).toEqual([
+      ["user_profile", 0],
+      ["model", 1],
+    ]);
+    expect(formatTraceTree(trace)).toContain("user_profile configured=true injected=true revision=4 chars=80");
   });
 });

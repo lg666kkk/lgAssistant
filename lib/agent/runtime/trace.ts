@@ -153,6 +153,18 @@ export type MemoryRecallTraceStep = TraceStepBase & {
   rerank: MemoryRerankTrace;
 };
 
+export type UserProfileTraceStep = TraceStepBase & {
+  type: "user_profile";
+  configured: boolean;
+  injected: boolean;
+  revision: number;
+  updatedAt?: string;
+  contentChars: number;
+  injectedChars: number;
+  content: string;
+  error?: string;
+};
+
 export type TraceStep =
   | ModelTraceStep
   | ToolTraceStep
@@ -161,6 +173,7 @@ export type TraceStep =
   | RetrievalTraceStep
   | MemoryConsolidationTraceStep
   | MemoryRecallTraceStep
+  | UserProfileTraceStep
   | AnswerValidationTraceStep; // 判别联合
 
 export type AgentTrace = {
@@ -203,6 +216,17 @@ export function createTrace(requestId: string, sessionId?: string): AgentTrace {
 export function prependMemoryRecallTraceStep(
   trace: AgentTrace,
   step: Omit<MemoryRecallTraceStep, "index">,
+) {
+  trace.steps = [
+    { ...step, index: 0 },
+    ...trace.steps.map((item, index) => ({ ...item, index: index + 1 })),
+  ];
+  return trace;
+}
+
+export function prependUserProfileTraceStep(
+  trace: AgentTrace,
+  step: Omit<UserProfileTraceStep, "index">,
 ) {
   trace.steps = [
     { ...step, index: 0 },
@@ -255,6 +279,8 @@ export function formatTraceTree(trace: AgentTrace): string {
       return `${branch} #${step.index} memory_consolidation ${step.outcome.status} persisted=${step.outcome.persistedCount} candidates=${step.outcome.candidateDetails.length}`;
     } else if (step.type === "memory_recall") {
       return `${branch} #${step.index} memory_recall eligible=${step.eligible} selected=${step.selectedCount} rerank=${step.rerank.used ? "used" : step.rerank.reason}`;
+    } else if (step.type === "user_profile") {
+      return `${branch} #${step.index} user_profile configured=${step.configured} injected=${step.injected} revision=${step.revision} chars=${step.injectedChars}${step.error ? " error=true" : ""}`;
     }
     return `${branch} #${step.index} answer_validation ${step.report.status} groundedness=${step.report.groundedness.toFixed(2)}`;
   });

@@ -18,6 +18,7 @@ import { LanguageModelCenter } from "./_components/settings/language-model-cente
 import { SearchEngineCenter } from "./_components/settings/search-engine-center";
 import { LangfuseCenter } from "./_components/settings/langfuse-center";
 import { MemoryCenter } from "./_components/settings/memory-center";
+import { UserProfileCenter } from "./_components/settings/user-profile-center";
 import { KnowledgeCenter } from "./_components/knowledge/knowledge-center";
 import { TraceCenter } from "./_components/traces/trace-center";
 import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
@@ -107,9 +108,14 @@ export default function Home() {
     [llmCatalog?.models],
   );
   useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setSidebarOpen(false);
+    }
+  }, []);
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
-    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "langfuse") return;
+    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "langfuse" && panel !== "user-profile") return;
     setActiveCapability("connections");
     setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
@@ -494,7 +500,7 @@ export default function Home() {
       />
 
       {/* 主区域 */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center gap-3 border-b border-slate-800 px-6 py-4">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
@@ -592,6 +598,8 @@ export default function Home() {
           <LangfuseCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "memory-list" ? (
           <MemoryCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "user-profile" ? (
+          <UserProfileCenter />
         ) : (
           <div className="flex flex-1 items-center justify-center bg-slate-950 text-sm text-slate-600" aria-label={`${mainTitle}内容区域`}>
             {mainTitle}配置将在后续接入

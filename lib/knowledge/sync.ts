@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import ws from 'ws';
 import { ragConfig } from '@/lib/platform/config';
 import { NotionClient } from './notion';
+import { resolveUserNotionConnection } from './connections/notion-config';
+import type { ResolvedUserNotionConnection } from './connections/types';
 import {
   CHUNKER_VERSION,
   DEFAULT_CHUNK_MAX_TOKENS,
@@ -210,7 +212,16 @@ export type SyncOptions = {
   force?: boolean;
   maxRetries?: number;
   onEvent?: (event: SyncProgressEvent) => void;
+  notionConnection?: ResolvedUserNotionConnection;
 };
+
+async function withNotionConnection(options: SyncOptions): Promise<SyncOptions> {
+  if (options.notionConnection) return options;
+  return {
+    ...options,
+    notionConnection: await resolveUserNotionConnection(options.userId),
+  };
+}
 
 function emitSyncEvent(options: SyncOptions | undefined, event: SyncProgressEvent) {
   options?.onEvent?.(event);
@@ -317,15 +328,16 @@ export async function syncNotionPage(
   pageId: string,
   options: SyncOptions,
 ): Promise<SyncResult> {
-  const maxRetries = Math.min(Math.max(options.maxRetries ?? SYNC_MAX_RETRIES, 0), 8);
+  const resolvedOptions = await withNotionConnection(options);
+  const maxRetries = Math.min(Math.max(resolvedOptions.maxRetries ?? SYNC_MAX_RETRIES, 0), 8);
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const result = await syncNotionPageOnce(pageId, options, attempt + 1, maxRetries);
+    const result = await syncNotionPageOnce(pageId, resolvedOptions, attempt + 1, maxRetries);
     if (result.success || attempt >= maxRetries) {
       return result;
     }
 
     const nextDelayMs = SYNC_RETRY_BASE_DELAY_MS * 2 ** attempt;
-    emitSyncEvent(options, {
+    emitSyncEvent(resolvedOptions, {
       type: 'page_retry',
       pageId,
       status: 'failed',
@@ -368,7 +380,12 @@ async function syncNotionPageOnce(
 
   try {
     // 1. 读取 Notion 页面
-    const notionClient = new NotionClient();
+    const notionConnection = options.notionConnection;
+    if (!notionConnection) throw new Error('Notion 连接未解析');
+    const notionClient = new NotionClient({
+      apiKey: notionConnection.token,
+      maxBlockDepth: notionConnection.maxDepth,
+    });
     const page = await notionClient.getPage(pageId);
     const pageContentHash = hashText(page.content);
     emitSyncEvent(options, {
@@ -693,7 +710,8 @@ export async function syncNotionPages(
   pageIds: string[],
   options: SyncOptions,
 ): Promise<SyncResult[]> {
-  emitSyncEvent(options, {
+  const resolvedOptions = await withNotionConnection(options);
+  emitSyncEvent(resolvedOptions, {
     type: 'batch_start',
     totalPages: pageIds.length,
     message: `开始批量同步 ${pageIds.length} 个页面`,
@@ -703,7 +721,7 @@ export async function syncNotionPages(
 
   for (let index = 0; index < pageIds.length; index++) {
     const pageId = pageIds[index];
-    emitSyncEvent(options, {
+    emitSyncEvent(resolvedOptions, {
       type: 'page_start',
       pageId,
       totalPages: pageIds.length,
@@ -713,7 +731,7 @@ export async function syncNotionPages(
         totalPages: pageIds.length,
       },
     });
-    const result = await syncNotionPage(pageId, options);
+    const result = await syncNotionPage(pageId, resolvedOptions);
     results.push(result);
   }
 
@@ -725,7 +743,7 @@ export async function syncNotionPages(
   const updatedCount = results.filter((r) => r.status === 'updated').length;
   const totalChunks = results.reduce((sum, r) => sum + r.chunksCount, 0);
 
-  emitSyncEvent(options, {
+  emitSyncEvent(resolvedOptions, {
     type: 'batch_done',
     totalPages: pageIds.length,
     chunksCount: totalChunks,
@@ -749,15 +767,21 @@ export async function syncNotionPageTree(
   pageId: string,
   options: SyncOptions,
 ): Promise<SyncResult[]> {
-  emitSyncEvent(options, {
+  const resolvedOptions = await withNotionConnection(options);
+  const notionConnection = resolvedOptions.notionConnection!;
+  emitSyncEvent(resolvedOptions, {
     type: 'tree_scan_start',
     pageId,
     message: `开始扫描页面树 ${pageId}`,
   });
-  const notionClient = new NotionClient();
+  const notionClient = new NotionClient({
+    apiKey: notionConnection.token,
+    maxBlockDepth: notionConnection.maxDepth,
+  });
   const pages = await notionClient.getPageTree(pageId, {
+    maxDepth: notionConnection.maxDepth,
     onPageStart: ({ pageId: currentPageId, depth, parentPageId, hintedTitle }) => {
-      emitSyncEvent(options, {
+      emitSyncEvent(resolvedOptions, {
         type: 'tree_page_scanning',
         pageId: currentPageId,
         pageTitle: hintedTitle,
@@ -771,7 +795,7 @@ export async function syncNotionPageTree(
       });
     },
     onPageLoaded: (page) => {
-      emitSyncEvent(options, {
+      emitSyncEvent(resolvedOptions, {
         type: 'tree_page_found',
         pageId: page.id,
         pageTitle: page.title,
@@ -784,7 +808,7 @@ export async function syncNotionPageTree(
       });
     },
     onChildPageFound: (child) => {
-      emitSyncEvent(options, {
+      emitSyncEvent(resolvedOptions, {
         type: 'tree_child_found',
         pageId: child.childPageId,
         pageTitle: child.childTitle,
@@ -798,7 +822,7 @@ export async function syncNotionPageTree(
       });
     },
     onPageRetry: (retry) => {
-      emitSyncEvent(options, {
+      emitSyncEvent(resolvedOptions, {
         type: 'tree_page_retry',
         pageId: retry.pageId,
         pageTitle: retry.hintedTitle,
@@ -816,7 +840,7 @@ export async function syncNotionPageTree(
       });
     },
     onPageFailed: (failure) => {
-      emitSyncEvent(options, {
+      emitSyncEvent(resolvedOptions, {
         type: 'tree_page_failed',
         pageId: failure.pageId,
         pageTitle: failure.hintedTitle,
@@ -833,7 +857,7 @@ export async function syncNotionPageTree(
   });
   const pageIds = pages.map((page) => page.id);
 
-  emitSyncEvent(options, {
+  emitSyncEvent(resolvedOptions, {
     type: 'tree_scan_done',
     pageId,
     totalPages: pages.length,
@@ -843,5 +867,5 @@ export async function syncNotionPageTree(
     },
   });
 
-  return syncNotionPages(pageIds, options);
+  return syncNotionPages(pageIds, resolvedOptions);
 }

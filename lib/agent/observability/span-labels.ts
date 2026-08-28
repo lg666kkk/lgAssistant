@@ -28,6 +28,7 @@ export const SPAN_LABELS: Record<string, string> = {
   "memory.rerank": "记忆重排（Qwen3 对候选记忆重新评分）",
   "memory.explicit_forget": "显式遗忘处理（用户要求忘掉某条记忆）",
   "memory.consolidate": "记忆固化（把本轮对话沉淀成长期记忆）",
+  "user-profile.load": "用户画像加载（把用户确认的稳定画像注入上下文）",
 
   // ── 上下文工程 ──
   "context.compaction": "上下文压缩（超预算时裁剪/摘要历史）",

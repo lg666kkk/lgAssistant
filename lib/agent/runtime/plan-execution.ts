@@ -84,7 +84,7 @@ function buildPlannerContext(input: PlanAndExecuteInput) {
       : message.content.flatMap((block: any) => block.type === "text" ? [block.text] : []).join("\n"),
   }));
   const memorySegments = input.systemSegments
-    ?.filter((segment) => segment.kind === "memory")
+    ?.filter((segment) => segment.kind === "memory" || segment.kind === "user-profile")
     .map((segment) => segment.content) ?? [];
   return truncateTextByTokens(JSON.stringify({ recentMessages, memorySegments }), 1_500).content;
 }

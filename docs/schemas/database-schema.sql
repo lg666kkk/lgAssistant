@@ -457,3 +457,43 @@ ON knowledge_profiles (user_id, updated_at DESC);
 COMMENT ON TABLE knowledge_profiles IS '个人知识库画像缓存，用于工具描述和路由提示';
 COMMENT ON COLUMN knowledge_profiles.profile IS '系统根据已编译知识页自动生成的画像';
 COMMENT ON COLUMN knowledge_profiles.custom_profile IS '用户自定义覆盖层；非空时优先于系统画像';
+
+-- 用户本人维护的稳定画像：独立于知识库画像与自动长期记忆。
+CREATE TABLE IF NOT EXISTS user_agent_profiles (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_agent_profiles_content_length CHECK (char_length(content) <= 8000)
+);
+
+ALTER TABLE user_agent_profiles ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE user_agent_profiles FROM anon, authenticated;
+
+COMMENT ON TABLE user_agent_profiles IS '用户维护的稳定画像，以 USER.md 风格编辑并注入 Agent Prompt';
+COMMENT ON COLUMN user_agent_profiles.content IS 'Markdown 画像正文；脱敏后写入本地 Trace 与 Langfuse';
+
+-- 当前用户的知识库数据源连接。密钥仅通过服务端加密读写。
+CREATE TABLE IF NOT EXISTS user_knowledge_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  credentials_ciphertext TEXT NOT NULL DEFAULT '',
+  credentials_hint TEXT NOT NULL DEFAULT '',
+  settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  last_test_status TEXT CHECK (last_test_status IN ('success', 'failed')),
+  last_test_error TEXT,
+  last_tested_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_knowledge_connections_provider_check CHECK (provider IN ('notion')),
+  CONSTRAINT user_knowledge_connections_user_provider_unique UNIQUE (user_id, provider)
+);
+
+ALTER TABLE user_knowledge_connections ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE user_knowledge_connections FROM anon, authenticated;
+
+COMMENT ON TABLE user_knowledge_connections IS '当前用户的知识库连接凭据和连接器设置';

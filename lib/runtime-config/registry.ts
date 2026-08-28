@@ -30,15 +30,6 @@ export const runtimeConfigDefinitions: RuntimeConfigDefinition[] = [
     environmentKey: "DASHSCOPE_API_KEY",
   },
   {
-    key: "NOTION_API_KEY",
-    label: "Notion API Key",
-    group: "知识库",
-    description: "Notion 同步访问密钥。",
-    secret: true,
-    type: "text",
-    environmentKey: "NOTION_API_KEY",
-  },
-  {
     key: "RAG_FUSION_STRATEGY",
     label: "检索融合策略",
     group: "检索",

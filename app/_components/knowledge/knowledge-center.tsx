@@ -1,9 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { RotateCcw, Save } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Database,
+  FileStack,
+  Files,
+  ListChecks,
+  RotateCcw,
+  Save,
+  Settings,
+  Upload,
+  type LucideIcon,
+} from "lucide-react";
 import { authFetch } from "@/lib/auth/client";
+import { NotionConnectionPanel } from "./notion-connection-panel";
+import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
+
+type KnowledgeTab = "documents" | "sources" | "tasks" | "processing" | "settings";
+
+const knowledgeTabs: Array<{ id: KnowledgeTab; label: string; icon: LucideIcon }> = [
+  { id: "documents", label: "文档", icon: Files },
+  { id: "sources", label: "数据源", icon: Database },
+  { id: "tasks", label: "处理任务", icon: ListChecks },
+  { id: "processing", label: "知识加工", icon: FileStack },
+  { id: "settings", label: "设置", icon: Settings },
+];
 
 type KnowledgePage = {
   page_id: string;
@@ -69,6 +90,17 @@ type KnowledgeProfile = {
   maxCustomProfileChars: number;
 };
 
+type IngestionJob = {
+  id: string;
+  page_id: string;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 function formatMetaValue(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (Array.isArray(value)) {
@@ -127,9 +159,11 @@ function eventTone(event: SyncEvent) {
 }
 
 export function KnowledgeCenter() {
+  const [activeTab, setActiveTab] = useState<KnowledgeTab>("documents");
   const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [wikiEdgeCount, setWikiEdgeCount] = useState(0);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notionInput, setNotionInput] = useState("");
@@ -138,6 +172,7 @@ export function KnowledgeCenter() {
   const [syncing, setSyncing] = useState(false);
   const [syncEvents, setSyncEvents] = useState<SyncEvent[]>([]);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [notionConfig, setNotionConfig] = useState<UserNotionConnectionView | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [compileForce, setCompileForce] = useState(false);
   const [compileEvents, setCompileEvents] = useState<SyncEvent[]>([]);
@@ -196,14 +231,26 @@ export function KnowledgeCenter() {
       .finally(() => setProfileLoading(false));
   };
 
+  const loadIngestionJobs = () => {
+    authFetch("/api/knowledge/ingestion/jobs", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "加载处理任务失败");
+        return data;
+      })
+      .then((data) => setIngestionJobs(data.jobs ?? []))
+      .catch(() => setIngestionJobs([]));
+  };
+
   useEffect(() => {
     loadPages();
     loadKnowledgeProfile();
+    loadIngestionJobs();
   }, []);
 
   async function startSync() {
     const input = notionInput.trim();
-    if (!input || syncing) return;
+    if (!input || syncing || !notionConfig?.enabled || !notionConfig.tokenConfigured) return;
 
     setSyncing(true);
     setSyncError(null);
@@ -409,39 +456,80 @@ export function KnowledgeCenter() {
   const currentPageEvent = [...syncEvents]
     .reverse()
     .find((event) => event.type === "page_start" || event.type === "page_read" || event.type === "chunking_start" || event.type === "embedding_start" || event.type.startsWith("db_"));
+  const notionReady = Boolean(notionConfig?.enabled && notionConfig.tokenConfigured);
+  const activeTabLabel = knowledgeTabs.find((tab) => tab.id === activeTab)?.label ?? "知识库";
+  const handleNotionConfigChange = useCallback((next: UserNotionConnectionView) => {
+    setNotionConfig(next);
+    setSyncTree(next.defaultRecursive);
+  }, []);
 
   return (
-    <div className="h-full overflow-y-auto bg-zinc-950 text-zinc-200">
-      <div className="mx-auto max-w-6xl px-6 py-8">
-        <div className="flex items-end justify-between gap-4">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-zinc-950 text-zinc-200">
+      <div className="mx-auto flex w-full max-w-6xl shrink-0 items-end justify-between gap-4 px-6 pb-5 pt-8">
           <div>
             <h1 className="text-2xl font-semibold text-slate-100">知识库</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Notion 页面同步、chunk 生成和索引版本。
+              {activeTabLabel}
             </p>
           </div>
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={loadPages}
+              onClick={() => { loadPages(); loadKnowledgeProfile(); loadIngestionJobs(); }}
               disabled={loading}
               className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
             >
               刷新
             </button>
-            <Link
-              href="/settings"
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
-            >
-              设置
-            </Link>
             <div className="text-sm text-slate-500">{pages.length} 个页面</div>
           </div>
-        </div>
+      </div>
 
-        <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950">
+      <nav aria-label="知识库视图" className="mx-auto flex w-full max-w-6xl shrink-0 overflow-x-auto border-b border-zinc-800 px-6">
+        {knowledgeTabs.map((tab) => {
+          const Icon = tab.icon;
+          const selected = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              aria-current={selected ? "page" : undefined}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex h-11 shrink-0 items-center gap-2 border-b-2 px-4 text-sm transition ${selected ? "border-cyan-400 text-cyan-200" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+            >
+              <Icon className="h-4 w-4" />{tab.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-6xl px-6 py-6">
+
+        {activeTab === "sources" && (
+          <div className="space-y-5">
+            <NotionConnectionPanel
+              onConfigChange={handleNotionConfigChange}
+            />
+
+            <section className="rounded-lg border border-zinc-800 bg-zinc-950">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+                <div>
+                  <h2 className="text-sm font-medium text-zinc-100">文件上传</h2>
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-zinc-500">
+                    <span className="rounded bg-zinc-900 px-2 py-0.5">PDF</span>
+                    <span className="rounded bg-zinc-900 px-2 py-0.5">Markdown</span>
+                    <span className="rounded bg-zinc-900 px-2 py-0.5">HTML</span>
+                  </div>
+                </div>
+                <span className="rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-500">暂未开放</span>
+              </div>
+              <div className="flex h-28 items-center justify-center text-zinc-600">
+                <Upload className="h-6 w-6" aria-hidden="true" />
+              </div>
+            </section>
+
+        <section className="rounded-lg border border-zinc-800 bg-zinc-950">
           <div className="border-b border-zinc-800 px-4 py-3">
             <h2 className="text-sm font-medium text-zinc-100">同步控制台</h2>
           </div>
@@ -462,12 +550,15 @@ export function KnowledgeCenter() {
                 <button
                   type="button"
                   onClick={startSync}
-                  disabled={syncing || !notionInput.trim()}
+                  disabled={syncing || !notionInput.trim() || !notionReady}
                   className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                 >
                   {syncing ? "同步中" : "开始同步"}
                 </button>
               </div>
+              {!notionReady && (
+                <div className="mt-2 text-xs text-amber-300">请先保存并启用当前用户的 Notion 连接。</div>
+              )}
               <label className="mt-3 flex items-center gap-2 text-sm text-zinc-400">
                 <input
                   type="checkbox"
@@ -538,77 +629,22 @@ export function KnowledgeCenter() {
           )}
 
           {(syncEvents.length > 0 || syncError) && (
-            <div className="border-t border-zinc-800 px-4 py-3">
-              {syncError && (
-                <div className="mb-3 rounded-md border border-rose-900 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">
-                  {syncError}
-                </div>
-              )}
-              <div className="max-h-80 space-y-2 overflow-auto pr-1">
-                {syncEvents.map((event, index) => {
-                  const metaEntries = pickSyncMetadata(event);
-                  return (
-                    <div
-                      key={`${event.type}-${index}`}
-                      className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm"
-                    >
-                      <div className="font-mono text-xs text-zinc-500">
-                        {event.at ? new Date(event.at).toLocaleTimeString() : "--:--:--"}
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`font-medium ${eventTone(event)}`}>
-                            {event.message}
-                          </span>
-                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">
-                            {event.type}
-                          </span>
-                        </div>
-                        {(event.pageTitle || event.pageId || event.chunksCount !== undefined) && (
-                          <div className="mt-1 truncate text-xs text-zinc-500">
-                            {event.pageTitle ?? event.pageId}
-                            {event.chunksCount !== undefined ? ` · ${event.chunksCount} chunks` : ""}
-                            {event.status ? ` · ${event.status}` : ""}
-                          </div>
-                        )}
-                        {metaEntries.length > 0 && (
-                          <div className="mt-2 grid gap-1 text-xs md:grid-cols-2">
-                            {metaEntries.map(([key, value]) => {
-                              const isPreview = key === "preview";
-                              return (
-                                <div
-                                  key={key}
-                                  className={isPreview ? "md:col-span-2" : ""}
-                                >
-                                  <span className="text-zinc-600">{key}: </span>
-                                  <span className={isPreview ? "text-zinc-300" : "font-mono text-zinc-400"}>
-                                    {formatMetaValue(value)}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {syncing && (
-                  <div className="rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-500">
-                    等待下一步...
-                  </div>
-                )}
-                {doneEvent && !syncing && (
-                  <div className="rounded-md border border-emerald-900 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-300">
-                    同步完成，页面列表已刷新。
-                  </div>
-                )}
-              </div>
+            <div className="flex items-center justify-between gap-3 border-t border-zinc-800 px-4 py-3 text-sm">
+              <span className={syncError ? "text-rose-300" : doneEvent && !syncing ? "text-emerald-300" : "text-zinc-500"}>
+                {syncError ?? (doneEvent && !syncing ? "同步完成" : `已记录 ${syncEvents.length} 条处理事件`)}
+              </span>
+              <button type="button" onClick={() => setActiveTab("tasks")} className="text-cyan-300 hover:text-cyan-200">
+                查看处理任务
+              </button>
             </div>
           )}
         </section>
+          </div>
+        )}
 
-        <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950">
+        {activeTab === "processing" && (
+          <div className="space-y-5">
+        <section className="rounded-lg border border-zinc-800 bg-zinc-950">
           <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-4 py-3">
             <div>
               <h2 className="text-sm font-medium text-zinc-100">LLM 编译知识库</h2>
@@ -702,7 +738,7 @@ export function KnowledgeCenter() {
           )}
         </section>
 
-        <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950">
+        <section className="rounded-lg border border-zinc-800 bg-zinc-950">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
             <div>
               <h2 className="text-sm font-medium text-zinc-100">知识库画像</h2>
@@ -813,8 +849,11 @@ export function KnowledgeCenter() {
             </div>
           )}
         </section>
+          </div>
+        )}
 
-        <section className="mt-6 rounded-lg border border-rose-950 bg-zinc-950">
+        {activeTab === "settings" && (
+        <section className="rounded-lg border border-rose-950 bg-zinc-950">
           <div className="flex flex-col gap-3 border-b border-rose-950/80 px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-sm font-medium text-rose-100">知识库产物管理</h2>
@@ -923,16 +962,17 @@ export function KnowledgeCenter() {
             </div>
           </div>
         </section>
+        )}
 
-        {loading && <div className="mt-8 text-slate-500">加载中...</div>}
-        {error && (
+        {activeTab === "documents" && loading && <div className="text-slate-500">加载中...</div>}
+        {activeTab === "documents" && error && (
           <div className="mt-8 rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
             {error}
           </div>
         )}
 
-        {!loading && !error && (
-          <div className="mt-6 overflow-hidden rounded-lg border border-slate-800">
+        {activeTab === "documents" && !loading && !error && (
+          <div className="overflow-hidden rounded-lg border border-slate-800">
             <table className="w-full border-collapse text-sm">
               <thead className="bg-slate-900 text-left text-slate-400">
                 <tr>
@@ -981,7 +1021,110 @@ export function KnowledgeCenter() {
             </table>
           </div>
         )}
+
+        {activeTab === "tasks" && (
+          <div className="space-y-5">
+            <section className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+              <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <h2 className="text-sm font-medium text-zinc-100">后台摄取任务</h2>
+                <span className="text-xs text-zinc-500">最近 {ingestionJobs.length} 条</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead className="bg-zinc-900 text-xs text-zinc-500">
+                    <tr><th className="px-4 py-2.5 font-medium">页面</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">尝试</th><th className="px-4 py-2.5 font-medium">更新时间</th><th className="px-4 py-2.5 font-medium">错误</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800">
+                    {ingestionJobs.slice(0, 20).map((job) => (
+                      <tr key={job.id}>
+                        <td className="max-w-56 truncate px-4 py-3 font-mono text-xs text-zinc-400">{job.page_id}</td>
+                        <td className="px-4 py-3 text-zinc-300">{job.status}</td>
+                        <td className="px-4 py-3 text-zinc-500">{job.attempts}/{job.max_attempts}</td>
+                        <td className="px-4 py-3 text-zinc-500">{new Date(job.updated_at).toLocaleString()}</td>
+                        <td className="max-w-72 truncate px-4 py-3 text-xs text-rose-300">{job.last_error ?? "-"}</td>
+                      </tr>
+                    ))}
+                    {ingestionJobs.length === 0 && (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-600">暂无后台摄取任务</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section className="rounded-lg border border-zinc-800 bg-zinc-950">
+              <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <h2 className="text-sm font-medium text-zinc-100">Notion 同步</h2>
+                <span className={`text-xs ${syncing ? "text-cyan-300" : syncError ? "text-rose-300" : "text-zinc-500"}`}>
+                  {syncing ? "运行中" : syncError ? "失败" : syncEvents.length > 0 ? "已结束" : "暂无任务"}
+                </span>
+              </div>
+              <div className="max-h-[520px] space-y-2 overflow-y-auto p-4">
+                {syncError && <div className="rounded bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{syncError}</div>}
+                {syncEvents.map((event, index) => {
+                  const metaEntries = pickSyncMetadata(event);
+                  return (
+                  <div key={`${event.type}-${index}`} className="grid grid-cols-[76px_minmax(0,1fr)] gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm">
+                    <span className="font-mono text-xs text-zinc-600">{event.at ? new Date(event.at).toLocaleTimeString() : "--:--:--"}</span>
+                    <div className="min-w-0">
+                      <div className={`truncate ${eventTone(event)}`}>{event.message}</div>
+                      <div className="mt-0.5 font-mono text-[11px] text-zinc-600">{event.type}</div>
+                      {(event.pageTitle || event.pageId || event.chunksCount !== undefined) && (
+                        <div className="mt-1 truncate text-xs text-zinc-500">
+                          {event.pageTitle ?? event.pageId}
+                          {event.chunksCount !== undefined ? ` · ${event.chunksCount} chunks` : ""}
+                          {event.status ? ` · ${event.status}` : ""}
+                        </div>
+                      )}
+                      {metaEntries.length > 0 && (
+                        <div className="mt-2 grid gap-1 text-xs">
+                          {metaEntries.map(([key, value]) => (
+                            <div key={key} className={key === "preview" ? "whitespace-pre-wrap" : "truncate"}>
+                              <span className="text-zinc-600">{key}: </span>
+                              <span className={key === "preview" ? "text-zinc-300" : "font-mono text-zinc-400"}>{formatMetaValue(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  );
+                })}
+                {syncEvents.length === 0 && !syncError && (
+                  <div className="py-12 text-center text-sm text-zinc-600">暂无 Notion 同步事件</div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-zinc-800 bg-zinc-950">
+              <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <h2 className="text-sm font-medium text-zinc-100">知识编译</h2>
+                <span className={`text-xs ${compiling ? "text-violet-300" : compileError ? "text-rose-300" : "text-zinc-500"}`}>
+                  {compiling ? "运行中" : compileError ? "失败" : compileEvents.length > 0 ? "已结束" : "暂无任务"}
+                </span>
+              </div>
+              <div className="max-h-[520px] space-y-2 overflow-y-auto p-4">
+                {compileError && <div className="rounded bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{compileError}</div>}
+                {compileEvents.map((event, index) => (
+                  <div key={`${event.type}-${index}`} className="grid grid-cols-[76px_minmax(0,1fr)] gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm">
+                    <span className="font-mono text-xs text-zinc-600">{event.at ? new Date(event.at).toLocaleTimeString() : "--:--:--"}</span>
+                    <div className="min-w-0">
+                      <div className="truncate text-zinc-300">{event.message}</div>
+                      <div className="mt-0.5 font-mono text-[11px] text-zinc-600">{event.type}</div>
+                    </div>
+                  </div>
+                ))}
+                {compileEvents.length === 0 && !compileError && (
+                  <div className="py-12 text-center text-sm text-zinc-600">暂无知识编译事件</div>
+                )}
+              </div>
+            </section>
+          </div>
+          </div>
+        )}
       </div>
+    </div>
     </div>
   );
 }

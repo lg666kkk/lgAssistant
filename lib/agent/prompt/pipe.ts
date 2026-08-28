@@ -10,6 +10,8 @@ import type { RetrievalPlan } from "@/lib/agent/rag/types";
 
 export type PromptPipeInput = {
   userMessage?: string;
+  userProfile?: string;
+  userProfileMetadata?: Record<string, unknown>;
   memoryOperation?: string;
   memory?: string;
   memoryRecallHint?: string;
@@ -35,6 +37,7 @@ function renderOrder(segments: PromptSegment[]) {
   const order: Record<string, number> = {
     identity: 0,
     safety: 10,
+    "user-profile": 12,
     "memory-operation": 15,
     "tool-orchestration": 45,
     "evidence-policy": 50,

@@ -45,6 +45,7 @@ import {
 } from "@/lib/agent/rag/retrieval-router";
 import { requireUser } from "@/lib/auth/server";
 import { resolveUserMemoryConfig } from "@/lib/memory-config/service";
+import { resolveUserProfile } from "@/lib/user-profile/service";
 import { getSupabase } from "@/lib/platform/supabase";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
@@ -57,8 +58,10 @@ import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import {
   createTrace,
   prependMemoryRecallTraceStep,
+  prependUserProfileTraceStep,
   type AgentTrace,
   type MemoryRecallTraceStep,
+  type UserProfileTraceStep,
 } from "@/lib/agent/runtime/trace";
 import { reportOnlineScores } from "@/lib/agent/eval/online-scores";
 import {
@@ -439,6 +442,17 @@ export async function POST(req: Request) {
     console.error("[memory-config] 读取失败，关闭本轮记忆:", error instanceof Error ? error.message : error);
     return null;
   });
+  let userProfileLoadError: string | undefined;
+  const userProfile = await resolveUserProfile(user.id).catch((error) => {
+    userProfileLoadError = error instanceof Error ? error.message : String(error);
+    console.error("[user-profile] 读取失败，本轮不注入:", userProfileLoadError);
+    return {
+      content: "",
+      configured: false,
+      revision: 0,
+      updatedAt: undefined,
+    };
+  });
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
   // 给模型看的工具说明
@@ -536,6 +550,14 @@ export async function POST(req: Request) {
       });
       const safeTraceInput = redactSensitiveValue(traceInput);
       const safeRetrievalPlan = redactSensitiveValue(retrievalPlan);
+      const safeUserProfile = redactSensitiveValue({
+        configured: userProfile.configured,
+        revision: userProfile.revision,
+        updatedAt: userProfile.updatedAt,
+        contentChars: userProfile.content.length,
+        content: userProfile.content,
+        loadError: userProfileLoadError,
+      });
       const traceDisplayInput = safeTraceInput.query || "(空消息)";
       await withUserLangfuseTrace({
         userId: user.id,
@@ -550,6 +572,7 @@ export async function POST(req: Request) {
           model: selectedModel,
           traceInput: safeTraceInput,
           retrievalPlan: safeRetrievalPlan,
+          userProfile: safeUserProfile,
         }),
       }, async (langfuseTrace, client) => {
         langfuseClient = client;
@@ -563,6 +586,7 @@ export async function POST(req: Request) {
             model: selectedModel,
             traceInput: safeTraceInput,
             retrievalPlan: safeRetrievalPlan,
+            userProfile: safeUserProfile,
           }),
         });
         langfuseTrace.setTraceIO({ input: traceDisplayInput });
@@ -738,10 +762,6 @@ export async function POST(req: Request) {
             observation.end();
           }
         }
-        if (memoryRecallTraceStep) {
-          pendingTrace = createTrace(requestId, sessionId);
-          prependMemoryRecallTraceStep(pendingTrace, memoryRecallTraceStep);
-        }
         const consolidateWithObservation = async (
           conversation: Array<{ role: string; content: unknown }>,
         ) => {
@@ -799,6 +819,13 @@ export async function POST(req: Request) {
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
         const prompt = buildPromptPipe({
           userMessage: lastUser?.content ?? "",
+          userProfile: userProfile.content,
+          userProfileMetadata: {
+            type: "user_profile",
+            revision: userProfile.revision,
+            updatedAt: userProfile.updatedAt,
+            contentChars: userProfile.content.length,
+          },
           memoryOperation: renderMemoryOperationContext(explicitForgetResult),
           memory: memorySystem,
           memoryRecallHint,
@@ -812,6 +839,65 @@ export async function POST(req: Request) {
         });
         const systemPrompt = prompt.systemPrompt;
         const systemSegments = prompt.segments;
+        const injectedUserProfileSegment = systemSegments.find((segment) => segment.kind === "user-profile");
+        const safeInjectedUserProfile = redactSensitiveValue(injectedUserProfileSegment?.content ?? "");
+        const userProfileTraceStep: Omit<UserProfileTraceStep, "index"> = {
+          type: "user_profile",
+          startedAt: Date.now(),
+          durationMs: 0,
+          configured: userProfile.configured,
+          injected: Boolean(injectedUserProfileSegment),
+          revision: userProfile.revision,
+          updatedAt: userProfile.updatedAt,
+          contentChars: userProfile.content.length,
+          injectedChars: injectedUserProfileSegment?.content.length ?? 0,
+          content: safeInjectedUserProfile,
+          error: userProfileLoadError ? redactSensitiveValue(userProfileLoadError) : undefined,
+        };
+        const profileObservation = langfuseTrace.startObservation("user-profile.load", {
+          input: {
+            configured: userProfile.configured,
+            revision: userProfile.revision,
+            updatedAt: userProfile.updatedAt,
+            content: safeUserProfile.content,
+          },
+          metadata: withSpanLabel("user-profile.load", {
+            requestId,
+            revision: userProfile.revision,
+            contentChars: userProfile.content.length,
+          }),
+          level: userProfileLoadError ? "ERROR" : "DEFAULT",
+        });
+        profileObservation.update({
+          output: {
+            injected: Boolean(injectedUserProfileSegment),
+            injectedChars: injectedUserProfileSegment?.content.length ?? 0,
+            content: safeInjectedUserProfile,
+            error: userProfileLoadError,
+          },
+        });
+        profileObservation.end();
+        langfuseTrace.update({
+          metadata: withSpanLabel("agent-chat", {
+            requestId,
+            sessionId,
+            userId: user.id,
+            model: selectedModel,
+            traceInput: safeTraceInput,
+            retrievalPlan: safeRetrievalPlan,
+            userProfile: {
+              ...safeUserProfile,
+              injected: Boolean(injectedUserProfileSegment),
+              injectedChars: injectedUserProfileSegment?.content.length ?? 0,
+              injectedContent: safeInjectedUserProfile,
+            },
+          }),
+        });
+        pendingTrace = createTrace(requestId, sessionId);
+        if (memoryRecallTraceStep) {
+          prependMemoryRecallTraceStep(pendingTrace, memoryRecallTraceStep);
+        }
+        prependUserProfileTraceStep(pendingTrace, userProfileTraceStep);
         const contextPlan = buildContextPlan({
           model: selectedModel,
           windowTokens: selectedRuntimeModel.contextWindow,
@@ -951,6 +1037,7 @@ export async function POST(req: Request) {
         if (memoryRecallTraceStep) {
           prependMemoryRecallTraceStep(agentLoopResult.trace, memoryRecallTraceStep);
         }
+        prependUserProfileTraceStep(agentLoopResult.trace, userProfileTraceStep);
         pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
 

@@ -179,7 +179,7 @@ npm run wiki:compile <notion_page_id>
 ## 环境变量
 
 ```env
-NOTION_API_KEY=
+# Notion Integration Token 由当前用户在「连接 > 知识库 > 数据源」中配置。
 DASHSCOPE_API_KEY=
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 NEXT_PUBLIC_SUPABASE_URL=

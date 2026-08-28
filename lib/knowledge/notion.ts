@@ -5,7 +5,6 @@
 
 import { Client } from '@notionhq/client';
 
-const MAX_BLOCK_DEPTH = 8;
 const NOTION_MAX_RETRIES = 3;
 const NOTION_RETRY_BASE_DELAY_MS = 800;
 
@@ -97,14 +96,12 @@ function sleep(ms: number) {
  */
 export class NotionClient {
   private client: Client;
+  private maxBlockDepth: number;
 
-  constructor() {
-    const apiKey = process.env.NOTION_API_KEY;
-
-    if (!apiKey) {
-      throw new Error('缺少环境变量 NOTION_API_KEY');
-    }
-
+  constructor(input: { apiKey: string; maxBlockDepth?: number }) {
+    const apiKey = input.apiKey.trim();
+    if (!apiKey) throw new Error('缺少 Notion Integration Token');
+    this.maxBlockDepth = Math.min(Math.max(input.maxBlockDepth ?? 8, 1), 16);
     this.client = new Client({ auth: apiKey });
   }
 
@@ -136,7 +133,7 @@ export class NotionClient {
     depth = 0,
     includeChildPageContent = false,
   ): Promise<NotionBlockWithDepth[]> {
-    if (depth >= MAX_BLOCK_DEPTH) {
+    if (depth >= this.maxBlockDepth) {
       return [];
     }
 

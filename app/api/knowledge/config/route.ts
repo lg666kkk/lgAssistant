@@ -7,6 +7,7 @@ import { EMBEDDING_MODEL } from "@/lib/knowledge/embedding";
 import { ragConfig } from "@/lib/platform/config";
 import { requireUser } from "@/lib/auth/server";
 import { listUserLlmCatalog } from "@/lib/llm/config-service";
+import { getUserNotionConnection } from "@/lib/knowledge/connections/notion-config";
 
 export const runtime = "nodejs";
 
@@ -28,6 +29,7 @@ export async function GET(req: Request) {
   const dashscopeBaseUrl =
     process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
   const llmCatalog = await listUserLlmCatalog(user.id).catch(() => null);
+  const notionConnection = await getUserNotionConnection(user.id).catch(() => null);
   const defaultModel = llmCatalog?.models.find((model) =>
     model.id === llmCatalog.preferences.defaultModelId) ?? llmCatalog?.models[0];
 
@@ -64,17 +66,19 @@ export async function GET(req: Request) {
           title: "Notion",
           items: [
             {
-              key: "NOTION_API_KEY",
-              label: "Notion API Key",
-              value: maskSecret(process.env.NOTION_API_KEY),
-              configured: has(process.env.NOTION_API_KEY),
+              key: "USER_NOTION_CONNECTION",
+              label: "Notion Integration Token",
+              value: notionConnection?.tokenConfigured
+                ? notionConnection.tokenHint
+                : null,
+              configured: notionConnection?.tokenConfigured === true,
               sensitive: true,
             },
             {
               key: "MAX_BLOCK_DEPTH",
               label: "Block 递归深度",
-              value: "8",
-              configured: true,
+              value: String(notionConnection?.maxDepth ?? "-"),
+              configured: Boolean(notionConnection),
               sensitive: false,
             },
           ],

@@ -190,12 +190,27 @@ type MemoryRecallStep = {
   };
 };
 
+type UserProfileStep = {
+  type: "user_profile";
+  index: number;
+  durationMs?: number;
+  configured: boolean;
+  injected: boolean;
+  revision: number;
+  updatedAt?: string;
+  contentChars: number;
+  injectedChars: number;
+  content: string;
+  error?: string;
+};
+
 type Step =
   | ModelStep
   | ToolStep
   | ContextCompactionStep
   | PlanStep
   | RetrievalStep
+  | UserProfileStep
   | MemoryRecallStep
   | MemoryConsolidationStep
   | AnswerValidationStep;
@@ -727,6 +742,7 @@ function SystemSegmentBlock({
 // 段类型 → 标签配色，一眼区分注入来源
 const SEGMENT_KIND_CLASS: Record<string, string> = {
   identity: "bg-violet-950/50 text-violet-300",
+  "user-profile": "bg-fuchsia-950/50 text-fuchsia-300",
   memory: "bg-emerald-950/50 text-emerald-300",
   "task-context": "bg-cyan-950/50 text-cyan-300",
   "web-search-policy": "bg-sky-950/50 text-sky-300",
@@ -889,6 +905,10 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                     ) : step.type === "memory_recall" ? (
                       <span className="font-medium text-emerald-300">
                         记忆召回 · {step.rerank.used ? "Qwen3 rerank" : (step.rerank.reason ?? "rule rank")}
+                      </span>
+                    ) : step.type === "user_profile" ? (
+                      <span className="font-medium text-fuchsia-300">
+                        用户画像 · {step.injected ? `已注入 v${step.revision}` : "未注入"}
                       </span>
                     ) : step.type === "memory_consolidation" ? (
                       <span className="font-medium text-emerald-300">
@@ -1123,6 +1143,33 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                       )}
                       {step.attempts && step.attempts.length > 0 && (
                         <Collapsible label="Query attempts" body={toText(step.attempts)} />
+                      )}
+                    </div>
+                  ) : step.type === "user_profile" ? (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                        <span>已配置 {step.configured ? "是" : "否"}</span>
+                        <span>已注入 {step.injected ? "是" : "否"}</span>
+                        <span>版本 v{step.revision}</span>
+                        <span>原始 {step.contentChars} 字符</span>
+                        <span>注入 {step.injectedChars} 字符</span>
+                        {step.updatedAt && <span>更新 {new Date(step.updatedAt).toLocaleString("zh-CN")}</span>}
+                      </div>
+                      {step.content ? (
+                        <Collapsible
+                          label="查看本轮画像上下文（已脱敏）"
+                          body={step.content}
+                          meta={`${step.injectedChars} 字符`}
+                        />
+                      ) : (
+                        <div className="rounded bg-slate-950 px-2 py-1 text-slate-600">
+                          本轮没有可注入的用户画像。
+                        </div>
+                      )}
+                      {step.error && (
+                        <div className="rounded bg-rose-950/40 px-2 py-1 text-rose-300">
+                          画像读取失败：{step.error}
+                        </div>
                       )}
                     </div>
                   ) : step.type === "memory_recall" ? (
