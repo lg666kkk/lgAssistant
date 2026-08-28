@@ -65,7 +65,7 @@ const connectionTabGroups: Array<{
     label: "集成",
     items: [
       { id: "knowledge", label: "知识库", icon: BookOpen },
-      { id: "mcp", label: "MCP 服务", icon: SquareTerminal },
+      { id: "mcp", label: "MCP", icon: SquareTerminal },
       { id: "skills", label: "技能", icon: Sparkles },
       { id: "schedule", label: "定时任务", icon: Clock3 },
       { id: "user-profile", label: "用户画像", icon: UserRound },

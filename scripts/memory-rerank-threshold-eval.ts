@@ -35,14 +35,8 @@ type ScoredCandidate = {
 };
 
 function parseArgs(argv: string[]): CliOptions {
-  const configuredCandidateCountRaw = process.env.MEMORY_RERANK_CANDIDATE_COUNT?.trim();
-  const configuredCandidateCount = configuredCandidateCountRaw
-    ? Number(configuredCandidateCountRaw)
-    : Number.NaN;
   const options: CliOptions = {
-    candidateCount: Number.isFinite(configuredCandidateCount)
-      ? configuredCandidateCount
-      : 12,
+    candidateCount: 12,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -132,14 +126,20 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (!options.dataset) throw new Error("必须传 --dataset");
   if (!options.userId) throw new Error("必须传 --user-id，脚本不会把真实用户 ID 写进数据集");
-  if (!process.env.MEMORY_RERANK_URL?.trim() || !process.env.MEMORY_RERANK_API_KEY?.trim()) {
-    throw new Error("缺少 MEMORY_RERANK_URL 或 MEMORY_RERANK_API_KEY");
-  }
-
-  // 阈值评估必须采集每条候选的模型分数，不能被线上 conditional 策略跳过。
-  process.env.MEMORY_RERANK_ENABLED = "true";
-  process.env.MEMORY_RERANK_MODE = "always";
-  process.env.MEMORY_RERANK_CANDIDATE_COUNT = String(Math.floor(options.candidateCount));
+  const { resolveUserMemoryConfig } = await import("../lib/memory-config/service");
+  const userConfig = await resolveUserMemoryConfig(options.userId);
+  if (!userConfig) throw new Error("该用户尚未保存记忆设置");
+  if (!userConfig.rerank.configured) throw new Error("该用户尚未在记忆设置中配置 Rerank URL 和 API Key");
+  const evalConfig = {
+    ...userConfig,
+    enabled: true,
+    rerank: {
+      ...userConfig.rerank,
+      enabled: true,
+      mode: "always" as const,
+      candidateCount: Math.floor(options.candidateCount),
+    },
+  };
   const { recallRankedMemories } = await import("../lib/agent/memory/memory-flow");
   const dataset = readDataset(options.dataset);
   const candidates: ScoredCandidate[] = [];
@@ -151,6 +151,7 @@ async function main() {
       limit: Math.min(10, options.candidateCount),
       threshold: options.threshold,
       touch: false,
+      config: evalConfig,
     });
     if (!result.rerankUsed) {
       throw new Error(`${item.id} 未获得 reranker 分数: ${result.rerankReason}`);

@@ -21,6 +21,8 @@ export type MemoryRerankConfig = {
   instruct: string;
   /** 未配置时只采集模型分数，最终准入回退原规则。 */
   admitThreshold?: number;
+  url?: string;
+  apiKey?: string;
 };
 
 export type MemoryRerankCandidateTrace = {
@@ -66,32 +68,17 @@ export type MemoryRerankTrace = {
   candidates: MemoryRerankCandidateTrace[];
 };
 
-function readBoundedNumber(name: string, fallback: number, min: number, max: number) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
-}
-
-function readOptionalBoundedNumber(name: string, min: number, max: number) {
-  const raw = process.env[name]?.trim();
-  if (!raw) return undefined;
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= min && value <= max ? value : undefined;
-}
-
 export function getMemoryRerankConfig(): MemoryRerankConfig {
-  const model = process.env.MEMORY_RERANK_MODEL?.trim() || DEFAULT_MEMORY_RERANK_MODEL;
-  const apiKey = process.env.MEMORY_RERANK_API_KEY?.trim();
-  const url = process.env.MEMORY_RERANK_URL?.trim();
-
   return {
-    enabled: process.env.MEMORY_RERANK_ENABLED === "true",
-    mode: process.env.MEMORY_RERANK_MODE === "conditional" ? "conditional" : "always",
-    candidateCount: Math.floor(readBoundedNumber("MEMORY_RERANK_CANDIDATE_COUNT", 12, 2, 24)),
-    timeoutMs: Math.floor(readBoundedNumber("MEMORY_RERANK_TIMEOUT_MS", 1_200, 200, 8_000)),
-    configured: Boolean(apiKey && url),
-    model,
-    instruct: process.env.MEMORY_RERANK_INSTRUCT?.trim() || DEFAULT_MEMORY_RERANK_INSTRUCT,
-    admitThreshold: readOptionalBoundedNumber("MEMORY_RERANK_ADMIT_THRESHOLD", 0, 1),
+    enabled: false,
+    mode: "always",
+    candidateCount: 12,
+    timeoutMs: 1_200,
+    configured: false,
+    model: DEFAULT_MEMORY_RERANK_MODEL,
+    instruct: DEFAULT_MEMORY_RERANK_INSTRUCT,
+    url: "",
+    apiKey: "",
   };
 }
 
@@ -118,8 +105,8 @@ export function createEmptyMemoryRerankTrace(
 export function createConfiguredMemoryReranker(
   config = getMemoryRerankConfig(),
 ): CrossEncoderReranker | undefined {
-  const url = process.env.MEMORY_RERANK_URL?.trim();
-  const apiKey = process.env.MEMORY_RERANK_API_KEY?.trim();
+  const url = config.url?.trim();
+  const apiKey = config.apiKey?.trim();
 
   if (!url || !apiKey) return undefined;
 

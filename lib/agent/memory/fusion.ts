@@ -8,7 +8,7 @@ import type { MemoryRecord } from "./types";
  * 必须在真实库上各跑一遍。vector_only 是对照组：如果关键词通道的增量小于噪声，
  * 整个通道就不该留下——没有对照组，「融合有效」这个结论无法证伪。
  *
- * 当前默认 weighted（见 memory-flow.ts 的 MEMORY_FUSION_STRATEGY），理由是记忆
+ * 当前用户配置默认 weighted，理由是记忆
  * 召回的候选池只有十几条、只取 top-3、条目极短，此时「0.92 相似」与「0.71 相似」
  * 的差别有意义，被 RRF 压成相邻序数是净损失（rrfK=60 时 rank 1 与 rank 10 只差 15%）。
  * 这是**待验证的默认值**，不是结论。

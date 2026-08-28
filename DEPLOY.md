@@ -81,6 +81,18 @@ API Key 使用 `CONFIG_ENCRYPTION_KEY` 加密，浏览器不会读取密文。�
 「连接 → 搜索引擎」中启用服务并选择默认 Provider。迁移期间服务器环境变量
 `TAVILY_API_KEY`、`EXA_API_KEY`、`BRAVE_SEARCH_API_KEY` 仍可作为后备。
 
+## 用户级记忆配置
+
+在 Supabase SQL Editor 中执行：
+
+```text
+docs/schemas/migrations/20260828-user-memory-config.sql
+```
+
+该迁移创建用户隔离的记忆召回、写入和 Qwen3 Rerank 配置。用户可在「连接 → 集成
+→ 记忆清单」中调整策略并查看当前记忆与历史版本。Rerank API Key 使用
+`CONFIG_ENCRYPTION_KEY` 加密，不再读取 `MEMORY_RERANK_*` 生产环境变量。
+
 ## 聊天图片存储
 
 多模态聊天的历史图片使用 Supabase Storage 私有 Bucket。首次启用前，在 Supabase

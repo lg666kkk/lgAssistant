@@ -17,6 +17,7 @@ import {
 import { LanguageModelCenter } from "./_components/settings/language-model-center";
 import { SearchEngineCenter } from "./_components/settings/search-engine-center";
 import { LangfuseCenter } from "./_components/settings/langfuse-center";
+import { MemoryCenter } from "./_components/settings/memory-center";
 import { KnowledgeCenter } from "./_components/knowledge/knowledge-center";
 import { TraceCenter } from "./_components/traces/trace-center";
 import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
@@ -589,6 +590,8 @@ export default function Home() {
           <TraceCenter initialTraceId={requestedTraceId} />
         ) : activeCapability === "connections" && activeConnectionTab === "langfuse" ? (
           <LangfuseCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "memory-list" ? (
+          <MemoryCenter />
         ) : (
           <div className="flex flex-1 items-center justify-center bg-slate-950 text-sm text-slate-600" aria-label={`${mainTitle}内容区域`}>
             {mainTitle}配置将在后续接入

@@ -29,6 +29,8 @@ import type {
   MemoryType,
   MemoryWriteMetadata,
 } from "./types";
+import { resolveUserMemoryConfig } from "@/lib/memory-config/service";
+import type { MemoryExecutionConfig } from "@/lib/memory-config/types";
 
 const longTerm = new LongTermStore();
 const semantic = new SemanticStore();
@@ -53,12 +55,6 @@ const CANDIDATE_THRESHOLD_RATIO = 0.7;
 /** 关键词通道的准入线，量纲是「命中词数 / 总词数」，与余弦相似度无关。 */
 const DEFAULT_KEYWORD_ADMIT_THRESHOLD = 0.5;
 const DEFAULT_FUSION_STRATEGY: MemoryFusionStrategy = "weighted";
-const FUSION_STRATEGIES = new Set<MemoryFusionStrategy>([
-  "vector_only",
-  "weighted",
-  "rrf",
-]);
-
 const MEMORY_TYPES = new Set<MemoryType>([
   "preference",
   "fact",
@@ -76,39 +72,14 @@ const RESTRICTED_MEMORY_PATTERNS = [
   /\b\d{17}[\dXx]\b/,
 ];
 
-function readRecallNumber(name: string, fallback: number, min: number, max: number) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
-}
-
-const recallLimit = readRecallNumber("MEMORY_RECALL_LIMIT", DEFAULT_RECALL_LIMIT, 1, 10);
-const recallThreshold = readRecallNumber(
-  "MEMORY_RECALL_THRESHOLD",
-  DEFAULT_RECALL_THRESHOLD,
-  0,
-  1,
-);
-const writeConfidence = readRecallNumber(
-  "MEMORY_WRITE_CONFIDENCE",
-  DEFAULT_WRITE_CONFIDENCE,
-  0,
-  1,
-);
+const recallLimit = DEFAULT_RECALL_LIMIT;
+const recallThreshold = DEFAULT_RECALL_THRESHOLD;
+const writeConfidence = DEFAULT_WRITE_CONFIDENCE;
 // 只用于「判定业务身份是否含糊」，不用于授权覆盖（见 deterministicWriteDecision）。
 // 判错方向的代价不对称：判含糊 → 漏写一条（可恢复），判不含糊 → 可能错覆盖（不可恢复），
 // 所以起点取得比 0.9 低一些，更容易触发 NOOP，再用 eval/datasets/memory.ts 往上调。
-const ambiguousCandidateThreshold = readRecallNumber(
-  "MEMORY_AMBIGUOUS_CANDIDATE_THRESHOLD",
-  DEFAULT_AMBIGUOUS_CANDIDATE_THRESHOLD,
-  0,
-  1,
-);
-const keywordAdmitThreshold = readRecallNumber(
-  "MEMORY_KEYWORD_ADMIT_THRESHOLD",
-  DEFAULT_KEYWORD_ADMIT_THRESHOLD,
-  0,
-  1,
-);
+const ambiguousCandidateThreshold = DEFAULT_AMBIGUOUS_CANDIDATE_THRESHOLD;
+const keywordAdmitThreshold = DEFAULT_KEYWORD_ADMIT_THRESHOLD;
 /**
  * 融合策略。默认 weighted 是**待验证的默认值**，不是定案结论：
  * eval/datasets/memory.ts 的 fusion_ab 三条 case 必须在真实库上跑满
@@ -120,11 +91,30 @@ const keywordAdmitThreshold = readRecallNumber(
  * 向量分 —— 也就是说迁移没跑、通道空转的情况下，行为与改动前一致。
  * 关键词分为 0 是常态，是正确行为，不是通道失效，别据此下调 vector 权重。
  */
-const fusionStrategy: MemoryFusionStrategy = FUSION_STRATEGIES.has(
-  process.env.MEMORY_FUSION_STRATEGY as MemoryFusionStrategy,
-)
-  ? (process.env.MEMORY_FUSION_STRATEGY as MemoryFusionStrategy)
-  : DEFAULT_FUSION_STRATEGY;
+const fusionStrategy: MemoryFusionStrategy = DEFAULT_FUSION_STRATEGY;
+
+function defaultMemoryExecutionConfig(): MemoryExecutionConfig {
+  return {
+    enabled: false,
+    recallLimit,
+    recallThreshold,
+    writeConfidence,
+    ambiguousCandidateThreshold,
+    keywordAdmitThreshold,
+    fusionStrategy,
+    rerank: memoryRerankConfig,
+  };
+}
+
+async function executionConfig(userId?: string, override?: MemoryExecutionConfig) {
+  if (override) return override;
+  if (!userId) return defaultMemoryExecutionConfig();
+  return resolveUserMemoryConfig(userId).then((config) =>
+    config ?? defaultMemoryExecutionConfig()).catch((error) => {
+    console.error("[memory-config] 读取失败，关闭记忆:", error instanceof Error ? error.message : error);
+    return defaultMemoryExecutionConfig();
+  });
+}
 
 const MEMORY_RECALL_QUERY_PATTERN =
   /(?:长期记忆|历史记忆|记忆库|个人(?:资料|信息|背景|画像)|还记得|记得我|之前(?:说|聊|提|告诉|做)|上次(?:说|聊|提|做)|延续(?:上次|之前)|继续(?:上次|之前)|我的(?:偏好|习惯|资料|信息|背景|情况|计划|目标|项目|需求)|我(?:最|很|比较|特别)?喜欢(?:吃)?|我(?:最)?爱吃|我(?:的)?(?:口味|饮食)(?:偏好|习惯)|我(?:不喜欢|习惯|偏好|过敏|忌口|常用|在意)|适合我|为我推荐|根据我|\b(?:remember|memory|memories|my preferences|my profile|based on my|continue (?:our |the )?(?:previous|last))\b)/i;
@@ -571,13 +561,17 @@ export async function recallRankedMemories(
     threshold?: number;
     userId?: string;
     strategy?: MemoryFusionStrategy;
+    config?: MemoryExecutionConfig;
     /** 评估脚本可关闭访问时间更新，线上默认仍会 touch 最终 Top-K。 */
     touch?: boolean;
   } = {},
 ): Promise<RankedMemoryRecall> {
-  const limit = opts.limit ?? recallLimit;
-  const threshold = opts.threshold ?? recallThreshold;
-  const strategy = opts.strategy ?? fusionStrategy;
+  const currentConfig = await executionConfig(opts.userId, opts.config);
+  const rerankConfig = currentConfig.rerank;
+  const reranker = createConfiguredMemoryReranker(rerankConfig);
+  const limit = opts.limit ?? currentConfig.recallLimit;
+  const threshold = opts.threshold ?? currentConfig.recallThreshold;
+  const strategy = opts.strategy ?? currentConfig.fusionStrategy;
   // 宽召回 / 严过滤两个阈值。
   //
   // 在关键词通道之前，拆开这两个值是**空操作**：match_memories 是
@@ -600,11 +594,18 @@ export async function recallRankedMemories(
     rerankUsed: false,
     rerankReason: "no_user",
     rerankMs: 0,
-    rerankTrace: createEmptyMemoryRerankTrace("no_user", memoryRerankConfig),
+    rerankTrace: createEmptyMemoryRerankTrace("no_user", rerankConfig),
   };
+  if (!currentConfig.enabled) {
+    return {
+      ...empty,
+      rerankReason: "memory_disabled",
+      rerankTrace: createEmptyMemoryRerankTrace("memory_disabled", rerankConfig),
+    };
+  }
   if (!opts.userId) return empty;
 
-  const poolSize = Math.max(memoryRerankConfig.candidateCount, 12, limit * 4);
+  const poolSize = Math.max(rerankConfig.candidateCount, 12, limit * 4);
   // vector_only 是 A/B 的对照组：不切词、不发关键词查询，省掉一次往返，
   // 也保证对照组不会偷偷用到另一条通道。
   const keywordInput = strategy === "vector_only"
@@ -626,7 +627,7 @@ export async function recallRankedMemories(
   // 准入阈值时，宽候选池会先完成治理硬过滤，再整体送入模型判断相关性。
   const fallbackHits = admitFusedMemories(fused, {
     selectThreshold: threshold,
-    keywordAdmitThreshold,
+    keywordAdmitThreshold: currentConfig.keywordAdmitThreshold,
   });
   const fallbackCandidateKeys = new Set(fallbackHits.map((hit) => hit.record.key));
   const governedCandidates = rankMemoryHits(fused.map((hit) => hit.record));
@@ -637,12 +638,14 @@ export async function recallRankedMemories(
   });
   const reranked = await rerankMemoryHits(query, prioritizedCandidates, {
     fallbackCandidateKeys,
+    config: rerankConfig,
+    reranker,
   });
   const admission = selectMemoryHitsAfterRerank({
     fused,
     reranked,
     selectThreshold: threshold,
-    keywordAdmitThreshold,
+    keywordAdmitThreshold: currentConfig.keywordAdmitThreshold,
   });
   const selected = admission.records.slice(0, limit);
   const selectedKeys = new Set(selected.map((record) => record.key));
@@ -679,9 +682,10 @@ export async function recallRankedMemories(
 
 export async function recallForPromptWithStats(
   query: string,
-  opts: { limit?: number; threshold?: number; userId?: string } = {},
+  opts: { limit?: number; threshold?: number; userId?: string; config?: MemoryExecutionConfig } = {},
 ): Promise<MemoryRecallResult> {
-  const eligible = Boolean(opts.userId) && shouldRecallLongTermMemory(query);
+  const currentConfig = await executionConfig(opts.userId, opts.config);
+  const eligible = currentConfig.enabled && Boolean(opts.userId) && shouldRecallLongTermMemory(query);
   if (!eligible) {
     return {
       context: "",
@@ -691,13 +695,16 @@ export async function recallForPromptWithStats(
       selectedTypes: {},
       selectedSources: {},
       rerankUsed: false,
-      rerankReason: "not_eligible",
+      rerankReason: currentConfig.enabled ? "not_eligible" : "memory_disabled",
       rerankMs: 0,
-      rerankTrace: createEmptyMemoryRerankTrace("not_eligible", memoryRerankConfig),
+      rerankTrace: createEmptyMemoryRerankTrace(
+        currentConfig.enabled ? "not_eligible" : "memory_disabled",
+        currentConfig.rerank,
+      ),
     };
   }
 
-  const recall = await recallRankedMemories(query, opts);
+  const recall = await recallRankedMemories(query, { ...opts, config: currentConfig });
   const { candidates, selected } = recall;
   if (selected.length === 0) {
     return {
@@ -743,6 +750,7 @@ export async function recallForPromptWithStats(
  * 返回空串表示不需要提示段（当前用户未登录等场景）。
  */
 export function renderMemoryPrefetchHint(result: MemoryRecallResult): string {
+  if (result.rerankReason === "memory_disabled") return "";
   if (result.selectedCount > 0) {
     return [
       "上面的记忆段是按当前问题自动预取的，可能不完整。",
@@ -765,7 +773,7 @@ export function renderMemoryPrefetchHint(result: MemoryRecallResult): string {
 
 export async function recallForPrompt(
   query: string,
-  opts: { limit?: number; threshold?: number; userId?: string } = {},
+  opts: { limit?: number; threshold?: number; userId?: string; config?: MemoryExecutionConfig } = {},
 ): Promise<string> {
   return (await recallForPromptWithStats(query, opts)).context;
 }
@@ -803,7 +811,7 @@ export interface ExtractedFact {
 
 export type MemoryConsolidationOutcome = {
   status: "completed" | "skipped" | "extraction_failed";
-  skipReason?: "empty_conversation" | "no_user_messages" | "explicit_forget_handled";
+  skipReason?: "memory_disabled" | "empty_conversation" | "no_user_messages" | "explicit_forget_handled";
   extractedFactCount: number;
   persistedCount: number;
   invalidatedCount: number;
@@ -1296,6 +1304,7 @@ export function deterministicWriteDecision(
   fact: ExtractedFact,
   candidates: MemoryRecord[],
   mutationAuthorizedKeys = new Set(candidates.map((candidate) => candidate.key)),
+  ambiguousThreshold = ambiguousCandidateThreshold,
 ): MemoryWriteDecision | null {
   const exact = candidates.find((candidate) => candidate.key === fact.key);
   // purge 与 forget 的分叉点：purge 不看 status。软失效过的记忆仍然留在三张表里，
@@ -1370,7 +1379,7 @@ export function deterministicWriteDecision(
     const ambiguous = candidates.some(
       (candidate) =>
         candidate.status === "active" &&
-        (candidate.score ?? 0) >= ambiguousCandidateThreshold,
+        (candidate.score ?? 0) >= ambiguousThreshold,
     );
     if (ambiguous) {
       return { action: "NOOP", reason: "存在高相似候选但业务身份不明确，拒绝猜测" };
@@ -1437,8 +1446,9 @@ async function decideMemoryWrite(
   candidates: MemoryRecord[],
   mutationAuthorizedKeys = new Set(candidates.map((candidate) => candidate.key)),
   userId?: string,
+  ambiguousThreshold = ambiguousCandidateThreshold,
 ): Promise<MemoryWriteDecision> {
-  const deterministic = deterministicWriteDecision(fact, candidates, mutationAuthorizedKeys);
+  const deterministic = deterministicWriteDecision(fact, candidates, mutationAuthorizedKeys, ambiguousThreshold);
   if (deterministic) return deterministic;
 
   if (!userId) return { action: "NOOP", reason: "缺少用户模型上下文，跳过模型决策" };
@@ -1608,6 +1618,7 @@ export async function consolidate(
      * 不传则退化为处理时刻，历史区间会带上处理延迟。
      */
     effectiveAt?: string;
+    config?: MemoryExecutionConfig;
     onOutcome?: (outcome: MemoryConsolidationOutcome) => void;
   } = {},
 ): Promise<MemoryRecord[]> {
@@ -1629,6 +1640,11 @@ export async function consolidate(
   if (conversation.length === 0 || !opts.userId) {
     const outcome = emptyOutcome("empty_conversation");
     report(outcome);
+    return [];
+  }
+  const currentConfig = await executionConfig(opts.userId, opts.config);
+  if (!currentConfig.enabled) {
+    report(emptyOutcome("memory_disabled"));
     return [];
   }
   const userMessages = conversation
@@ -1681,7 +1697,7 @@ export async function consolidate(
       },
     });
     facts = parseExtractedFacts(text, userMessages).filter(
-      (fact) => fact.confidence >= writeConfidence,
+      (fact) => fact.confidence >= currentConfig.writeConfidence,
     );
   } catch (error: any) {
     console.error("[consolidate] 抽取失败:", error.message);
@@ -1741,6 +1757,7 @@ export async function consolidate(
       candidates,
       mutationAuthorizedKeys,
       opts.userId,
+      currentConfig.ambiguousCandidateThreshold,
     );
     candidateTrace.decision = {
       action: decision.action,

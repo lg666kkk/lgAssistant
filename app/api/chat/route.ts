@@ -44,6 +44,7 @@ import {
   resolveRetrievalAnchor,
 } from "@/lib/agent/rag/retrieval-router";
 import { requireUser } from "@/lib/auth/server";
+import { resolveUserMemoryConfig } from "@/lib/memory-config/service";
 import { getSupabase } from "@/lib/platform/supabase";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
@@ -434,6 +435,10 @@ export async function POST(req: Request) {
     indexVersion: knowledgeIndexVersion,
     webEnabled: enableWebSearch,
   });
+  const userMemoryConfig = await resolveUserMemoryConfig(user.id).catch((error) => {
+    console.error("[memory-config] 读取失败，关闭本轮记忆:", error instanceof Error ? error.message : error);
+    return null;
+  });
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
   // 给模型看的工具说明
@@ -443,7 +448,7 @@ export async function POST(req: Request) {
     toolRegistry.list(),
     retrievalPlan.route,
     { webEnabled: enableWebSearch },
-  );
+  ).filter((tool) => userMemoryConfig?.enabled || !["recall_memory", "search_memory_history"].includes(tool.name));
   const routeTools = toolRegistry.listForModel(routeToolDefinitions);
   const latestUserQuery = [...requestTextMessages]
     .reverse()
@@ -602,7 +607,7 @@ export async function POST(req: Request) {
           .reverse()
           .find((m: any) => m.role === "user");
         let explicitForgetResult: ExplicitForgetResult = { handled: false };
-        if (lastUser) {
+        if (lastUser && userMemoryConfig?.enabled) {
           const observation = langfuseTrace.startObservation("memory.explicit_forget", {
             input: { messageChars: lastUser.content.length },
             metadata: withSpanLabel("memory.explicit_forget", {
@@ -640,7 +645,7 @@ export async function POST(req: Request) {
         let memorySystem = "";
         let memoryRecallHint = "";
         let memoryRecallTraceStep: Omit<MemoryRecallTraceStep, "index"> | undefined;
-        if (lastUser) {
+        if (lastUser && userMemoryConfig?.enabled) {
           const recallStartedAt = Date.now();
           const observation = langfuseTrace.startObservation("memory.recall", {
             input: {
@@ -655,6 +660,7 @@ export async function POST(req: Request) {
           try {
             const recall = await recallForPromptWithStats(lastUser.content, {
               userId: user.id,
+              config: userMemoryConfig ?? undefined,
             });
             memorySystem = recall.context;
             memoryRecallHint = renderMemoryPrefetchHint(recall);
@@ -739,6 +745,7 @@ export async function POST(req: Request) {
         const consolidateWithObservation = async (
           conversation: Array<{ role: string; content: unknown }>,
         ) => {
+          if (!userMemoryConfig?.enabled) return;
           const startedAt = Date.now();
           // Consolidation stays asynchronous, but its span is created while the root trace is active.
           const observation = langfuseTrace.startObservation("memory.consolidate", {
@@ -758,6 +765,7 @@ export async function POST(req: Request) {
               userId: user.id,
               requestId,
               effectiveAt: requestReceivedAt,
+              config: userMemoryConfig,
               onOutcome: (result) => {
                 outcome = result;
               },

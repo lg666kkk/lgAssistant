@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildMemoryWriteCandidateTrace, consolidate } from "./memory-flow";
 import { summarizeMemoryConsolidation } from "./observability";
 import type { MemoryRecord } from "./types";
+import type { MemoryExecutionConfig } from "@/lib/memory-config/types";
 
 function memory(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
   return {
@@ -26,6 +27,25 @@ function memory(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
 }
 
 describe("memory observability", () => {
+  it("skips consolidation when memory is disabled", async () => {
+    const config: MemoryExecutionConfig = {
+      enabled: false,
+      recallLimit: 3,
+      recallThreshold: 0.68,
+      writeConfidence: 0.72,
+      ambiguousCandidateThreshold: 0.85,
+      keywordAdmitThreshold: 0.5,
+      fusionStrategy: "weighted",
+      rerank: { enabled: false, configured: false, mode: "always", model: "qwen3-rerank", instruct: "test", candidateCount: 12, timeoutMs: 1200 },
+    };
+    let outcome: unknown;
+    await expect(consolidate([{ role: "user", content: "我喜欢咖啡" }], {
+      userId: "user-1",
+      config,
+      onOutcome: (result) => { outcome = result; },
+    })).resolves.toEqual([]);
+    expect(outcome).toMatchObject({ status: "skipped", skipReason: "memory_disabled" });
+  });
   it("reports per-fact candidate details and mutation authorization", () => {
     const exact = memory({ key: "profile:language", version: 2 });
     const semantic = memory({

@@ -7,6 +7,7 @@ import { recallRankedMemories } from "../lib/agent/memory/memory-flow";
 import { purgeMemoryKey } from "../lib/agent/memory/atomic-writer";
 import { SemanticStore } from "../lib/agent/memory/semantic-store";
 import { hasSupabaseConfig } from "../lib/platform/supabase";
+import type { MemoryExecutionConfig } from "../lib/memory-config/types";
 
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
@@ -188,7 +189,7 @@ async function runStrategy(
   strategy: MemoryFusionStrategy,
   abCases: AbCase[],
   store: SemanticStore,
-  options: CliOptions & { userId: string },
+  options: CliOptions & { userId: string; config: MemoryExecutionConfig },
 ): Promise<StrategyReport> {
   const cases: CaseResult[] = [];
 
@@ -202,6 +203,7 @@ async function runStrategy(
       threshold: options.threshold,
       userId: options.userId,
       strategy,
+      config: options.config,
     });
     const latencyMs = Date.now() - startedAt;
     if (!options.keepSeeds) await cleanup(abCase.seed, options.userId);
@@ -270,10 +272,18 @@ async function main() {
   if (cases.length === 0) throw new Error("没有可跑的 A/B case");
 
   const store = new SemanticStore();
+  const { resolveUserMemoryConfig } = await import("../lib/memory-config/service");
+  const savedConfig = await resolveUserMemoryConfig(options.userId);
+  if (!savedConfig) throw new Error("该用户尚未保存记忆设置");
+  const evalConfig: MemoryExecutionConfig = {
+    ...savedConfig,
+    enabled: true,
+    rerank: { ...savedConfig.rerank, enabled: false },
+  };
   const reports: StrategyReport[] = [];
   for (const strategy of STRATEGIES) {
     reports.push(
-      await runStrategy(strategy, cases, store, { ...options, userId: options.userId }),
+      await runStrategy(strategy, cases, store, { ...options, userId: options.userId, config: evalConfig }),
     );
   }
 
