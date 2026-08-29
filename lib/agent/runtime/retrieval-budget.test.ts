@@ -77,4 +77,66 @@ describe("agent retrieval tool budget", () => {
     );
     expect(result.completed).toBe(true);
   });
+
+  it("executes at most two retrieval calls and skips the third request", async () => {
+    const execute = vi.fn(async () => ({
+      ok: true,
+      content: "web retrieval completed",
+    }));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "web_search",
+      description: "search web",
+      capabilities: ["public.search"],
+      outputPolicy: {
+        grounding: "cited_evidence",
+        citationRequired: true,
+        retrieval: { source: "web", maxCallsPerRun: 2 },
+      },
+      input_schema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+      riskLevel: "safe",
+      runtime: { ...defaultToolRuntimePolicy, concurrencyGroup: "web" },
+      execute,
+    });
+    const callModelMock = vi.fn()
+      .mockResolvedValueOnce({
+        content: [
+          { type: "tool_use", id: "web-1", name: "web_search", input: { query: "gold price today" } },
+          { type: "tool_use", id: "web-2", name: "web_search", input: { query: "gold market trend today" } },
+          { type: "tool_use", id: "web-3", name: "web_search", input: { query: "gold forecast today" } },
+        ],
+        stop_reason: "tool_use",
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "基于两次检索回答。" }],
+        stop_reason: "end_turn",
+      });
+
+    const result = await runAgentLoop(
+      [{ role: "user", content: "分析今天黄金趋势" }],
+      registry.listForModel(),
+      registry,
+      3,
+      [],
+      () => true,
+      "request-web-budget",
+      "session-web-budget",
+      { callModel: callModelMock as unknown as typeof callModel },
+    );
+
+    const toolResults = result.loopMessages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((block) => block.type === "tool_result")
+        : []);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(toolResults).toHaveLength(3);
+    expect(toolResults.filter((block) =>
+      typeof block.content === "string" && block.content.includes("检索预算")))
+      .toHaveLength(1);
+    expect(result.completed).toBe(true);
+  });
 });

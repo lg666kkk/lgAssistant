@@ -7,7 +7,12 @@ import {
   type AgentLoopResult,
   type ToolSourceType,
 } from "@/lib/agent/runtime";
-import { createTrace, summarizeText, type PlanTraceStep } from "@/lib/agent/runtime/trace";
+import {
+  createTrace,
+  summarizeText,
+  type PlanTraceStep,
+  type ToolTraceStep,
+} from "@/lib/agent/runtime/trace";
 import type {
   ExecutionPlanData,
   PlanExecutionControlData,
@@ -437,6 +442,23 @@ function reindexTraceSteps(steps: AgentLoopResult["trace"]["steps"], offset: num
   return steps.map((step, index) => ({ ...step, index: offset + index }));
 }
 
+const RETRIEVAL_NOT_EXECUTED_STATUSES = new Set([
+  "retrieval_budget_skipped",
+  "duplicate_skipped",
+  "orchestration_prerequisite_missing",
+  "pending_confirmation",
+  "blocked",
+  "cancelled",
+]);
+
+function isExecutedRetrievalStep(
+  step: AgentLoopResult["trace"]["steps"][number],
+  registry: ToolRegistry,
+): step is ToolTraceStep {
+  if (step.type !== "tool" || !registry.get(step.name)?.outputPolicy.retrieval) return false;
+  return !RETRIEVAL_NOT_EXECUTED_STATUSES.has(String(step.metadata?.status ?? ""));
+}
+
 function extractLastAssistantText(messages: ModelMessage[]): string {
   const message = messages[messages.length - 1];
   if (!message || message.role !== "assistant") return "";
@@ -583,6 +605,7 @@ export async function executePlan(
       // 再次调用时间工具。runAgentLoop 只信任这份成功执行集合，不从文本猜测。
       usedCapabilities,
       input.onReasoning,
+      usedRetrievalTools,
     );
     loopMessages = result.loopMessages;
     addMetrics(metrics, result.metrics);
@@ -595,10 +618,7 @@ export async function executePlan(
     toolEvidenceRequired ||= result.toolEvidenceRequired === true;
     for (const capability of result.usedCapabilities ?? []) usedCapabilities.add(capability);
     for (const traceStep of result.trace.steps) {
-      if (
-        traceStep.type === "tool"
-        && input.toolRegistry.get(traceStep.name)?.outputPolicy.retrieval
-      ) {
+      if (isExecutedRetrievalStep(traceStep, input.toolRegistry)) {
         usedRetrievalTools.set(
           traceStep.name,
           (usedRetrievalTools.get(traceStep.name) ?? 0) + 1,

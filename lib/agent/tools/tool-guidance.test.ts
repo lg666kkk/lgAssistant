@@ -14,6 +14,10 @@ describe("tool descriptions carry the non-mechanizable guidance", () => {
 
     expect(description).toContain("改写成一个精确 query");
     expect(description).toContain("不要只依赖模型内部知识");
+    expect(description).toContain("最多调用两次 web_search");
+    expect(description).toContain("只有第一次证据不足或存在冲突时");
+    expect(description).toContain("改写为不同 query");
+    expect(registry.get("web_search")!.outputPolicy.retrieval?.maxCallsPerRun).toBe(2);
   });
 
   it("keeps the conditions for escalating from search results to a full page read", () => {

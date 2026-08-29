@@ -21,6 +21,12 @@
 |---|---|
 | [enterprise-agent-roadmap.md](./agent/roadmap/enterprise-agent-roadmap.md) | 唯一的 Agent 建设主路线图 |
 
+## 项目架构
+
+| 文档 | 用途 |
+|---|---|
+| [module-boundaries.md](./architecture/module-boundaries.md) | Web、Contracts、Application、Infrastructure 的依赖方向和自动门禁 |
+
 ## Agent 学习
 
 | 文档 | 用途 |

@@ -91,7 +91,7 @@ export function createWebSearchTool(options: {
     outputPolicy: {
       grounding: "cited_evidence",
       citationRequired: true,
-      retrieval: { source: "web", maxCallsPerRun: 1 },
+      retrieval: { source: "web", maxCallsPerRun: 2 },
     },
     orchestration: {
       // 该依赖只在 RetrievalPlan.freshnessRequired=true 时激活。普通网页资料查询
@@ -100,7 +100,7 @@ export function createWebSearchTool(options: {
       invokeWhen: "public_freshness_required",
     },
     description:
-      "联网搜索公开网页信息。回答公开或实时问题时以搜索结果为准，不要只依赖模型内部知识。调用前先把用户问题改写成一个精确 query：写出核心实体，并按需要补上时间、地区、语言等限定词；不要把整句原话或过于宽泛的词直接当 query。调用受显式 Retrieval Router 和 Query Planner 约束，最多执行两次计划 query；返回结果会形成带 evidenceId 的 EvidenceBundle。个人笔记请使用 search_notes。",
+      "联网搜索公开网页信息。回答公开或实时问题时以搜索结果为准，不要只依赖模型内部知识。每个聊天请求最多调用两次 web_search：第一次应使用最精确的 query；只有第一次证据不足或存在冲突时，才改写为不同 query 进行第二次调用，不要重复同一查询。每次调用内部还会根据 RetrievalPlan 自动执行最多两条计划 query。调用前先把用户问题改写成一个精确 query：写出核心实体，并按需要补上时间、地区、语言等限定词；不要把整句原话或过于宽泛的词直接当 query。返回结果会形成带 evidenceId 的 EvidenceBundle；搜索摘要不足时使用 web_fetch 精读最相关页面。个人笔记请使用 search_notes。",
     input_schema: {
       type: "object",
       properties: {

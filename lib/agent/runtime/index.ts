@@ -989,6 +989,7 @@ export async function runAgentLoop(
   contextPlan?: ContextPlan,
   initialSatisfiedCapabilities: Iterable<string> = [],
   onReasoning?: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) => void,
+  initialRetrievalToolCalls: ReadonlyMap<string, number> = new Map(),
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -1003,7 +1004,7 @@ export async function runAgentLoop(
   if (mergeEvidenceBundles(initialEvidenceBundles).length > 0) {
     usedGroundingModes.add("cited_evidence");
   }
-  const retrievalToolCalls = new Map<string, number>();
+  const retrievalToolCalls = new Map(initialRetrievalToolCalls);
   if (retrievalPlan) {
     trace.steps.push({
       type: "retrieval",

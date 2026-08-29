@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTrace } from "./trace";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
+import { defaultToolRuntimePolicy } from "@/lib/agent/tools/types";
 import {
   AGENTIC_RAG_VERSION,
   type EvidenceBundle,
@@ -190,6 +191,74 @@ describe("Plan-and-Execute runtime integration", () => {
     expect(runAgentLoopMock).toHaveBeenCalledTimes(2);
     expect(runAgentLoopMock.mock.calls[0][1]).toHaveLength(1);
     expect(runAgentLoopMock.mock.calls[1][1]).toEqual([]);
+  });
+
+  it("shares a two-call retrieval budget across all plan steps", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "web_search",
+      description: "search web",
+      capabilities: ["public.search"],
+      outputPolicy: {
+        grounding: "cited_evidence",
+        citationRequired: true,
+        retrieval: { source: "web", maxCallsPerRun: 2 },
+      },
+      input_schema: { type: "object", properties: {} },
+      riskLevel: "safe",
+      runtime: defaultToolRuntimePolicy,
+      execute: vi.fn(),
+    });
+    const initialUsage: number[] = [];
+    runAgentLoopMock.mockImplementation(async (...args: any[]) => {
+      const tools = (args[1] ?? []) as Array<{ name: string }>;
+      const used = args[19] as ReadonlyMap<string, number> | undefined;
+      initialUsage.push(used?.get("web_search") ?? 0);
+      const trace = createTrace(`step-${initialUsage.length}`);
+      if (tools.some((tool) => tool.name === "web_search")) {
+        trace.steps.push({
+          type: "tool",
+          index: 0,
+          startedAt: 0,
+          name: "web_search",
+          input: { query: `query-${initialUsage.length}` },
+          ok: true,
+          contentSummary: "evidence",
+          contentTruncated: false,
+          contentOriginalChars: 8,
+          costPerUse: 0,
+        });
+      }
+      return {
+        loopMessages: [...(args[0] ?? []), { role: "assistant", content: "完成" }],
+        completed: true,
+        stopReason: "completed",
+        metrics: metrics(),
+        trace,
+        evidenceBundles: [],
+      };
+    });
+
+    await executePlan({
+      messages: [{ role: "user", content: "分三步检索" }],
+      tools: [{ name: "web_search", description: "search", input_schema: { type: "object", properties: {} } }],
+      toolRegistry: registry,
+      maxToolIterations: 3,
+      allToolSources: [],
+      requestId: "request-two-web-searches",
+    }, {
+      id: "plan-two-web-searches",
+      objective: "最多检索两次",
+      steps: [
+        { id: "one", goal: "首次检索", allowedTools: ["web_search"], successCriteria: ["完成"] },
+        { id: "two", goal: "补充检索", allowedTools: ["web_search"], successCriteria: ["完成"] },
+        { id: "three", goal: "再次检索", allowedTools: ["web_search"], successCriteria: ["完成"] },
+      ],
+    });
+
+    expect(initialUsage).toEqual([0, 1, 2]);
+    expect(runAgentLoopMock.mock.calls.map((call) => call[1].map((tool: any) => tool.name)))
+      .toEqual([["web_search"], ["web_search"], []]);
   });
 
   it("does not apply the global retrieval plan to non-retrieval steps", async () => {

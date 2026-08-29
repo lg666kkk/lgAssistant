@@ -1,3 +1,54 @@
 {
-  "extends": "next/core-web-vitals"
+  "extends": "next/core-web-vitals",
+  "overrides": [
+    {
+      "files": ["packages/contracts/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": [
+            "@/*",
+            "@web/*",
+            "@repo/application*",
+            "@repo/infrastructure*",
+            "next*",
+            "react*",
+            "@supabase/*",
+            "node:*"
+          ]
+        }]
+      }
+    },
+    {
+      "files": ["packages/application/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": ["@web/*", "@repo/infrastructure*", "@/app/*", "next*", "react*"]
+        }]
+      }
+    },
+    {
+      "files": ["packages/infrastructure/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": ["@web/*", "@/app/*", "next*", "react*"]
+        }]
+      }
+    },
+    {
+      "files": ["apps/web/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": ["@repo/application*", "@repo/infrastructure*", "@/lib/auth/server"]
+        }]
+      }
+    },
+    {
+      "files": ["app/api/**/*.{ts,tsx}", "lib/**/*.{ts,tsx}", "scripts/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": ["@web/*"]
+        }]
+      }
+    }
+  ]
 }

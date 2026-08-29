@@ -9,6 +9,7 @@ import type {
   PlanProgressEventData,
 } from "@repo/contracts";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
+import { summarizeToolCalls } from "@web/features/chat/model/tool-call-summary";
 import { getChatImagePreviewUrl } from "@/lib/chat/image-storage";
 import type { PreviewImage } from "./image-preview-dialog";
 import {
@@ -83,6 +84,7 @@ export function ChatThread({
             && message.role === "assistant"
             && messageIndex === messages.length - 1,
           );
+          const toolCallSummary = summarizeToolCalls(message.toolCalls ?? []);
           return (
             <div
               key={message.id ?? `${message.role}-${message.createdAt ?? messageIndex}`}
@@ -177,7 +179,27 @@ export function ChatThread({
                       <Wrench className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
                       <span>工具调用</span>
                       <span className="text-slate-600">·</span>
-                      <span className="text-slate-500">{message.toolCalls.length} 次</span>
+                      <span className="text-slate-500">请求 {toolCallSummary.requestedCount} 次</span>
+                      <span className="text-slate-600">·</span>
+                      <span className="text-slate-500">实际执行 {toolCallSummary.executedCount} 次</span>
+                      {toolCallSummary.skippedCount > 0 && (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-amber-300">跳过 {toolCallSummary.skippedCount} 次</span>
+                        </>
+                      )}
+                      {toolCallSummary.waitingCount > 0 && (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-amber-300">等待 {toolCallSummary.waitingCount} 次</span>
+                        </>
+                      )}
+                      {toolCallSummary.blockedCount > 0 && (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-rose-300">未执行 {toolCallSummary.blockedCount} 次</span>
+                        </>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       {message.toolCalls.map((toolCall, toolIndex) => {
