@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { getBrowserSupabase } from "@/lib/auth/client";
+import { getBrowserSupabase } from "@web/lib/auth/client";
 
 function isValidEmail(value: string) {
   const email = value.trim();

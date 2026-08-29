@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AuthGate } from "@/lib/auth/auth-gate";
-import { authFetch } from "@/lib/auth/client";
+import { AuthGate } from "@web/lib/auth/auth-gate";
+import { authFetch } from "@web/lib/auth/client";
 
 type UsageSummary = {
   model: string;

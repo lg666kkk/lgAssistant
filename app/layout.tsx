@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { SiteFooter } from '@/app/_components/site-footer';
-import { AuthProvider } from '@/lib/auth/use-auth';
+import { SiteFooter } from '@web/layout/site-footer';
+import { AuthProvider } from '@web/lib/auth/use-auth';
 
 export const metadata: Metadata = {
   title: '知识助手',

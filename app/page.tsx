@@ -1,11 +1,11 @@
 "use client";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
-import { useChatManager } from "./_hooks/use-chat-manager";
-import { useLlmCatalog } from "./_hooks/use-llm-catalog";
-import { ChatInput } from "./_components/chat/chat-input";
-import { ChatThread } from "./_components/chat/chat-thread";
-import { ImagePreviewDialog, type PreviewImage } from "./_components/chat/image-preview-dialog";
-import { SessionDialog, type SessionDialogState } from "./_components/chat/session-dialog";
+import { useChatManager } from "@web/features/chat/hooks/use-chat-manager";
+import { useLlmCatalog } from "@web/features/connections/hooks/use-llm-catalog";
+import { ChatInput } from "@web/features/chat/components/chat-input";
+import { ChatThread } from "@web/features/chat/components/chat-thread";
+import { ImagePreviewDialog, type PreviewImage } from "@web/features/chat/components/image-preview-dialog";
+import { SessionDialog, type SessionDialogState } from "@web/features/chat/components/session-dialog";
 import {
   AppSidebar,
   getConnectionTabLabel,
@@ -13,18 +13,20 @@ import {
   type ConnectionTabId,
   type CustomAgentTabId,
   type PrimaryCapability,
-} from "./_components/layout/app-sidebar";
-import { LanguageModelCenter } from "./_components/settings/language-model-center";
-import { SearchEngineCenter } from "./_components/settings/search-engine-center";
-import { LangfuseCenter } from "./_components/settings/langfuse-center";
-import { MemoryCenter } from "./_components/settings/memory-center";
-import { UserProfileCenter } from "./_components/settings/user-profile-center";
-import { KnowledgeCenter } from "./_components/knowledge/knowledge-center";
-import { TraceCenter } from "./_components/traces/trace-center";
-import type { PlanProgressEventData } from "@/lib/agent/runtime/events";
-import type { ExecutionPlanData } from "@/lib/agent/runtime/events";
-import type { PlanExecutionControlData } from "@/lib/agent/runtime/events";
-import type { ChatModelId } from "@/lib/agent/models";
+} from "@web/layout/app-sidebar";
+import { LanguageModelCenter } from "@web/features/connections/components/language-model-center";
+import { SearchEngineCenter } from "@web/features/connections/components/search-engine-center";
+import { LangfuseCenter } from "@web/features/observability/components/langfuse-center";
+import { MemoryCenter } from "@web/features/memory/components/memory-center";
+import { UserProfileCenter } from "@web/features/memory/components/user-profile-center";
+import { KnowledgeCenter } from "@web/features/knowledge/components/knowledge-center";
+import { TraceCenter } from "@web/features/observability/components/trace-center";
+import type {
+  ChatModelId,
+  ExecutionPlanData,
+  PlanExecutionControlData,
+  PlanProgressEventData,
+} from "@repo/contracts";
 import {
   MAX_IMAGE_COUNT,
   MAX_SINGLE_IMAGE_BYTES,
@@ -40,8 +42,8 @@ import {
   uploadChatImage,
   type ComposerImageAttachment,
 } from "@/lib/chat/image-storage";
-import { AuthGate } from "@/lib/auth/auth-gate";
-import { useAuth } from "@/lib/auth/use-auth";
+import { AuthGate } from "@web/lib/auth/auth-gate";
+import { useAuth } from "@web/lib/auth/use-auth";
 import { createUuid } from "@/lib/platform/uuid";
 
 function readFileAsDataUrl(file: File) {

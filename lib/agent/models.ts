@@ -1,20 +1,7 @@
 import { getRememberedModelMetadata } from "@/lib/llm/model-metadata-cache";
+import type { ChatModelId, ModelUsageBreakdown } from "@repo/contracts";
 
-export type ChatModelId = string;
-
-export type ModelUsageBreakdown = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cacheHitTokens: number;
-  cacheMissTokens: number;
-  cacheCreationTokens: number;
-  cacheHitRate: number;
-  estimatedCostCny: number;
-  inputCacheHitCostCny: number;
-  inputCacheMissCostCny: number;
-  outputCostCny: number;
-};
+export type { ChatModelId, ModelUsageBreakdown } from "@repo/contracts";
 
 export type ModelPricingCnyPerMillionTokens = {
   inputCacheHit: number;

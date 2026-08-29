@@ -74,6 +74,7 @@ import type {
   RetrievalTraceStep,
   ToolTraceStep,
 } from "@/lib/agent/runtime/trace";
+import type { ToolSourceData } from "@repo/contracts";
 
 export type AgentLoopStopReason =
   | "completed"
@@ -98,13 +99,7 @@ export type AgentLoopResult = {
   usedCapabilities?: string[];
 };
 
-export interface ToolSourceType {
-  title: string;
-  notionPageId: string;
-  pageUrl: string;
-  similarity: number;
-  excerpt: string;
-}
+export type ToolSourceType = ToolSourceData;
 
 interface DocContent {
   pageTitle?: unknown;

@@ -18,7 +18,14 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@web/*": ["./apps/web/*"],
+      "@repo/contracts": ["./packages/contracts/src/index.ts"],
+      "@repo/contracts/*": ["./packages/contracts/src/*"],
+      "@repo/application": ["./packages/application/src/index.ts"],
+      "@repo/application/*": ["./packages/application/src/*"],
+      "@repo/infrastructure": ["./packages/infrastructure/src/index.ts"],
+      "@repo/infrastructure/*": ["./packages/infrastructure/src/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
