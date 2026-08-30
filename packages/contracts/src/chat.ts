@@ -12,6 +12,12 @@ export type ModelUsageBreakdown = {
   inputCacheHitCostCny: number;
   inputCacheMissCostCny: number;
   outputCostCny: number;
+  pricingConfigured?: boolean;
+  pricing?: {
+    inputCacheHit: number;
+    inputCacheMiss: number;
+    output: number;
+  };
 };
 
 export interface ToolSourceData {
@@ -77,7 +83,34 @@ export interface ContextUsageEventData {
   workingWindowTokens: number;
   modelWindowTokens: number;
   remainingTokens: number;
+  phase?: "before_model" | "after_model" | "blocked";
+  breakdown?: ContextUsageBreakdown;
+  runBudget?: AgentRunBudgetUsage;
 }
+
+export type ContextUsageBreakdown = {
+  systemTokens: number;
+  userProfileTokens: number;
+  memoryTokens: number;
+  retrievalPolicyTokens: number;
+  knowledgeRagTokens: number;
+  webRetrievalTokens: number;
+  conversationTokens: number;
+  toolCallTokens: number;
+  toolResultTokens: number;
+  toolSchemaTokens: number;
+  otherTokens: number;
+};
+
+export type AgentRunBudgetUsage = {
+  spentTokens: number;
+  maxTokens: number;
+  remainingTokens: number;
+  nextRequestTokens: number;
+  outputReserveTokens: number;
+  requiredTokens: number;
+  canContinue: boolean;
+};
 
 export interface ContextUsageEvent {
   type: "context_usage";

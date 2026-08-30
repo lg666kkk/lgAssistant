@@ -11,6 +11,8 @@ import ws from 'ws';
 import { ragConfig } from '@/lib/platform/config';
 import type { RetrievalFilters } from '@/lib/agent/rag/types';
 import { QueryResultCache } from '@/lib/agent/rag/query-cache';
+import { createUserEmbeddingClient } from '@/lib/embedding-config/service';
+import { resolveUserMeteredModelPrice } from '@/lib/agent/observability/user-metered-pricing';
 import { extractNotionPageId } from './notion-page-id';
 import {
   cosineSimilarity,
@@ -89,6 +91,12 @@ export interface RAGSearchDebug {
   crossEncoderUsed: boolean;
   crossEncoderReason: string;
   crossEncoderError?: string;
+  crossEncoderUsage?: {
+    model: string;
+    providerModel?: string;
+    totalTokens: number;
+    inputPriceCnyPerMillionTokens?: number;
+  };
   topScoreGap: number | null;
   filters?: RetrievalFilters;
   embeddingUsage?: EmbeddingUsage & {
@@ -238,7 +246,7 @@ function createSupabaseClient() {
  * RAG 检索类
  */
 export class RAGRetriever {
-  private embeddingClient: Pick<EmbeddingClient, 'embedBatch'>;
+  private embeddingClient?: Pick<EmbeddingClient, 'embedBatch'>;
   private embeddingCache?: QueryResultCache<CachedQueryEmbedding>;
   private embeddingCacheVersion: string;
   private vectorSearchOverride?: RAGRetrieverDependencies['vectorSearch'];
@@ -247,7 +255,7 @@ export class RAGRetriever {
   private supabase?: ReturnType<typeof createSupabaseClient>;
 
   constructor(dependencies: RAGRetrieverDependencies = {}) {
-    this.embeddingClient = dependencies.embeddingClient ?? new EmbeddingClient();
+    this.embeddingClient = dependencies.embeddingClient;
     this.embeddingCache = dependencies.embeddingCache
       ?? (dependencies.embeddingClient ? undefined : queryEmbeddingCache);
     this.embeddingCacheVersion = dependencies.embeddingCacheVersion ?? EMBEDDING_MODEL;
@@ -406,6 +414,7 @@ export class RAGRetriever {
     let crossEncoderMs = 0;
     let crossEncoderUsed = false;
     let crossEncoderError: string | undefined;
+    let crossEncoderUsage: RAGSearchDebug["crossEncoderUsage"];
 
     if (crossDecision.shouldRun && this.crossEncoderReranker) {
       const crossStartedAt = Date.now();
@@ -416,13 +425,29 @@ export class RAGRetriever {
           limit: ragConfig.crossEncoderCandidateCount,
           reranker: this.crossEncoderReranker,
         });
-        sorted = await (remainingBudgetMs() === undefined
+        const crossResult = await (remainingBudgetMs() === undefined
           ? crossEncoderPromise
           : withRetrievalTimeout({
               promise: crossEncoderPromise,
               phase: 'cross_encoder',
               timeoutMs: remainingBudgetMs()!,
             }));
+        sorted = crossResult.results;
+        if ((crossResult.providerResponse?.totalTokens ?? 0) > 0) {
+          const rerankModel = process.env.RAG_RERANK_MODEL?.trim()
+            || crossResult.providerResponse?.model
+            || "qwen3-rerank";
+          const inputPrice = await this.resolveRerankInputPrice(
+            options.userId,
+            rerankModel,
+          );
+          crossEncoderUsage = {
+            model: rerankModel,
+            providerModel: crossResult.providerResponse?.model,
+            totalTokens: crossResult.providerResponse!.totalTokens!,
+            inputPriceCnyPerMillionTokens: inputPrice ?? undefined,
+          };
+        }
         crossEncoderUsed = true;
       } catch (error) {
         crossEncoderError = error instanceof Error ? error.message : String(error);
@@ -472,6 +497,7 @@ export class RAGRetriever {
         crossEncoderUsed,
         crossEncoderReason: crossDecision.reason,
         crossEncoderError,
+        crossEncoderUsage,
         topScoreGap,
         filters: options.filters,
         embeddingUsage: vectorPath.embeddingUsage,
@@ -531,12 +557,22 @@ export class RAGRetriever {
     indexVersion?: string;
   }) {
     const embeddingStartedAt = Date.now();
+    let embeddingClient = this.embeddingClient;
+    let embeddingModel = this.embeddingCacheVersion;
+    let embeddingInputPrice: number | undefined;
+    if (!embeddingClient) {
+      if (!input.userId) throw new Error('知识库向量检索缺少 userId');
+      const runtime = await createUserEmbeddingClient(input.userId);
+      embeddingClient = runtime.client;
+      embeddingModel = `${runtime.config.modelId}:${runtime.config.dimensions}`;
+      embeddingInputPrice = runtime.config.inputPriceCnyPerMillionTokens ?? undefined;
+    }
     const cacheKeys = input.queries.map((query) => ({
       tenantId: input.userId ?? 'anonymous',
       indexVersion: input.indexVersion ?? 'index-unknown',
       source: 'knowledge' as const,
       query,
-      strategyVersion: `${QUERY_EMBEDDING_CACHE_VERSION}:${this.embeddingCacheVersion}`,
+      strategyVersion: `${QUERY_EMBEDDING_CACHE_VERSION}:${embeddingModel}`,
     }));
     const cachedEmbeddings = cacheKeys.map((key) =>
       this.embeddingCache?.get(key));
@@ -549,7 +585,7 @@ export class RAGRetriever {
     let modelCallCount = 0;
     if (missingIndexes.length > 0) {
       const missingQueries = missingIndexes.map((index) => input.queries[index]);
-      const missingEmbeddings = await this.embeddingClient.embedBatch(missingQueries, {
+      const missingEmbeddings = await embeddingClient.embedBatch(missingQueries, {
         idempotencyScope: `rag-query:${input.userId ?? 'anonymous'}:${input.indexVersion ?? 'index-unknown'}`,
         onEvent: (event) => {
           if (event.type !== 'batch_done') return;
@@ -594,7 +630,8 @@ export class RAGRetriever {
       embeddingCacheHits: input.queries.length - missingIndexes.length,
       embeddingCacheMisses: missingIndexes.length,
       embeddingUsage: {
-        model: EMBEDDING_MODEL,
+        model: embeddingModel.split(":")[0] || EMBEDDING_MODEL,
+        inputPriceCnyPerMillionTokens: embeddingInputPrice,
         inputTokens: providerInputTokens,
         totalTokens: providerTotalTokens || providerInputTokens,
         modelCallCount,
@@ -607,6 +644,11 @@ export class RAGRetriever {
       },
       vectorSearchMs: Date.now() - vectorStartedAt,
     };
+  }
+
+  private async resolveRerankInputPrice(userId: string | undefined, modelId: string) {
+    if (!userId) return null;
+    return resolveUserMeteredModelPrice({ userId, category: 'rerank', modelId });
   }
 
   private runVectorSearch(request: VectorSearchRequest) {
@@ -925,7 +967,7 @@ async function applyCrossEncoderRerank(input: {
     scoreById.set(selected[score.index].id, score.score);
   }
 
-  return input.candidates
+  const results = input.candidates
     .map((candidate) => {
       const crossEncoderScore = scoreById.get(candidate.id);
       if (crossEncoderScore === undefined) return candidate;
@@ -937,6 +979,7 @@ async function applyCrossEncoderRerank(input: {
       };
     })
     .sort(compareByRerankScore);
+  return { results, providerResponse: scores.providerResponse };
 }
 
 function decideCrossEncoder(input: {

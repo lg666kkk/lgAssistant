@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { AuthGate } from "@web/lib/auth/auth-gate";
 import { authFetch } from "@web/lib/auth/client";
 
 type ScheduledJob = {
@@ -86,7 +84,7 @@ function jobStatusText(job: ScheduledJob) {
   return "运行中";
 }
 
-export default function SchedulePage() {
+export function ScheduleCenter() {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -232,21 +230,11 @@ export default function SchedulePage() {
   }, [jobs]);
 
   return (
-    <AuthGate>
-      <div className="h-full overflow-y-auto bg-slate-950 text-slate-200">
-        <div className="mx-auto max-w-7xl px-6 py-8">
-          <div className="flex items-center gap-4 text-sm">
-            <Link href="/" className="text-slate-500 hover:text-slate-200">
-              返回对话
-            </Link>
-            <Link href="/settings" className="text-slate-500 hover:text-slate-200">
-              设置
-            </Link>
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-end justify-between gap-4">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-950 text-slate-200">
+        <div className="mx-auto max-w-7xl px-5 py-6">
+          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-800 pb-5">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-100">定时任务</h1>
+              <h2 className="text-xl font-semibold text-slate-100">定时任务</h2>
               <p className="mt-1 text-sm text-slate-500">
                 查看任务状态，调整执行时间、payload、启用状态，或删除不再需要的任务。
               </p>
@@ -494,6 +482,5 @@ export default function SchedulePage() {
           )}
         </div>
       </div>
-    </AuthGate>
   );
 }

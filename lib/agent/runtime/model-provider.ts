@@ -11,6 +11,7 @@ import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import { createSafeProviderFetch } from "@/lib/llm/url-safety";
 import type { ResolvedUserLlmModel } from "@/lib/llm/types";
+import type { ModelPricingCnyPerMillionTokens } from "@/lib/agent/models";
 import {
   SPAN_LABEL_METADATA_KEY,
   resolveSpanLabel,
@@ -32,6 +33,10 @@ export type ModelCallResult = {
     cache_read_input_tokens?: number | null;
     cache_creation_input_tokens?: number | null;
   };
+  pricing?: ModelPricingCnyPerMillionTokens;
+  modelName?: string;
+  providerName?: string;
+  providerModelId?: string;
 };
 
 export type DeepSeekReasoningEffort = "low" | "high" | "max";
@@ -153,8 +158,23 @@ export function createDeepSeekThinkingFetch(
 
 type ExecutionModel = Pick<
   ResolvedUserLlmModel,
-  "modelId" | "baseUrl" | "apiKey" | "maxOutputTokens" | "temperature" | "reasoningMode"
+  "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing"
 >;
+
+function configuredPricing(
+  pricing: ResolvedUserLlmModel["pricing"],
+): ModelPricingCnyPerMillionTokens | undefined {
+  if (
+    pricing.inputCacheHit === null
+    || pricing.inputCacheMiss === null
+    || pricing.output === null
+  ) return undefined;
+  return {
+    inputCacheHit: pricing.inputCacheHit,
+    inputCacheMiss: pricing.inputCacheMiss,
+    output: pricing.output,
+  };
+}
 
 async function resolveExecutionModel(
   model: ChatModelId,
@@ -409,6 +429,10 @@ export async function callModelWithProvider(input: {
     stop_reason: toStopReason(finishReason),
     reasoning_content: reasoningContent || undefined,
     usage: toAnthropicUsage(usage),
+    pricing: configuredPricing(provider.runtimeModel.pricing),
+    modelName: provider.runtimeModel.displayName,
+    providerName: provider.runtimeModel.providerName,
+    providerModelId: provider.runtimeModel.modelId,
   };
 }
 

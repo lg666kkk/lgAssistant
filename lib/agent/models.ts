@@ -99,6 +99,7 @@ export function calculateModelUsageCost(
     cacheMissTokens?: number;
     cacheCreationTokens?: number;
   },
+  pricingOverride?: ModelPricingCnyPerMillionTokens,
 ): ModelUsageBreakdown {
   const rawInputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
@@ -108,7 +109,13 @@ export function calculateModelUsageCost(
     usage.cacheMissTokens ??
     Math.max(0, rawInputTokens + cacheCreationTokens);
   const inputTokens = cacheMissTokens + cacheHitTokens;
-  const pricing = getModelPricing(model);
+  const configuredOption = getChatModelOption(model);
+  const pricing = pricingOverride ?? configuredOption?.pricing ?? {
+    inputCacheHit: 0,
+    inputCacheMiss: 0,
+    output: 0,
+  };
+  const pricingConfigured = Boolean(pricingOverride || configuredOption);
   const inputCacheHitCostCny =
     (cacheHitTokens / 1_000_000) * pricing.inputCacheHit;
   const inputCacheMissCostCny =
@@ -129,5 +136,7 @@ export function calculateModelUsageCost(
     outputCostCny,
     estimatedCostCny:
       inputCacheHitCostCny + inputCacheMissCostCny + outputCostCny,
+    pricingConfigured,
+    pricing: pricingConfigured ? pricing : undefined,
   };
 }

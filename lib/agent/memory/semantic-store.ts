@@ -1,9 +1,6 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
-import {
-  EMBEDDING_MODEL,
-  EmbeddingClient,
-  type EmbeddingUsage,
-} from "@/lib/knowledge/embedding";
+import type { EmbeddingUsage } from "@/lib/knowledge/embedding";
+import { createUserEmbeddingClient } from "@/lib/embedding-config/service";
 import { purgeMemoryKey } from "./atomic-writer";
 import { scoreMemoryKeywordMatch, type MemoryQueryTerms } from "./keyword-terms";
 import { memoryColumnsFromMetadata, memoryRecordFromRow } from "./record-mapper";
@@ -27,13 +24,6 @@ function requireUserId(options: { userId?: string }, operation: string): string 
  * 调用方只给文本，向量在内部生成 —— 调用方完全不感知 embedding 的存在。
  */
 export class SemanticStore implements SemanticMemoryStore {
-  // 懒加载 EmbeddingClient：它构造时校验 DASHSCOPE_API_KEY，不能在模块加载时就 new
-  private embedder: EmbeddingClient | null = null;
-  private getEmbedder(): EmbeddingClient {
-    if (!this.embedder) this.embedder = new EmbeddingClient();
-    return this.embedder;
-  }
-
   // db 行 → MemoryRecord。语义层有 score（相似度），但仅 recall 的行才带 similarity
   private toRecord(row: any): MemoryRecord {
     return memoryRecordFromRow(row, "semantic");
@@ -50,7 +40,8 @@ export class SemanticStore implements SemanticMemoryStore {
     if (!userId) return;
 
     // 内容变了向量必须跟着变，否则存的是新文本旧向量，recall 会按旧语义召回
-    const embedding = await this.getEmbedder().embedSingle(content);
+    const embeddingRuntime = await createUserEmbeddingClient(userId);
+    const embedding = await embeddingRuntime.client.embedSingle(content);
     const { error } = await getSupabase()
       .from(TABLE)
       .upsert(
@@ -59,7 +50,13 @@ export class SemanticStore implements SemanticMemoryStore {
           key,
           content,
           embedding,
-          metadata: { ...metadata, userId },
+          metadata: {
+            ...metadata,
+            userId,
+            embedding_model: embeddingRuntime.config.modelId,
+            embedding_dimensions: embeddingRuntime.config.dimensions,
+            embedding_provider: embeddingRuntime.config.provider,
+          },
           ...memoryColumnsFromMetadata(metadata),
           valid_from: new Date().toISOString(),
           valid_to: null,
@@ -163,12 +160,17 @@ export class SemanticStore implements SemanticMemoryStore {
     if (!userId) return [];
 
     const embeddingUsage: EmbeddingUsage = {
-      model: EMBEDDING_MODEL,
+      model: "",
       inputTokens: 0,
       totalTokens: 0,
       modelCallCount: 0,
     };
-    const queryEmbedding = await this.getEmbedder().embedSingle(query, {
+    const embeddingRuntime = await createUserEmbeddingClient(userId);
+    embeddingUsage.model = embeddingRuntime.config.modelId;
+    if (embeddingRuntime.config.inputPriceCnyPerMillionTokens !== null) {
+      embeddingUsage.inputPriceCnyPerMillionTokens = embeddingRuntime.config.inputPriceCnyPerMillionTokens;
+    }
+    const queryEmbedding = await embeddingRuntime.client.embedSingle(query, {
       onEvent: (event) => {
         if (event.type !== "batch_done") return;
         embeddingUsage.inputTokens += event.inputTokens ?? 0;

@@ -50,6 +50,27 @@ function formatTokens(value: number) {
   return String(value);
 }
 
+function formatExactTokens(value: number) {
+  return Math.round(value).toLocaleString("zh-CN");
+}
+
+const contextBreakdownLabels: Array<[
+  keyof NonNullable<ContextUsageEventData["breakdown"]>,
+  string,
+]> = [
+  ["conversationTokens", "对话与历史"],
+  ["systemTokens", "系统指令"],
+  ["userProfileTokens", "用户画像"],
+  ["memoryTokens", "记忆"],
+  ["retrievalPolicyTokens", "检索策略"],
+  ["knowledgeRagTokens", "知识库 RAG"],
+  ["webRetrievalTokens", "Web 检索"],
+  ["toolSchemaTokens", "工具定义"],
+  ["toolCallTokens", "工具调用协议"],
+  ["toolResultTokens", "其他工具结果"],
+  ["otherTokens", "结构与其他"],
+];
+
 export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
   function ChatInput(
     {
@@ -99,6 +120,24 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
         : contextPercent >= 75
           ? "#fbbf24"
           : "#22d3ee";
+    const runBudgetPercent = contextUsage?.runBudget
+      ? Math.min(
+          100,
+          Math.round(
+            contextUsage.runBudget.spentTokens
+            / contextUsage.runBudget.maxTokens
+            * 100,
+          ),
+        )
+      : 0;
+    const runBudgetColor = runBudgetPercent >= 90
+      ? "#f87171"
+      : runBudgetPercent >= 75 ? "#fbbf24" : "#22d3ee";
+    const breakdownItems = contextUsage?.breakdown
+      ? contextBreakdownLabels
+          .map(([key, label]) => ({ key, label, tokens: contextUsage.breakdown![key] }))
+          .filter((item) => item.tokens > 0)
+      : [];
 
     return (
       <div className="border-t border-slate-800 bg-slate-950 px-4 py-5">
@@ -234,8 +273,8 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                         className="relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
                         aria-label={
                           contextUsage
-                            ? `上下文窗口已用 ${contextPercent}%`
-                            : "上下文窗口将在首轮调用后估算"
+                            ? `当前上下文已用 ${contextPercent}%${contextUsage.runBudget ? `，本轮 Agent 预算已用 ${runBudgetPercent}%` : ""}`
+                            : "正在估算当前上下文"
                         }
                         style={{
                           background: contextUsage
@@ -247,28 +286,78 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                           className="h-3 w-3 rounded-full bg-slate-900"
                           aria-hidden="true"
                         />
+                        {contextUsage?.runBudget && (
+                          <span
+                            className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-slate-900"
+                            style={{ backgroundColor: runBudgetColor }}
+                            aria-hidden="true"
+                          />
+                        )}
                       </button>
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
                       <Tooltip.Content
                         side="top"
                         sideOffset={10}
-                        className="z-50 min-w-52 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200 shadow-xl shadow-black/40"
+                        className="z-50 w-80 rounded-md border border-slate-700 bg-slate-900 px-3 py-3 text-xs text-slate-200 shadow-xl shadow-black/40"
                       >
                         {contextUsage ? (
-                          <div className="space-y-1">
-                            <div className="font-medium text-slate-100">
-                              上下文窗口 {contextPercent}% 已用
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-3 font-medium text-slate-100">
+                                <span>当前工作上下文</span>
+                                <span>{contextPercent}%</span>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-700">
+                                <div className="h-full rounded-full" style={{ width: `${contextPercent}%`, backgroundColor: contextColor }} />
+                              </div>
+                              <div>
+                                预计 ~{formatTokens(contextUsage.estimatedTokens)} / {formatTokens(contextUsage.workingWindowTokens)}
+                              </div>
+                              <div className="text-slate-400">
+                                剩余 ~{formatTokens(contextUsage.remainingTokens)} · 模型上限 {formatTokens(contextUsage.modelWindowTokens)}
+                              </div>
                             </div>
-                            <div>
-                              已用 ~{formatTokens(contextUsage.estimatedTokens)}，总共 {formatTokens(contextUsage.workingWindowTokens)}
-                            </div>
-                            <div className="text-slate-400">
-                              剩余 ~{formatTokens(contextUsage.remainingTokens)} · 模型上限 {formatTokens(contextUsage.modelWindowTokens)}
-                            </div>
+
+                            {breakdownItems.length > 0 && (
+                              <div className="border-t border-slate-700/70 pt-2">
+                                <div className="mb-1.5 font-medium text-slate-300">上下文构成（估算）</div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                  {breakdownItems.map((item) => (
+                                    <div key={item.key} className="flex min-w-0 items-center justify-between gap-2">
+                                      <span className="truncate text-slate-400">{item.label}</span>
+                                      <span className="shrink-0 font-mono text-slate-200">{formatExactTokens(item.tokens)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {contextUsage.runBudget && (
+                              <div className="border-t border-slate-700/70 pt-2">
+                                <div className="flex items-center justify-between gap-3 font-medium text-slate-300">
+                                  <span>本轮 Agent 累计预算</span>
+                                  <span style={{ color: runBudgetColor }}>{runBudgetPercent}%</span>
+                                </div>
+                                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-700">
+                                  <div className="h-full rounded-full" style={{ width: `${runBudgetPercent}%`, backgroundColor: runBudgetColor }} />
+                                </div>
+                                <div className="mt-1.5">
+                                  已用 {formatTokens(contextUsage.runBudget.spentTokens)} / {formatTokens(contextUsage.runBudget.maxTokens)}
+                                </div>
+                                <div className="text-slate-400">
+                                  下次输入 ~{formatTokens(contextUsage.runBudget.nextRequestTokens)} + 输出预留 {formatTokens(contextUsage.runBudget.outputReserveTokens)}
+                                </div>
+                                {!contextUsage.runBudget.canContinue && (
+                                  <div className="mt-1 rounded bg-rose-950/50 px-2 py-1 text-rose-300">
+                                    剩余 {formatTokens(contextUsage.runBudget.remainingTokens)}，不足以承担下一次调用
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          <span>首轮调用后显示服务端上下文估算</span>
+                          <span>正在估算当前上下文…</span>
                         )}
                         <Tooltip.Arrow className="fill-slate-900" />
                       </Tooltip.Content>

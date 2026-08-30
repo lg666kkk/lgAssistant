@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   Activity,
   Blocks,
@@ -23,7 +22,6 @@ import {
   Plus,
   Plug,
   Search,
-  Settings,
   Sparkles,
   SquareTerminal,
   Trash2,
@@ -110,12 +108,6 @@ function maskEmail(email?: string | null) {
   if (name.length <= 2) return `${name[0] ?? ""}***@${domain}`;
   return `${name.slice(0, 2)}***${name.slice(-1)}@${domain}`;
 }
-
-const accountLinks = [
-  { href: "/usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
-  { href: "/schedule", label: "定时任务", icon: Clock3 },
-  { href: "/settings", label: "系统设置", icon: Settings },
-] as const;
 
 type AppSidebarProps = {
   open: boolean;
@@ -341,31 +333,13 @@ export function AppSidebar({
       <div ref={accountMenuRef} className="relative border-t border-slate-800 p-3">
         {accountMenuOpen && (
           <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-2xl border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
-            {accountLinks.map((item, index) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setAccountMenuOpen(false)}
-                  className={`${index === 0 ? "" : "mt-1"} flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-slate-200 transition-colors hover:bg-slate-800`}
-                >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 text-slate-300">
-                    <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
-                  </span>
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
             <button
               type="button"
               onClick={() => {
                 setAccountMenuOpen(false);
                 onSignOut();
               }}
-              className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
             >
               <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 text-slate-300">
                 <LogOut className="h-[18px] w-[18px]" aria-hidden="true" />

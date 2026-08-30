@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
+  BadgeDollarSign,
   Check,
   KeyRound,
   ListFilter,
@@ -63,6 +64,11 @@ function createModel(modelId = "") : UserLlmModelDraft {
     supportsTools: true,
     supportsImages: false,
     reasoningMode: "none",
+    pricing: {
+      inputCacheHit: null,
+      inputCacheMiss: null,
+      output: null,
+    },
     enabled: true,
   };
 }
@@ -102,6 +108,7 @@ function providerToDraft(provider: UserLlmProvider): ProviderDraft {
       supportsTools: model.supportsTools,
       supportsImages: model.supportsImages,
       reasoningMode: model.reasoningMode,
+      pricing: model.pricing,
       enabled: model.enabled,
     })),
   };
@@ -565,6 +572,41 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                         <input type="number" min="0" max="2" step="0.1" value={model.temperature} onChange={(event) => updateModel(index, { temperature: Number(event.target.value) })} className="h-7 w-16 rounded-md border border-slate-700 bg-slate-950 px-2 text-slate-300 outline-none transition focus:border-cyan-500" aria-label="Temperature" />
                       </label>
                     </div>
+                    <details className="mt-2 border-t border-slate-800/70 pt-2">
+                      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-slate-500 hover:text-slate-300">
+                        <BadgeDollarSign className="h-4 w-4" />
+                        <span>费用单价</span>
+                        <span className={model.pricing.inputCacheHit !== null ? "text-emerald-500" : "text-amber-500"}>
+                          {model.pricing.inputCacheHit !== null ? "已配置" : "未配置"}
+                        </span>
+                      </summary>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        {([
+                          ["inputCacheHit", "缓存命中输入", model.pricing.inputCacheHit],
+                          ["inputCacheMiss", "缓存未命中输入", model.pricing.inputCacheMiss],
+                          ["output", "输出", model.pricing.output],
+                        ] as const).map(([key, label, value]) => (
+                          <label key={key} className="block min-w-0">
+                            <span className="mb-1 block text-[11px] text-slate-500">{label}（¥/百万 Token）</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.000001"
+                              value={value ?? ""}
+                              onChange={(event) => updateModel(index, {
+                                pricing: {
+                                  ...model.pricing,
+                                  [key]: event.target.value === "" ? null : Number(event.target.value),
+                                },
+                              })}
+                              placeholder="未配置"
+                              className={modelInputClass}
+                              aria-label={`${model.displayName || model.modelId} ${label}价格`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </details>
                   </div>
                 ))}
               </div>

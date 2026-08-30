@@ -7,6 +7,7 @@ import {
 } from "@/lib/agent/memory/memory-reranker";
 import type { MemoryFusionStrategy } from "@/lib/agent/memory/fusion";
 import type { MemoryExecutionConfig, UserMemoryConfigView } from "./types";
+import { resolveUserMeteredModelPrice } from "@/lib/agent/observability/user-metered-pricing";
 
 type ConfigRow = {
   enabled: boolean;
@@ -96,6 +97,13 @@ export async function resolveUserMemoryConfig(userId: string): Promise<MemoryExe
     .select("*").eq("user_id", userId).maybeSingle();
   if (error && !isMissingTable(error)) throw new Error(`读取记忆配置失败: ${error.message}`);
   const value = data ? fromRow(data as ConfigRow) : null;
+  if (value) {
+    value.rerank.inputPriceCnyPerMillionTokens = await resolveUserMeteredModelPrice({
+      userId,
+      category: "rerank",
+      modelId: value.rerank.model,
+    }) ?? undefined;
+  }
   cache.set(userId, { value, expiresAt: Date.now() + 30_000 });
   return value;
 }
@@ -151,6 +159,7 @@ export async function getUserMemoryConfigView(userId: string): Promise<UserMemor
       url: row.rerank_url,
       apiKeyConfigured: Boolean(row.rerank_api_key_ciphertext),
       apiKeyHint: row.rerank_api_key_hint,
+      inputPriceCnyPerMillionTokens: resolved.rerank.inputPriceCnyPerMillionTokens,
     },
   };
 }

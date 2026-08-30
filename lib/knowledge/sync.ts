@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import ws from 'ws';
 import { ragConfig } from '@/lib/platform/config';
+import { createUserEmbeddingClient } from '@/lib/embedding-config/service';
 import { NotionClient } from './notion';
 import { resolveUserNotionConnection } from './connections/notion-config';
 import type { ResolvedUserNotionConnection } from './connections/types';
@@ -22,7 +23,6 @@ import {
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MAX_RETRIES,
   EMBEDDING_MODEL,
-  EmbeddingClient,
   type EmbeddingBatchEvent,
   validateEmbeddingVector,
 } from './embedding';
@@ -111,6 +111,9 @@ export function buildAtomicDocumentPayload(input: {
   pageTitle: string;
   pageUrl: string;
   lastEditedTime: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  embeddingProvider?: string;
 }): AtomicDocumentPayload[] {
   if (input.embeddings.length !== input.chunks.length) {
     throw new Error(
@@ -144,7 +147,9 @@ export function buildAtomicDocumentPayload(input: {
         parent_child_count: parentContext.childCount,
         content_hash: hashText(chunk.text),
         source_type: 'notion',
-        embedding_model: EMBEDDING_MODEL,
+        embedding_model: input.embeddingModel ?? EMBEDDING_MODEL,
+        embedding_dimensions: input.embeddingDimensions ?? EMBEDDING_DIMENSIONS,
+        embedding_provider: input.embeddingProvider ?? 'dashscope',
         chunker_version: CHUNKER_VERSION,
         last_edited_time: input.lastEditedTime,
       },
@@ -288,6 +293,7 @@ function errorToMetadata(error: unknown): Record<string, unknown> {
 function isSameIndexedVersion(
   metadata: unknown,
   contentHash: string,
+  embeddingModel = EMBEDDING_MODEL,
 ): boolean {
   if (!metadata || typeof metadata !== 'object') {
     return false;
@@ -296,7 +302,7 @@ function isSameIndexedVersion(
   const value = metadata as Record<string, unknown>;
   return (
     value.content_hash === contentHash &&
-    value.embedding_model === EMBEDDING_MODEL &&
+    value.embedding_model === embeddingModel &&
     value.chunker_version === CHUNKER_VERSION
   );
 }
@@ -379,6 +385,8 @@ async function syncNotionPageOnce(
   });
 
   try {
+    const embeddingRuntime = await createUserEmbeddingClient(options.userId);
+    const embeddingModel = embeddingRuntime.config.modelId;
     // 1. 读取 Notion 页面
     const notionConnection = options.notionConnection;
     if (!notionConnection) throw new Error('Notion 连接未解析');
@@ -420,13 +428,17 @@ async function syncNotionPageOnce(
       metadata: {
         existingChunkCount: existingPage?.chunk_count ?? 0,
         contentHash: pageContentHash.slice(0, 12),
-        embeddingModel: EMBEDDING_MODEL,
+        embeddingModel,
         chunkerVersion: CHUNKER_VERSION,
         force: Boolean(options.force),
       },
     });
 
-    if (!options.force && isSameIndexedVersion(existingPage?.metadata, pageContentHash)) {
+    if (!options.force && isSameIndexedVersion(
+      existingPage?.metadata,
+      pageContentHash,
+      embeddingModel,
+    )) {
       emitSyncEvent(options, {
         type: 'page_skipped',
         pageId,
@@ -540,22 +552,21 @@ async function syncNotionPageOnce(
       chunksCount: chunks.length,
       message: `开始为 ${chunks.length} 个 chunk 生成向量`,
       metadata: {
-        embeddingModel: EMBEDDING_MODEL,
-        expectedDimensions: EMBEDDING_DIMENSIONS,
+        embeddingModel,
+        expectedDimensions: embeddingRuntime.config.dimensions,
         batchSize: EMBEDDING_BATCH_SIZE,
         totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
         maxRetriesPerBatch: EMBEDDING_MAX_RETRIES,
       },
     });
-    const embeddingClient = new EmbeddingClient();
-    const embeddings = await embeddingClient.embedBatch(
+    const embeddings = await embeddingRuntime.client.embedBatch(
       chunks.map((c) => c.text),
       {
         idempotencyScope: [
           options.userId,
           pageId,
           pageContentHash,
-          EMBEDDING_MODEL,
+          embeddingModel,
           CHUNKER_VERSION,
         ].join(':'),
         onEvent: (event) => emitEmbeddingBatchEvent(
@@ -572,7 +583,7 @@ async function syncNotionPageOnce(
       chunksCount: chunks.length,
       message: `已生成 ${embeddings.length} 个向量`,
       metadata: {
-        embeddingModel: EMBEDDING_MODEL,
+        embeddingModel,
         vectorCount: embeddings.length,
         dimensions: embeddings[0]?.length ?? 0,
         totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
@@ -589,6 +600,9 @@ async function syncNotionPageOnce(
       pageTitle: page.title,
       pageUrl: page.url,
       lastEditedTime: page.lastEditedTime,
+      embeddingModel,
+      embeddingDimensions: embeddingRuntime.config.dimensions,
+      embeddingProvider: embeddingRuntime.config.provider,
     });
     emitSyncEvent(options, {
       type: 'db_atomic_replace_start',
@@ -616,7 +630,9 @@ async function syncNotionPageOnce(
         p_page_metadata: {
           content_hash: pageContentHash,
           index_version: pageContentHash,
-          embedding_model: EMBEDDING_MODEL,
+          embedding_model: embeddingModel,
+          embedding_dimensions: embeddingRuntime.config.dimensions,
+          embedding_provider: embeddingRuntime.config.provider,
           chunker_version: CHUNKER_VERSION,
         },
         p_documents: documents,

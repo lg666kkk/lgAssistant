@@ -13,6 +13,10 @@ function vector(value: number) {
 }
 
 describe('EmbeddingClient batch integrity', () => {
+  it('requires explicit user credentials instead of reading process environment', () => {
+    expect(() => new EmbeddingClient()).toThrow('缺少用户向量嵌入 API Key');
+  });
+
   it('reorders each provider batch by index and preserves global input order', async () => {
     const events: EmbeddingBatchEvent[] = [];
     const create = vi.fn(

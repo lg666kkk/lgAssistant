@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import OpenAI from 'openai';
+import { createSafeProviderFetch } from '@/lib/llm/url-safety';
 
 export const EMBEDDING_MODEL = 'text-embedding-v4';
 export const EMBEDDING_DIMENSIONS = 1024;
@@ -36,6 +37,7 @@ export type EmbeddingProviderResponse = {
 
 export type EmbeddingUsage = {
   model: string;
+  inputPriceCnyPerMillionTokens?: number;
   inputTokens: number;
   totalTokens: number;
   modelCallCount: number;
@@ -73,7 +75,10 @@ export type EmbedBatchOptions = {
 
 export type EmbeddingClientOptions = {
   provider?: EmbeddingProvider;
+  apiKey?: string;
+  baseUrl?: string;
   model?: string;
+  dimensions?: number;
   batchSize?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
@@ -96,14 +101,22 @@ export class EmbeddingIntegrityError extends Error {
 export class EmbeddingClient {
   private provider: EmbeddingProvider;
   private model: string;
+  private dimensions: number;
   private batchSize: number;
   private maxRetries: number;
   private retryBaseDelayMs: number;
   private sleep: (ms: number) => Promise<void>;
 
   constructor(options: EmbeddingClientOptions = {}) {
-    this.provider = options.provider ?? createOpenAICompatibleProvider();
+    this.provider = options.provider ?? createOpenAICompatibleProvider({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+    });
     this.model = options.model ?? EMBEDDING_MODEL;
+    this.dimensions = positiveInteger(
+      options.dimensions ?? EMBEDDING_DIMENSIONS,
+      'dimensions',
+    );
     this.batchSize = positiveInteger(options.batchSize ?? EMBEDDING_BATCH_SIZE, 'batchSize');
     this.maxRetries = nonNegativeInteger(
       options.maxRetries ?? EMBEDDING_MAX_RETRIES,
@@ -214,6 +227,7 @@ export class EmbeddingClient {
         normalized = normalizeEmbeddingResponse(
           response,
           input.batchTexts.length,
+          this.dimensions,
         );
       } catch (error) {
         const retryable = isRetryableEmbeddingError(error);
@@ -276,13 +290,14 @@ export class EmbeddingClient {
 export function validateEmbeddingVector(
   embedding: unknown,
   label = 'Embedding',
+  expectedDimensions = EMBEDDING_DIMENSIONS,
 ): asserts embedding is number[] {
   if (!Array.isArray(embedding) || embedding.length === 0) {
     throw new EmbeddingIntegrityError(`${label} 为空向量`);
   }
-  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+  if (embedding.length !== expectedDimensions) {
     throw new EmbeddingIntegrityError(
-      `${label} 向量维度错误: ${embedding.length}/${EMBEDDING_DIMENSIONS}`,
+      `${label} 向量维度错误: ${embedding.length}/${expectedDimensions}`,
     );
   }
 
@@ -301,18 +316,24 @@ export function validateEmbeddingVector(
   }
 }
 
-function createOpenAICompatibleProvider(): EmbeddingProvider {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  const baseURL = process.env.DASHSCOPE_BASE_URL;
-
+function createOpenAICompatibleProvider(input: {
+  apiKey?: string;
+  baseUrl?: string;
+}): EmbeddingProvider {
+  const apiKey = input.apiKey?.trim();
+  const baseURL = input.baseUrl?.trim();
   if (!apiKey) {
-    throw new Error('缺少环境变量 DASHSCOPE_API_KEY');
+    throw new Error('缺少用户向量嵌入 API Key');
+  }
+  if (!baseURL) {
+    throw new Error('缺少用户向量嵌入 Base URL');
   }
 
   const client = new OpenAI({
     apiKey,
-    baseURL: baseURL || 'https://ws-8c39csiude3axq14.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    baseURL,
     maxRetries: 0,
+    fetch: createSafeProviderFetch(baseURL, 30_000),
   });
 
   return {
@@ -338,6 +359,7 @@ function createOpenAICompatibleProvider(): EmbeddingProvider {
 function normalizeEmbeddingResponse(
   response: EmbeddingProviderResponse,
   expectedCount: number,
+  expectedDimensions = EMBEDDING_DIMENSIONS,
 ): {
   embeddings: number[][];
   providerIndexes: number[];
@@ -371,7 +393,11 @@ function normalizeEmbeddingResponse(
       throw new EmbeddingIntegrityError(`provider index 重复: ${providerIndex}`);
     }
 
-    validateEmbeddingVector(item.embedding, `provider index ${providerIndex}`);
+    validateEmbeddingVector(
+      item.embedding,
+      `provider index ${providerIndex}`,
+      expectedDimensions,
+    );
     ordered[providerIndex] = item.embedding;
     providerIndexes.push(providerIndex);
   }

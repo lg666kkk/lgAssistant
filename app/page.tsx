@@ -1,6 +1,8 @@
 "use client";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { useChatManager } from "@web/features/chat/hooks/use-chat-manager";
+import { useContextPreview } from "@web/features/chat/hooks/use-context-preview";
 import { useLlmCatalog } from "@web/features/connections/hooks/use-llm-catalog";
 import { ChatInput } from "@web/features/chat/components/chat-input";
 import { ChatThread } from "@web/features/chat/components/chat-thread";
@@ -15,12 +17,14 @@ import {
   type PrimaryCapability,
 } from "@web/layout/app-sidebar";
 import { LanguageModelCenter } from "@web/features/connections/components/language-model-center";
+import { EmbeddingCenter } from "@web/features/connections/components/embedding-center";
 import { SearchEngineCenter } from "@web/features/connections/components/search-engine-center";
 import { LangfuseCenter } from "@web/features/observability/components/langfuse-center";
 import { MemoryCenter } from "@web/features/memory/components/memory-center";
 import { UserProfileCenter } from "@web/features/memory/components/user-profile-center";
 import { KnowledgeCenter } from "@web/features/knowledge/components/knowledge-center";
 import { TraceCenter } from "@web/features/observability/components/trace-center";
+import { ScheduleCenter } from "@web/features/schedule/components/schedule-center";
 import type {
   ChatModelId,
   ExecutionPlanData,
@@ -45,6 +49,18 @@ import {
 import { AuthGate } from "@web/lib/auth/auth-gate";
 import { useAuth } from "@web/lib/auth/use-auth";
 import { createUuid } from "@/lib/platform/uuid";
+
+const UsageCenter = dynamic(
+  () => import("@web/features/usage/components/usage-center").then((module) => module.UsageCenter),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-slate-950 text-sm text-slate-500">
+        加载用量统计...
+      </div>
+    ),
+  },
+);
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -97,6 +113,21 @@ export default function Home() {
   const inputRef = useRef<HTMLDivElement>(null);
 
   const { loading, streaming, contextUsage } = activeSession || {};
+  const isAgentRunning = Boolean(loading || streaming);
+  const previewContextUsage = useContextPreview({
+    enabled: Boolean(
+      user
+      && activeSession
+      && selectedModel
+      && activeCapability === "chat"
+    ),
+    sessionId: activeSession?.id,
+    modelId: selectedModel,
+    webSearchEnabled,
+    draftText: input,
+    imageCount: attachments.length,
+    isRunning: isAgentRunning,
+  });
   const historyLoading = activeSession?.historyLoading ?? false;
   const historyLoaded = activeSession?.historyLoaded ?? false;
   const attachmentsUploading = attachments.some(
@@ -117,7 +148,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
-    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "langfuse" && panel !== "user-profile") return;
+    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile") return;
     setActiveCapability("connections");
     setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
@@ -557,7 +588,9 @@ export default function Home() {
               onChange={setInput}
               webSearchEnabled={webSearchEnabled}
               onWebSearchEnabledChange={setWebSearchEnabled}
-              contextUsage={contextUsage}
+              contextUsage={isAgentRunning
+                ? contextUsage
+                : previewContextUsage ?? contextUsage}
               selectedModel={selectedModel}
               models={configuredModels}
               modelsLoading={llmCatalogLoading}
@@ -570,7 +603,7 @@ export default function Home() {
               onRetryAttachment={(id) => void handleRetryAttachment(id)}
               onSend={handleSend}
               onStop={handleStop}
-              isRunning={Boolean(loading || streaming || historyLoading)}
+              isRunning={Boolean(isAgentRunning || historyLoading)}
               disabled={
                 attachmentsUploading
                 || !attachmentsReady
@@ -592,8 +625,14 @@ export default function Home() {
           />
         ) : activeCapability === "connections" && activeConnectionTab === "search-engine" ? (
           <SearchEngineCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "embedding" ? (
+          <EmbeddingCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "usage" ? (
+          <UsageCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "knowledge" ? (
           <KnowledgeCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "schedule" ? (
+          <ScheduleCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "traces" ? (
           <TraceCenter initialTraceId={requestedTraceId} />
         ) : activeCapability === "connections" && activeConnectionTab === "langfuse" ? (

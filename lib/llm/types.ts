@@ -1,6 +1,12 @@
 export type LlmAdapterType = "openai-compatible";
 export type LlmReasoningMode = "none" | "deepseek";
 
+export type UserLlmModelPricing = {
+  inputCacheHit: number | null;
+  inputCacheMiss: number | null;
+  output: number | null;
+};
+
 export type UserLlmModel = {
   id: string;
   providerId: string;
@@ -13,6 +19,7 @@ export type UserLlmModel = {
   supportsTools: boolean;
   supportsImages: boolean;
   reasoningMode: LlmReasoningMode;
+  pricing: UserLlmModelPricing;
   enabled: boolean;
 };
 
@@ -50,6 +57,7 @@ export type UserLlmModelDraft = {
   supportsTools: boolean;
   supportsImages: boolean;
   reasoningMode: LlmReasoningMode;
+  pricing: UserLlmModelPricing;
   enabled: boolean;
 };
 
@@ -59,4 +67,3 @@ export type ResolvedUserLlmModel = UserLlmModel & {
   baseUrl: string;
   apiKey: string;
 };
-

@@ -273,6 +273,7 @@ function buildMemoryRerankTrace(input: {
     providerRequestId: input.providerRequestId,
     providerModel: input.providerModel,
     totalTokens: input.totalTokens,
+    inputPriceCnyPerMillionTokens: input.config.inputPriceCnyPerMillionTokens,
     error: input.error,
     candidates: input.candidates.map((record, index) => {
       const ruleScore = memoryRankScore(record, input.now ?? Date.now());

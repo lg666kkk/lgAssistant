@@ -23,6 +23,14 @@ export type TraceStepBase = {
 export type ModelTraceStep = TraceStepBase & {
   type: "model";
   model?: ChatModelId;
+  modelName?: string;
+  providerName?: string;
+  providerModelId?: string;
+  pricingSnapshot?: {
+    inputCacheHit: number;
+    inputCacheMiss: number;
+    output: number;
+  };
   textSummary: string; // 模型这轮吐的文本（截断后的摘要）
   textTruncated: boolean;
   textOriginalChars: number;

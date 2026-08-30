@@ -23,6 +23,7 @@ export type MemoryRerankConfig = {
   admitThreshold?: number;
   url?: string;
   apiKey?: string;
+  inputPriceCnyPerMillionTokens?: number;
 };
 
 export type MemoryRerankCandidateTrace = {
@@ -64,6 +65,7 @@ export type MemoryRerankTrace = {
   providerRequestId?: string;
   providerModel?: string;
   totalTokens?: number;
+  inputPriceCnyPerMillionTokens?: number;
   error?: string;
   candidates: MemoryRerankCandidateTrace[];
 };

@@ -1,5 +1,5 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
-import { EmbeddingClient } from "@/lib/knowledge/embedding";
+import { createUserEmbeddingClient } from "@/lib/embedding-config/service";
 
 /**
  * 记忆历史的只读访问层（search_memory_history 工具的数据源）。
@@ -75,12 +75,6 @@ function toTimelineEntry(row: any): MemoryTimelineEntry {
 }
 
 export class MemoryHistoryStore {
-  private embedder: EmbeddingClient | null = null;
-  private getEmbedder(): EmbeddingClient {
-    if (!this.embedder) this.embedder = new EmbeddingClient();
-    return this.embedder;
-  }
-
   /**
    * 语义解析 query → 业务 key。
    * 走 match_memories_for_history（不过滤 status）：历史查询的目标常常正是
@@ -93,7 +87,8 @@ export class MemoryHistoryStore {
     if (!hasSupabaseConfig()) return [];
     if (!options.userId) return [];
 
-    const embedding = await this.getEmbedder().embedSingle(query);
+    const embeddingRuntime = await createUserEmbeddingClient(options.userId);
+    const embedding = await embeddingRuntime.client.embedSingle(query);
     const { data, error } = await getSupabase().rpc(HISTORY_MATCH_FN, {
       query_embedding: embedding,
       match_count: options.limit ?? 5,

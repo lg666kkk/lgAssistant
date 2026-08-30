@@ -12,24 +12,6 @@ export type RuntimeConfigDefinition = {
 
 export const runtimeConfigDefinitions: RuntimeConfigDefinition[] = [
   {
-    key: "DASHSCOPE_BASE_URL",
-    label: "DashScope Base URL",
-    group: "Embedding",
-    description: "OpenAI 兼容的 DashScope 接口地址。",
-    secret: false,
-    type: "text",
-    environmentKey: "DASHSCOPE_BASE_URL",
-  },
-  {
-    key: "DASHSCOPE_API_KEY",
-    label: "DashScope API Key",
-    group: "Embedding",
-    description: "检索与知识同步使用的 Embedding 密钥。",
-    secret: true,
-    type: "text",
-    environmentKey: "DASHSCOPE_API_KEY",
-  },
-  {
     key: "RAG_FUSION_STRATEGY",
     label: "检索融合策略",
     group: "检索",

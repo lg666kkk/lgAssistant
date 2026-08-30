@@ -8,6 +8,7 @@ import { ragConfig } from "@/lib/platform/config";
 import { requireUser } from "@/lib/auth/server";
 import { listUserLlmCatalog } from "@/lib/llm/config-service";
 import { getUserNotionConnection } from "@/lib/knowledge/connections/notion-config";
+import { getUserEmbeddingConfigView } from "@/lib/embedding-config/service";
 
 export const runtime = "nodejs";
 
@@ -26,10 +27,11 @@ export async function GET(req: Request) {
   if (user instanceof Response) return user;
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const dashscopeBaseUrl =
-    process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
-  const llmCatalog = await listUserLlmCatalog(user.id).catch(() => null);
-  const notionConnection = await getUserNotionConnection(user.id).catch(() => null);
+  const [llmCatalog, notionConnection, embeddingConfig] = await Promise.all([
+    listUserLlmCatalog(user.id).catch(() => null),
+    getUserNotionConnection(user.id).catch(() => null),
+    getUserEmbeddingConfigView(user.id).catch(() => null),
+  ]);
   const defaultModel = llmCatalog?.models.find((model) =>
     model.id === llmCatalog.preferences.defaultModelId) ?? llmCatalog?.models[0];
 
@@ -87,24 +89,24 @@ export async function GET(req: Request) {
           title: "Embedding",
           items: [
             {
-              key: "DASHSCOPE_API_KEY",
-              label: "DashScope API Key",
-              value: maskSecret(process.env.DASHSCOPE_API_KEY),
-              configured: has(process.env.DASHSCOPE_API_KEY),
+              key: "USER_EMBEDDING_API_KEY",
+              label: "Embedding API Key",
+              value: embeddingConfig?.apiKeyHint || null,
+              configured: embeddingConfig?.apiKeyConfigured === true,
               sensitive: true,
             },
             {
-              key: "DASHSCOPE_BASE_URL",
-              label: "DashScope Base URL",
-              value: dashscopeBaseUrl,
-              configured: true,
+              key: "USER_EMBEDDING_BASE_URL",
+              label: "Embedding Base URL",
+              value: embeddingConfig?.baseUrl ?? "-",
+              configured: embeddingConfig?.configured === true,
               sensitive: false,
             },
             {
               key: "EMBEDDING_MODEL",
               label: "Embedding Model",
               value: EMBEDDING_MODEL,
-              configured: true,
+              configured: embeddingConfig?.configured === true,
               sensitive: false,
             },
           ],

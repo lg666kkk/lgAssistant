@@ -33,8 +33,9 @@ export function getMeteredModelOption(model: string) {
 export function calculateMeteredInputCost(
   model: string,
   input: { billedInputTokens?: number; cachedInputTokens?: number },
+  priceOverride?: number,
 ) {
-  const pricing = getMeteredModelOption(model)?.inputCnyPerMillionTokens ?? 0;
+  const pricing = priceOverride ?? getMeteredModelOption(model)?.inputCnyPerMillionTokens ?? 0;
   const billedInputTokens = Math.max(0, input.billedInputTokens ?? 0);
   const cachedInputTokens = Math.max(0, input.cachedInputTokens ?? 0);
   return {

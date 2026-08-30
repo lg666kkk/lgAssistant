@@ -102,7 +102,11 @@ export function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) 
           缓存创建 {formatCompactNumber(usage.cacheCreationTokens)}
         </span>
       )}
-      <span title="按模型价格估算的本次费用">约 ¥{usage.estimatedCostCny.toFixed(4)}</span>
+      {usages?.every((item) => item.pricingConfigured !== false) ? (
+        <span title="按模型价格估算的本次费用">约 ¥{usage.estimatedCostCny.toFixed(4)}</span>
+      ) : (
+        <span title="请在大语言模型配置中填写费用单价" className="text-amber-500">费用未配置</span>
+      )}
     </div>
   );
 }

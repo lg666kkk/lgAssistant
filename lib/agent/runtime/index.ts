@@ -9,6 +9,15 @@ import {
   truncateToolContent,
 } from "@/lib/agent/runtime/budget";
 import {
+  buildContextUsageBreakdown,
+  estimateModelRequestTokens,
+} from "@/lib/agent/runtime/context-usage";
+import {
+  AGENT_LOOP_OUTPUT_RESERVE,
+  AGENT_LOOP_TOKEN_BUDGET,
+  CONTEXT_COMPACTION_WINDOW_CAP,
+} from "@/lib/agent/runtime/limits";
+import {
   compactLoopMessagesSemantic,
 } from "@/lib/agent/runtime/compaction";
 import { saveToolArtifact } from "@/lib/agent/runtime/artifact-store";
@@ -26,6 +35,7 @@ import {
   calculateModelUsageCost,
   defaultChatModel,
   getModelContextWindowTokens,
+  type ModelPricingCnyPerMillionTokens,
   type ChatModelId,
   type ModelUsageBreakdown,
 } from "@/lib/agent/models";
@@ -403,23 +413,8 @@ async function maybeStoreToolArtifact(input: {
   };
 }
 
-const AGENT_LOOP_TOKEN_BUDGET = 128_000;
-const AGENT_LOOP_OUTPUT_RESERVE = 4_096;
-const CONTEXT_COMPACTION_WINDOW_CAP = 80_000;
 const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.6;
 const CONTEXT_COMPACTION_TARGET_RATIO = 0.3;
-
-function estimateModelRequestTokens(input: {
-  messages: ModelMessage[];
-  system?: string;
-  tools: Anthropic.Tool[];
-}) {
-  return estimateTokens({
-    messages: input.messages,
-    system: input.system ?? "",
-    tools: input.tools,
-  });
-}
 
 export async function callModel(
   messages: ModelMessage[],
@@ -430,7 +425,13 @@ export async function callModel(
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
   telemetryFunctionId?: string,
-): Promise<Anthropic.Message & { reasoning_content?: string }> {
+): Promise<Anthropic.Message & {
+  reasoning_content?: string;
+  pricing?: ModelPricingCnyPerMillionTokens;
+  modelName?: string;
+  providerName?: string;
+  providerModelId?: string;
+}> {
   const result = await callModelWithProvider({
     messages,
     tools,
@@ -442,7 +443,13 @@ export async function callModel(
     telemetryFunctionId,
   });
 
-  return result as Anthropic.Message & { reasoning_content?: string };
+  return result as Anthropic.Message & {
+    reasoning_content?: string;
+    pricing?: ModelPricingCnyPerMillionTokens;
+    modelName?: string;
+    providerName?: string;
+    providerModelId?: string;
+  };
 }
 
 const COMPACTION_SYSTEM_PROMPT = `你负责压缩较早的对话上下文，供同一个 agent 继续完成当前任务。
@@ -1185,7 +1192,48 @@ export async function runAgentLoop(
       requested: estimatedContextTokens,
       reservedOutputTokens: AGENT_LOOP_OUTPUT_RESERVE,
     };
-    if (!tokenBudget.canAfford(estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE)) {
+    const contextBreakdown = buildContextUsageBreakdown({
+      messages: loopMessages,
+      system,
+      tools,
+      systemSegments,
+      totalTokens: estimatedContextTokens,
+    });
+    const contextUsageEvent = (
+      phase: "before_model" | "after_model" | "blocked",
+      spentTokens: number,
+    ) => ({
+      type: "context_usage" as const,
+      usage: {
+        model,
+        modelCallIndex: metrics.modelCallCount + (phase === "after_model" ? 0 : 1),
+        estimatedTokens: estimatedContextTokens,
+        workingWindowTokens: runtimeContextWindowTokens,
+        modelWindowTokens: getModelContextWindowTokens(model),
+        remainingTokens: Math.max(0, runtimeContextWindowTokens - estimatedContextTokens),
+        phase,
+        breakdown: contextBreakdown,
+        runBudget: {
+          spentTokens,
+          maxTokens: tokenBudget.max,
+          remainingTokens: Math.max(0, tokenBudget.max - spentTokens),
+          nextRequestTokens: estimatedContextTokens,
+          outputReserveTokens: AGENT_LOOP_OUTPUT_RESERVE,
+          requiredTokens: estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+          canContinue:
+            tokenBudget.max - spentTokens
+            >= estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+        },
+      },
+    });
+    const canContinue = tokenBudget.canAfford(
+      estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+    );
+    enqueueEvent(
+      contextUsageEvent(canContinue ? "before_model" : "blocked", tokenBudget.spent),
+      enqueueText,
+    );
+    if (!canContinue) {
       enqueueEvent(
         {
           type: "text",
@@ -1203,20 +1251,6 @@ export async function runAgentLoop(
       };
     }
     metrics.modelCallCount += 1;
-    enqueueEvent(
-      {
-        type: "context_usage",
-        usage: {
-          model,
-          modelCallIndex: metrics.modelCallCount,
-          estimatedTokens: estimatedContextTokens,
-          workingWindowTokens: runtimeContextWindowTokens,
-          modelWindowTokens: getModelContextWindowTokens(model),
-          remainingTokens: Math.max(0, runtimeContextWindowTokens - estimatedContextTokens),
-        },
-      },
-      enqueueText,
-    );
     const modelStartedAt = Date.now();
     // 把 enqueueText 包成 onTextDelta 回调传入，text delta 逐 token 推给前端
     const evidenceRequired = requiresCitedEvidence({
@@ -1292,7 +1326,7 @@ export async function runAgentLoop(
             undefined,
           cacheMissTokens: rawUsage.prompt_cache_miss_tokens,
           cacheCreationTokens: rawUsage.cache_creation_input_tokens ?? undefined,
-        })
+        }, initialResponse.pricing)
       : undefined;
     if (modelUsage) {
       metrics.actualInputTokens += modelUsage.inputTokens;
@@ -1315,6 +1349,7 @@ export async function runAgentLoop(
     }
     const budgetChargeTokens = modelUsage?.totalTokens ?? estimatedContextTokens;
     tokenBudget.spend(budgetChargeTokens);
+    enqueueEvent(contextUsageEvent("after_model", tokenBudget.spent), enqueueText);
     const tokenBudgetAfterSpend = {
       spentAfter: tokenBudget.spent,
       remainingAfter: tokenBudget.remaining(),
@@ -1325,6 +1360,10 @@ export async function runAgentLoop(
     const modelStep: ModelTraceStep = {
       type: "model",
       model,
+      modelName: initialResponse.modelName,
+      providerName: initialResponse.providerName,
+      providerModelId: initialResponse.providerModelId,
+      pricingSnapshot: modelUsage?.pricing,
       index: stepIndex++,
       startedAt: modelStartedAt,
       durationMs: Date.now() - modelStartedAt,

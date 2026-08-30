@@ -1,5 +1,10 @@
 import { getSupabase, hasSupabaseConfig } from "@/lib/platform/supabase";
-import { EmbeddingClient } from "@/lib/knowledge/embedding";
+import { createUserEmbeddingClient } from "@/lib/embedding-config/service";
+import {
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_MODEL,
+  type EmbeddingClient,
+} from "@/lib/knowledge/embedding";
 import { memoryColumnsFromMetadata } from "./record-mapper";
 import type { MemoryWriteMetadata } from "./types";
 
@@ -106,12 +111,8 @@ export async function purgeMemoryKey(key: string, userId: string | undefined): P
 }
 
 export class MemoryWriter {
-  // 懒加载：EmbeddingClient 构造时校验 DASHSCOPE_API_KEY，不能在模块加载期就 new
-  private embedder: EmbeddingClient | null = null;
-  private getEmbedder(): EmbeddingClient {
-    if (!this.embedder) this.embedder = new EmbeddingClient();
-    return this.embedder;
-  }
+  // 保留可替换的测试缝；生产默认按 userId 解析页面配置，不缓存跨用户凭据。
+  private embedder: Pick<EmbeddingClient, "embedSingle"> | null = null;
 
   /** 原子 upsert：同事务写长期层 + 语义层。embedding 失败会在任何 DB 写之前抛出，不会产生半写。 */
   async upsert(
@@ -131,13 +132,28 @@ export class MemoryWriter {
       console.warn("[MemoryWriter.upsert] 缺少 userId，跳过写入");
       return;
     }
-    const embedding = await this.getEmbedder().embedSingle(content);
+    const embeddingRuntime = this.embedder
+      ? {
+          client: this.embedder,
+          config: {
+            modelId: EMBEDDING_MODEL,
+            dimensions: EMBEDDING_DIMENSIONS,
+            provider: "dashscope" as const,
+          },
+        }
+      : await createUserEmbeddingClient(options.userId);
+    const embedding = await embeddingRuntime.client.embedSingle(content);
     const params = buildUpsertParams({
       userId: options.userId,
       key,
       content,
       embedding,
-      metadata,
+      metadata: {
+        ...metadata,
+        embedding_model: embeddingRuntime.config.modelId,
+        embedding_dimensions: embeddingRuntime.config.dimensions,
+        embedding_provider: embeddingRuntime.config.provider,
+      },
       effectiveAt: options.effectiveAt,
       supersedeKind: options.supersedeKind,
       expectedVersion: options.expectedVersion,

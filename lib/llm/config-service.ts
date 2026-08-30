@@ -40,6 +40,9 @@ type ModelRow = {
   supports_tools: boolean;
   supports_images: boolean;
   reasoning_mode: LlmReasoningMode;
+  input_cache_hit_price_cny: number | string | null;
+  input_cache_miss_price_cny: number | string | null;
+  output_price_cny: number | string | null;
   enabled: boolean;
 };
 
@@ -137,7 +140,36 @@ function validateModelDraft(input: UserLlmModelDraft) {
   if (!(["none", "deepseek"] as string[]).includes(input.reasoningMode)) {
     throw new Error(`${displayName} 的 Reasoning 协议无效`);
   }
-  return { ...input, modelId, displayName };
+  const pricingEntries = [
+    ["缓存命中输入价格", input.pricing?.inputCacheHit],
+    ["缓存未命中输入价格", input.pricing?.inputCacheMiss],
+    ["输出价格", input.pricing?.output],
+  ] as const;
+  const configuredPrices = pricingEntries.filter(([, value]) => value !== null && value !== undefined);
+  if (configuredPrices.length !== 0 && configuredPrices.length !== pricingEntries.length) {
+    throw new Error(`${displayName} 的三项模型价格必须同时填写或同时留空`);
+  }
+  for (const [label, value] of configuredPrices) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1_000_000) {
+      throw new Error(`${displayName} 的${label}无效`);
+    }
+  }
+  return {
+    ...input,
+    modelId,
+    displayName,
+    pricing: {
+      inputCacheHit: input.pricing?.inputCacheHit ?? null,
+      inputCacheMiss: input.pricing?.inputCacheMiss ?? null,
+      output: input.pricing?.output ?? null,
+    },
+  };
+}
+
+function nullablePrice(value: number | string | null) {
+  if (value === null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function toPublicModel(row: ModelRow, provider: ProviderRow): UserLlmModel {
@@ -153,6 +185,11 @@ function toPublicModel(row: ModelRow, provider: ProviderRow): UserLlmModel {
     supportsTools: row.supports_tools,
     supportsImages: row.supports_images,
     reasoningMode: row.reasoning_mode,
+    pricing: {
+      inputCacheHit: nullablePrice(row.input_cache_hit_price_cny),
+      inputCacheMiss: nullablePrice(row.input_cache_miss_price_cny),
+      output: nullablePrice(row.output_price_cny),
+    },
     enabled: row.enabled,
   } satisfies UserLlmModel;
   rememberModelMetadata(model.id, {
@@ -250,6 +287,9 @@ export async function createUserLlmProvider(input: {
     supports_tools: model.supportsTools,
     supports_images: model.supportsImages,
     reasoning_mode: model.reasoningMode,
+    input_cache_hit_price_cny: model.pricing.inputCacheHit,
+    input_cache_miss_price_cny: model.pricing.inputCacheMiss,
+    output_price_cny: model.pricing.output,
     enabled: model.enabled,
   })));
   if (modelError) {
@@ -314,6 +354,9 @@ export async function updateUserLlmProvider(input: {
       supports_tools: model.supportsTools,
       supports_images: model.supportsImages,
       reasoning_mode: model.reasoningMode,
+      input_cache_hit_price_cny: model.pricing.inputCacheHit,
+      input_cache_miss_price_cny: model.pricing.inputCacheMiss,
+      output_price_cny: model.pricing.output,
       enabled: model.enabled,
       updated_at: new Date().toISOString(),
     };
