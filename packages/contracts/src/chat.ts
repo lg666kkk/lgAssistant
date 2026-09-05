@@ -163,6 +163,11 @@ export interface PlanProgressEvent {
   plan: PlanProgressEventData;
 }
 
+export interface PlanStartedEvent {
+  type: "plan_started";
+  plan: ExecutionPlanData;
+}
+
 export interface ErrorEvent {
   type: "error";
   message: string;
@@ -182,6 +187,7 @@ export type AgentEvent =
   | ContextUsageEvent
   | PlanProposalEvent
   | PlanProgressEvent
+  | PlanStartedEvent
   | ErrorEvent
   | DoneEvent;
 

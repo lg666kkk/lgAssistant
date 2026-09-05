@@ -10,6 +10,7 @@ import { createScheduledJobTool } from "./scheduled-jobs";
 import { createWebSearchTool } from "./web-search";
 import { createWebFetchTool } from "./web-fetch";
 import { readToolArtifactTool } from "./read-tool-artifact";
+import { listSkillsTool, runSkillTool, viewSkillTool } from "./sandbox-skills";
 import {
   createRecallMemoryTool,
   createSearchMemoryHistoryTool,
@@ -37,6 +38,9 @@ export function createBuiltinToolRegistry(options: {
   registry.register(createWebSearchTool({ retrievalPlan: options.retrievalPlan }));
   registry.register(createWebFetchTool({ retrievalPlan: options.retrievalPlan }));
   registry.register(readToolArtifactTool);
+  registry.register(listSkillsTool);
+  registry.register(viewSkillTool);
+  registry.register(runSkillTool);
   registry.register(askUserTool);
   // 两个工具必须同时注册。只有 recall_memory 时，模型问「以前的预算」会拿当前值
   // 当历史答；只有 search_memory_history 时，问当前值会翻出一堆失效版本。

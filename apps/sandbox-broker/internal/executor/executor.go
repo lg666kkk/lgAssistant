@@ -9,7 +9,12 @@ import (
 	"github.com/lg/personal-assistant/apps/sandbox-broker/internal/policy"
 )
 
-var ErrExecutorUnavailable = errors.New("sandbox executor is not configured")
+var (
+	ErrExecutorUnavailable = errors.New("sandbox executor is not configured")
+	ErrRunNotActive        = errors.New("sandbox run is not active")
+	ErrInvalidSkillInput   = errors.New("sandbox skill input is invalid")
+	ErrInvalidSkillOutput  = errors.New("sandbox skill output is invalid")
+)
 
 type Executor interface {
 	Execute(context.Context, domain.ExecuteRequest, policy.Profile) (domain.ExecuteResult, error)

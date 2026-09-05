@@ -11,6 +11,7 @@ export const UNKNOWN_SPAN_LABEL = "未登记环节";
 export const SPAN_LABELS: Record<string, string> = {
   // ── 请求主链路 ──
   "agent-chat": "对话主链路（一次聊天请求的根 trace）",
+  "execution.strategy": "执行策略（子目标、依赖与计划审核要求）",
   "knowledge-sync": "知识库同步",
   "knowledge-wiki-compile": "Wiki 页面编译请求",
 

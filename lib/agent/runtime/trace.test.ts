@@ -7,6 +7,15 @@ import {
 } from "./trace";
 
 describe("trace 冒烟测试", () => {
+  it("records the execution strategy independently from tool authorization", () => {
+    const trace = createTrace("strategy-1");
+    trace.steps.push({
+      type: "execution_strategy", index: 0, startedAt: 1, durationMs: 10,
+      executionMode: "plan", requiresPlanReview: false, reason: "跨阶段目标", subgoals: ["读取", "生成"],
+      subgoalCount: 2, source: "model", toolsSuppressed: false, planGenerationFailed: false,
+    });
+    expect(formatTraceTree(trace)).toContain("execution_strategy mode=plan review=false subgoals=2 source=model toolsSuppressed=false");
+  });
   it("createTrace 初始化一棵空树", () => {
     const t = createTrace("req-1");
     expect(t.requestId).toBe("req-1");

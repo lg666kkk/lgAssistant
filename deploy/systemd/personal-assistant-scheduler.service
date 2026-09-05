@@ -1,0 +1,9 @@
+[Unit]
+Description=Personal Assistant scheduler tick
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/personal-assistant/deploy/systemd/scheduler-tick.sh

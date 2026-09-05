@@ -1,6 +1,7 @@
 import { validateSchedule } from "@/lib/scheduler/cron";
 import { createScheduledJob } from "@/lib/scheduler/store";
 import type { ScheduledJobPayload, ScheduledJobType } from "@/lib/scheduler/types";
+import { normalizeScheduledJobPayload } from "@/lib/scheduler/validation";
 import {
   defaultToolRuntimePolicy,
   type ToolDefinition,
@@ -74,7 +75,7 @@ function parseInput(input: unknown): CreateScheduledJobInput {
     cron,
     runAt,
     timezone: typeof data.timezone === "string" ? data.timezone : "Asia/Shanghai",
-    payload: (data.payload ?? {}) as ScheduledJobPayload,
+    payload: normalizeScheduledJobPayload(type, data.payload ?? {}),
   };
 }
 
@@ -131,8 +132,20 @@ export const createScheduledJobTool: ToolDefinition = {
       },
       payload: {
         type: "object",
+        properties: {
+          name: { type: "string", description: "任务列表中显示的简短名称" },
+          modelId: { type: "string", description: "agent-task 使用的当前用户模型记录 ID；省略时使用用户默认模型" },
+          text: { type: "string", description: "reminder 的提醒内容" },
+          prompt: { type: "string", description: "agent-task 到点执行的任务内容" },
+          channels: {
+            type: "array",
+            items: { type: "string", enum: ["inapp", "telegram", "wecom"] },
+            description: "执行成功后推送到哪些已配置消息通道",
+          },
+        },
         description:
-          "任务参数。reminder 用 { text }；agent-task 用 { prompt }；可选 { channel:'webhook', webhookUrl } 接收结果。",
+          "任务参数。reminder 用 { text }；agent-task 用 { prompt }；结果默认保存在站内，可选 channels: ['inapp','telegram','wecom'] 追加外部推送。",
+        additionalProperties: true,
       },
     },
     required: ["type"],

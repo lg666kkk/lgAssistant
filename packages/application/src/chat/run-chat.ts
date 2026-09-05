@@ -8,11 +8,9 @@ import {
 } from "@/lib/agent/runtime";
 import { enqueueEvent, type PlanProgressEventData } from "@/lib/agent/runtime/events";
 import {
-  createPlanProposal,
   executePlan,
   normalizeExecutionPlan,
   normalizePlanExecutionControl,
-  shouldUsePlanAndExecute,
 } from "@/lib/agent/runtime/plan-execution";
 import {
   recallForPromptWithStats,
@@ -49,6 +47,7 @@ import {
   type AgentTrace,
   type MemoryRecallTraceStep,
   type UserProfileTraceStep,
+  type ExecutionStrategyTraceStep,
 } from "@/lib/agent/runtime/trace";
 import {
   retrievalObservationLabel,
@@ -62,6 +61,8 @@ import {
   extractLastAssistantText,
 } from "./message-utils";
 import { buildChatTraceInput } from "./observability";
+import { createToolObservationProjector } from "./tool-observations";
+import { prepareExecutionRoute } from "./execution-routing";
 import { parseChatRequest } from "./request";
 import type { ChatApplicationDependencies } from "./ports";
 
@@ -285,7 +286,9 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           }),
         });
         langfuseTrace.setTraceIO({ input: traceDisplayInput });
+        const projectToolObservations = createToolObservationProjector(langfuseTrace, requestId);
         const projectTraceObservations = (trace: AgentTrace) => {
+          projectToolObservations(trace);
           for (const step of trace.steps) {
             if (step.type === "retrieval" && step.phase === "graded") {
               const observationName = retrievalObservationName(step);
@@ -647,12 +650,35 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           onReasoning: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) =>
             enqueueEvent({ type: "reasoning", reasoning }, enqueueText),
         };
-        const requiresPlanReview = shouldUsePlanAndExecute(lastUser?.content ?? "");
-        if (!approvedPlan && requiresPlanReview) {
-          const proposal = await createPlanProposal(planInput).catch((error: any) => {
-            console.error("[plan] 规划失败，停止执行:", error.message);
-            return null;
+        const strategyStartedAt = Date.now();
+        const executionRoute = await prepareExecutionRoute({ ...planInput, approvedPlan: approvedPlan ?? undefined, signal: req.signal });
+        if (planInput.shouldStop()) {
+          closeStream();
+          return;
+        }
+        const strategyStep: ExecutionStrategyTraceStep = {
+          ...executionRoute.strategy,
+          type: "execution_strategy",
+          index: pendingTrace.steps.length,
+          startedAt: strategyStartedAt,
+          durationMs: Date.now() - strategyStartedAt,
+          subgoalCount: executionRoute.strategy.subgoals.length,
+          toolsSuppressed: executionRoute.strategy.source === "fallback",
+          planGenerationFailed: executionRoute.planGenerationFailed,
+        };
+        pendingTrace.steps.push(strategyStep);
+        try {
+          const strategyObservation = langfuseTrace.startObservation("execution.strategy", {
+            metadata: withSpanLabel("execution.strategy", { requestId }),
+            output: redactSensitiveValue(strategyStep),
+            level: strategyStep.toolsSuppressed || strategyStep.planGenerationFailed ? "WARNING" : "DEFAULT",
           });
+          strategyObservation.end();
+        } catch {
+          console.error("[langfuse] 执行策略上报失败，跳过");
+        }
+        if (!approvedPlan && (executionRoute.strategy.requiresPlanReview || executionRoute.planGenerationFailed)) {
+          const proposal = executionRoute.plan;
           if (proposal) {
             const proposalText = "我已生成执行计划。请审核、修改后确认执行。";
             enqueueEvent({ type: "plan_proposal", plan: proposal }, enqueueText);
@@ -685,7 +711,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
             closeStream();
             return;
           }
-          const failureText = "未能生成可审核的执行计划，因此没有执行任何工具。请调整任务后重试。";
+          const failureText = "未能生成有效的执行计划，因此没有执行任何工具。请调整任务后重试。";
           enqueueEvent({ type: "text", content: failureText }, enqueueText);
           langfuseTrace.update({
             output: { completed: false, status: "plan_generation_failed" },
@@ -704,12 +730,18 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           closeStream();
           return;
         }
-        const agentLoopResult = approvedPlan
-          ? await executePlan(planInput, approvedPlan, planExecution)
+        if (strategyStep.toolsSuppressed) {
+          enqueueEvent({ type: "text", content: "执行策略判断暂时不可用，本轮仅回答或澄清，不会调用工具。\n\n" }, enqueueText);
+        }
+        if (executionRoute.plan && !approvedPlan) {
+          enqueueEvent({ type: "plan_started", plan: executionRoute.plan }, enqueueText);
+        }
+        const agentLoopResult = executionRoute.plan
+          ? await executePlan(planInput, executionRoute.plan, planExecution)
           : await runAgentLoop(
           loopMessages,
-          tools,
-          toolRegistry,
+          executionRoute.tools,
+          executionRoute.toolRegistry,
           maxToolIterations,
           allToolSources,
           enqueueText,
@@ -725,6 +757,8 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           [],
           contextPlan,
         );
+        agentLoopResult.trace.steps.unshift(strategyStep);
+        agentLoopResult.trace.steps.forEach((step, index) => { step.index = index; });
         if (memoryRecallTraceStep) {
           prependMemoryRecallTraceStep(agentLoopResult.trace, memoryRecallTraceStep);
         }

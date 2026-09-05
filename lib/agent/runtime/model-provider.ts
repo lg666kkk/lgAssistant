@@ -443,10 +443,14 @@ export async function generateTextWithProvider(input: {
   maxOutputTokens: number;
   telemetryFunctionId?: string;
   telemetryMetadata?: ModelTelemetryMetadata;
+  abortSignal?: AbortSignal;
+  maxRetries?: number;
 }) {
   const provider = await createProvider(input.model, input.telemetryMetadata);
   const result = await generateText({
     model: provider.model,
+    abortSignal: input.abortSignal,
+    maxRetries: input.maxRetries,
     maxOutputTokens: input.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
     system: input.system,

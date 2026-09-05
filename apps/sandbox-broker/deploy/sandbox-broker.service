@@ -1,0 +1,29 @@
+[Unit]
+Description=Personal Assistant Sandbox Broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sandbox-broker
+Group=sandbox-broker
+EnvironmentFile=/etc/personal-assistant/sandbox-broker.env
+ExecStart=/opt/personal-assistant/bin/sandbox-broker
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

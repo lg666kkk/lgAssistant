@@ -231,6 +231,9 @@ export function ChatThread({
                               <span className="truncate font-mono text-[12px] text-slate-300">{toolCall.name}</span>
                               <span className={`shrink-0 text-[10px] ${statusClass}`}>{statusLabel}</span>
                             </div>
+                            {toolCall.name === "view_skill" && toolCall.ok && (
+                              <StandardSkillCard content={toolCall.content} />
+                            )}
                             {toolStatus === "awaiting_user_input" && (
                               <div className="ml-3.5 mt-1.5 space-y-1.5 rounded-md bg-slate-800/30 px-3 py-2.5">
                                 <div className="text-slate-400">
@@ -329,5 +332,32 @@ export function ChatThread({
         )}
       </div>
     </div>
+  );
+}
+
+function StandardSkillCard({ content }: { content: string }) {
+  let skill: { name?: string; description?: string; skillMd?: string; supportFiles?: Record<string, string> };
+  try {
+    skill = JSON.parse(content) as typeof skill;
+  } catch {
+    return null;
+  }
+  if (!skill.skillMd) return null;
+  const fileNames = Object.keys(skill.supportFiles ?? {});
+  return (
+    <details className="ml-3.5 mt-2 overflow-hidden rounded-lg border border-cyan-900/60 bg-slate-950/70" open>
+      <summary className="cursor-pointer list-none px-3 py-2.5 text-xs text-cyan-200">
+        <span className="font-semibold">Skill：{skill.name ?? "未命名"}</span>
+        {skill.description && <span className="ml-2 text-slate-400">{skill.description}</span>}
+      </summary>
+      <div className="border-t border-cyan-900/40 px-3 py-3">
+        <MessageMarkdown content={skill.skillMd} />
+        {fileNames.length > 0 && (
+          <div className="mt-3 border-t border-slate-800 pt-2 text-[11px] text-slate-500">
+            附属文件：{fileNames.join("、")}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

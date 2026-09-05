@@ -130,6 +130,10 @@ data:{"type":"done"}\n\n
 
 ## 踩坑记录
 
+自动计划使用 `plan_started` 携带完整执行计划，前端同时初始化 `planSteps`，
+直接展示进度并保留恢复所需的计划数据。需要用户先审核时仍使用
+`plan_proposal`；后续阶段状态统一通过 `plan_progress` 更新。
+
 - **`buffer += evt.content` 混淆缓冲区与正文**：`buffer` 是缓存"半行网络数据"的，正文要拼到 `last().content`。两者混用会导致正文丢失 + buffer 污染。
 - **error case 用赋值而非 throw**：`case "error": last().error = ...` 不会中断流，且 Message 类型无 `error` 字段。必须 `throw new Error(...)` 才能让外层 catch 接管。
 - **`EventSource` 只支持 GET 的误解**：POST 完全可以返回 SSE，只是无法使用浏览器原生 `EventSource` 客户端。不要把"SSE 格式"和"EventSource API"混为一谈。

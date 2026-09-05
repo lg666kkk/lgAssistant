@@ -265,6 +265,17 @@ export class ChatSession {
           case "plan_proposal":
             last().plan = evt.plan;
             break;
+          case "plan_started":
+            last().plan = evt.plan;
+            last().planSteps = evt.plan.steps.map((step, stepIndex) => ({
+              planId: evt.plan.id,
+              stepId: step.id,
+              goal: step.goal,
+              status: "pending",
+              stepIndex,
+              stepCount: evt.plan.steps.length,
+            }));
+            break;
           case "error":
             throw new Error(evt.message || evt.error || "流式响应中断");
           case "done":

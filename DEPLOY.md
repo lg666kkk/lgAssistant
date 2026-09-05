@@ -123,13 +123,21 @@ curl http://127.0.0.1:3000
 
 ## 定时任务
 
-应用会保存定时任务，但生产环境需要外部每分钟调用一次 tick。使用 `crontab -e`
-新增下面的任务，并将 `YOUR_CRON_SECRET` 替换为 `.env.production` 中的
-`CRON_SECRET`：
+应用会保存定时任务，但生产环境需要外部每分钟调用一次 tick。VPS 使用仓库中的
+systemd service/timer。辅助脚本只读取受保护 `.env.production` 中的
+`CRON_SECRET`，密钥不写入 crontab、unit 或进程命令行：
 
-```cron
-* * * * * /usr/bin/curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" http://127.0.0.1:3000/api/cron/tick >/dev/null
+```bash
+sudo cp deploy/systemd/personal-assistant-scheduler.* /etc/systemd/system/
+chmod 755 deploy/systemd/scheduler-tick.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now personal-assistant-scheduler.timer
+systemctl list-timers personal-assistant-scheduler.timer
+journalctl -u personal-assistant-scheduler.service -n 50 --no-pager
 ```
+
+调度器使用 Supabase 原子领取到期任务。首次启用前必须执行
+`docs/schemas/migrations/20260904-reliable-scheduler-channels.sql`。
 
 ## 域名与 HTTPS
 

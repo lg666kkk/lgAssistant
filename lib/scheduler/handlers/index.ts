@@ -1,6 +1,6 @@
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { runAgentLoop } from "@/lib/agent/runtime";
-import { defaultChatModel } from "@/lib/agent/models";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import {
   formatDailyLeetCodePractice,
   getDailyLeetCodePractice,
@@ -12,30 +12,8 @@ import type {
   ScheduledJobType,
 } from "@/lib/scheduler/types";
 
-async function postWebhook(job: ScheduledJob, text: string): Promise<void> {
-  if (job.payload.channel !== "webhook" || typeof job.payload.webhookUrl !== "string") {
-    return;
-  }
-
-  const response = await fetch(job.payload.webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jobId: job.id,
-      type: job.type,
-      userId: job.userId,
-      text,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Webhook 推送失败: ${response.status}`);
-  }
-}
-
 const reminder: ScheduledJobHandler = async (job) => {
   const text = typeof job.payload.text === "string" ? job.payload.text : "提醒时间到了";
-  await postWebhook(job, text);
   return { text };
 };
 
@@ -45,7 +23,6 @@ const leetcodeDaily: ScheduledJobHandler = async (job) => {
     userId: job.userId,
   });
   const text = formatDailyLeetCodePractice(practice);
-  await postWebhook(job, text);
   return {
     text,
     metadata: {
@@ -77,6 +54,13 @@ const agentTask: ScheduledJobHandler = async (job) => {
 
   const toolRegistry = createBuiltinToolRegistry();
   const tools = toolRegistry.listForModel();
+  const requestedModelId = typeof job.payload.modelId === "string" && job.payload.modelId.trim()
+    ? job.payload.modelId.trim()
+    : null;
+  const scheduledModel = await resolveUserLlmModel(job.userId, requestedModelId);
+  if (!scheduledModel.supportsTools) {
+    throw new Error("定时 Agent 任务只能使用支持工具调用的模型");
+  }
   const result = await runAgentLoop(
     [{ role: "user", content: job.payload.prompt }],
     tools,
@@ -89,14 +73,20 @@ const agentTask: ScheduledJobHandler = async (job) => {
     undefined,
     `你正在执行一个定时任务。当前时间：${new Date().toISOString()}。`,
     () => false,
-    defaultChatModel,
+    scheduledModel.id,
     undefined,
     job.userId,
   );
 
   const text = extractLastAssistantText(result.loopMessages) || "Agent 定时任务已执行完成。";
-  await postWebhook(job, text);
-  return { text, metadata: { stopReason: result.stopReason } };
+  return {
+    text,
+    metadata: {
+      stopReason: result.stopReason,
+      modelId: scheduledModel.id,
+      modelName: scheduledModel.displayName,
+    },
+  };
 };
 
 export const scheduledJobHandlers: Record<ScheduledJobType, ScheduledJobHandler> = {

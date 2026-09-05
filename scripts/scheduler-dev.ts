@@ -17,7 +17,11 @@ async function callTick() {
   };
   if (secret) headers["x-cron-secret"] = secret;
 
-  await fetch(url, { headers });
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`tick 返回 ${response.status}: ${body.slice(0, 500)}`);
+  }
 }
 
 void callTick().catch((error) => console.error("[scheduler-dev] tick failed:", error));

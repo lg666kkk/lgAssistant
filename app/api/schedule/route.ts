@@ -8,6 +8,10 @@ import {
   updateScheduledJob,
 } from "@/lib/scheduler/store";
 import type { ScheduledJobType } from "@/lib/scheduler/types";
+import { listRecentDeliveries } from "@/lib/scheduler/deliveries";
+import { normalizeScheduledJobPayload } from "@/lib/scheduler/validation";
+import { resolveUserLlmModel } from "@/lib/llm/config-service";
+import type { ScheduledJobPayload } from "@/lib/scheduler/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,13 +35,32 @@ function hasOwn(object: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+async function validateTaskModel(
+  userId: string,
+  type: ScheduledJobType,
+  payload: ScheduledJobPayload,
+) {
+  if (type !== "agent-task") return;
+  const modelId = typeof payload.modelId === "string" && payload.modelId.trim()
+    ? payload.modelId.trim()
+    : null;
+  const model = await resolveUserLlmModel(userId, modelId);
+  if (!model.supportsTools) {
+    throw new Error("定时 Agent 任务只能使用支持工具调用的模型");
+  }
+  payload.modelId = model.id;
+}
+
 export async function GET(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
 
   try {
-    const jobs = await listScheduledJobs(user.id);
-    return Response.json({ ok: true, jobs });
+    const [jobs, deliveries] = await Promise.all([
+      listScheduledJobs(user.id),
+      listRecentDeliveries(user.id),
+    ]);
+    return Response.json({ ok: true, jobs, deliveries });
   } catch (error) {
     return Response.json(
       {
@@ -68,9 +91,12 @@ export async function POST(req: Request) {
   const timezone = typeof body.timezone === "string" ? body.timezone : "Asia/Shanghai";
   const cron = typeof body.cron === "string" && body.cron.trim() ? body.cron.trim() : null;
   const runAt = toRunAt(body.runAt);
+  const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
 
   try {
     const nextRunAt = validateSchedule({ cron, runAt, timezone });
+    const payload = normalizeScheduledJobPayload(type, body.payload ?? {});
+    if (enabled) await validateTaskModel(user.id, type, payload);
     const job = await createScheduledJob({
       userId: user.id,
       type,
@@ -78,7 +104,8 @@ export async function POST(req: Request) {
       runAt: cron ? null : runAt,
       nextRunAt,
       timezone,
-      payload: body.payload ?? {},
+      payload,
+      enabled,
     });
 
     return Response.json({ ok: true, job });
@@ -148,7 +175,7 @@ export async function PATCH(req: Request) {
 
   const timezone = typeof body.timezone === "string" ? body.timezone : existing.timezone;
   const enabled = typeof body.enabled === "boolean" ? body.enabled : existing.enabled;
-  const payload =
+  const rawPayload =
     body.payload && typeof body.payload === "object" && !Array.isArray(body.payload)
       ? body.payload
       : existing.payload;
@@ -168,6 +195,8 @@ export async function PATCH(req: Request) {
     const nextRunAt = enabled
       ? validateSchedule({ cron, runAt, timezone })
       : existing.nextRunAt;
+    const payload = normalizeScheduledJobPayload(type, rawPayload);
+    if (enabled) await validateTaskModel(user.id, type, payload);
     const job = await updateScheduledJob({
       id: existing.id,
       userId: user.id,

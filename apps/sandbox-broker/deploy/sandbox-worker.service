@@ -1,0 +1,32 @@
+[Unit]
+Description=Personal Assistant Sandbox Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sandbox-worker
+Group=sandbox-worker
+EnvironmentFile=/etc/personal-assistant/sandbox-worker.env
+Environment=HOME=/var/lib/personal-assistant/sandbox/worker-home
+Environment=XDG_DATA_HOME=/var/lib/personal-assistant/sandbox/worker-home/.local/share
+Environment=XDG_CONFIG_HOME=/var/lib/personal-assistant/sandbox/worker-home/.config
+Environment=XDG_RUNTIME_DIR=/run/personal-assistant-sandbox
+ExecStart=/opt/personal-assistant/bin/sandbox-worker
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RuntimeDirectory=personal-assistant-sandbox
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/personal-assistant/sandbox
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -34,12 +34,17 @@
 | [agent-learning-plan.md](./agent/learning/agent-learning-plan.md) | Agent 系统学习路线 |
 | [agent-tool-calling-learning-roadmap.md](./agent/learning/agent-tool-calling-learning-roadmap.md) | Tool Use、Registry、Router 与 Agent Loop 学习路线 |
 | [frontend-to-ai-infra-roadmap.md](./agent/learning/frontend-to-ai-infra-roadmap.md) | 前端转型 Agent Infra / AI Platform 的岗位地图与 24 周实践路线 |
+| [go-sandbox-zero-to-one-roadmap.md](./agent/learning/go-sandbox-zero-to-one-roadmap.md) | 从零学习 Go，并以 Sandbox Broker 为主线完成容器隔离、持久 Worker、Skill 和 Coding Agent 的 16 周路线 |
+| [sandbox remote deployment](../apps/sandbox-broker/docs/remote-deployment.md) | Sandbox Broker 与 rootless Podman Worker 的远端部署边界、验收和回滚说明 |
+| [sandbox Skill management](../apps/sandbox-broker/docs/skill-management.md) | Skill 可编辑配置、不可变版本、Bundle 约定、Schema 校验与 Sandbox Profile 关联 |
+| [20260905-skill-list-detail.sql](./schemas/migrations/20260905-skill-list-detail.sql) | Skill 宫格列表、详情视图所需的软删除字段与管理员删除 RPC |
 
 ## Agent Runtime
 
 | 文档 | 用途 |
 |---|---|
 | [structured-event-protocol.md](./agent/runtime/structured-event-protocol.md) | Agent 到 UI 的结构化事件协议 |
+| [execution-strategy.md](./agent/runtime/execution-strategy.md) | 结构化执行策略、自动计划、计划审核与工具授权分离 |
 | [model-stream-parsing.md](./agent/runtime/model-stream-parsing.md) | 模型流式输出的四层解析链路 |
 
 ## Agent 工具

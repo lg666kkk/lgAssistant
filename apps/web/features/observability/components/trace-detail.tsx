@@ -205,6 +205,7 @@ type UserProfileStep = {
 };
 
 type Step =
+  | ExecutionStrategyStep
   | ModelStep
   | ToolStep
   | ContextCompactionStep
@@ -214,6 +215,21 @@ type Step =
   | MemoryRecallStep
   | MemoryConsolidationStep
   | AnswerValidationStep;
+
+type ExecutionStrategyStep = {
+  type: "execution_strategy";
+  index: number;
+  durationMs?: number;
+  executionMode: "direct" | "plan";
+  requiresPlanReview: boolean;
+  reason: string;
+  subgoals: string[];
+  subgoalCount: number;
+  source: string;
+  fallbackReason?: string;
+  toolsSuppressed: boolean;
+  planGenerationFailed: boolean;
+};
 
 type Trace = {
   id: string;
@@ -894,6 +910,8 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                       <span className="font-medium text-amber-300">
                         上下文压缩
                       </span>
+                    ) : step.type === "execution_strategy" ? (
+                      <span className="font-medium text-indigo-300">执行策略 · {step.executionMode === "plan" ? "分阶段计划" : "普通循环"}</span>
                     ) : step.type === "plan" ? (
                       <span className="font-medium text-indigo-300">
                         执行计划 · {step.phase}
@@ -1068,6 +1086,19 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                         body={step.summary}
                         meta={`${step.summaryChars} 字符`}
                       />
+                    </div>
+                  ) : step.type === "execution_strategy" ? (
+                    <div className="mt-2 space-y-2 text-xs text-slate-400">
+                      <div className="flex flex-wrap gap-3">
+                        <span>来源 {step.source}</span>
+                        <span>子目标 {step.subgoalCount}</span>
+                        <span>计划审核 {step.requiresPlanReview ? "等待用户确认" : "不要求"}</span>
+                        <span>具体操作仍按工具权限校验</span>
+                      </div>
+                      <p>{step.reason}</p>
+                      {step.subgoals.length > 0 && <ul className="list-inside list-disc">{step.subgoals.map((goal, index) => <li key={index}>{goal}</li>)}</ul>}
+                      {step.toolsSuppressed && <p className="text-amber-300">分类降级：本轮不调用工具（{step.fallbackReason}）</p>}
+                      {step.planGenerationFailed && <p className="text-amber-300">计划生成失败，未执行工具</p>}
                     </div>
                   ) : step.type === "plan" ? (
                     <div className="mt-2 text-xs">

@@ -13,6 +13,7 @@ import type { ContextPlan } from "@/lib/agent/context/types";
 import type { MemoryConsolidationOutcome } from "@/lib/agent/memory/memory-flow";
 import type { MemoryRerankTrace } from "@/lib/agent/memory/memory-reranker";
 import type { EmbeddingUsage } from "@/lib/knowledge/embedding";
+import type { ExecutionStrategy } from "./execution-strategy";
 
 export type TraceStepBase = {
   index: number; // model/tool 共享的递增序号，用来还原真实时间线
@@ -174,6 +175,7 @@ export type UserProfileTraceStep = TraceStepBase & {
 };
 
 export type TraceStep =
+  | ExecutionStrategyTraceStep
   | ModelTraceStep
   | ToolTraceStep
   | ContextCompactionTraceStep
@@ -183,6 +185,13 @@ export type TraceStep =
   | MemoryRecallTraceStep
   | UserProfileTraceStep
   | AnswerValidationTraceStep; // 判别联合
+
+export type ExecutionStrategyTraceStep = TraceStepBase & ExecutionStrategy & {
+  type: "execution_strategy";
+  subgoalCount: number;
+  toolsSuppressed: boolean;
+  planGenerationFailed: boolean;
+};
 
 export type AgentTrace = {
   requestId: string;
@@ -279,6 +288,8 @@ export function formatTraceTree(trace: AgentTrace): string {
     } else if (step.type === "context_compaction") {
       const method = step.method ? ` method=${step.method}` : "";
       return `${branch} #${step.index} compact (${dur}) ${step.beforeTokens}→${step.afterTokens} tok middle=${step.middleMessageCount}${method}`;
+    } else if (step.type === "execution_strategy") {
+      return `${branch} #${step.index} execution_strategy mode=${step.executionMode} review=${step.requiresPlanReview} subgoals=${step.subgoalCount} source=${step.source} toolsSuppressed=${step.toolsSuppressed}`;
     } else if (step.type === "plan") {
       return `${branch} #${step.index} plan ${step.phase} ${step.status} goal="${step.goal.slice(0, 100)}"`;
     } else if (step.type === "retrieval") {

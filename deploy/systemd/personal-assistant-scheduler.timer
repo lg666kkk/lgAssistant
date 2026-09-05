@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Personal Assistant scheduler every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+RandomizedDelaySec=5
+Unit=personal-assistant-scheduler.service
+
+[Install]
+WantedBy=timers.target

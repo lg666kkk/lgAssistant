@@ -25,6 +25,7 @@ import { UserProfileCenter } from "@web/features/memory/components/user-profile-
 import { KnowledgeCenter } from "@web/features/knowledge/components/knowledge-center";
 import { TraceCenter } from "@web/features/observability/components/trace-center";
 import { ScheduleCenter } from "@web/features/schedule/components/schedule-center";
+import { SkillCenter } from "@web/features/skills/components/skill-center";
 import type {
   ChatModelId,
   ExecutionPlanData,
@@ -148,7 +149,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
-    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile") return;
+    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile") return;
     setActiveCapability("connections");
     setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
@@ -631,6 +632,8 @@ export default function Home() {
           <UsageCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "knowledge" ? (
           <KnowledgeCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "skills" ? (
+          <SkillCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "schedule" ? (
           <ScheduleCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "traces" ? (

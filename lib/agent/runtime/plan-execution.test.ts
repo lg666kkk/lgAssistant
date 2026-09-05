@@ -1,19 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  createFallbackPlan,
   normalizeExecutionPlan,
   normalizePlanExecutionControl,
   parsePlan,
   parsePlanWithDiagnostics,
-  shouldUsePlanAndExecute,
 } from "./plan-execution";
 
 describe("Plan-and-Execute contract", () => {
-  it("只对多步骤任务启用规划", () => {
-    expect(shouldUsePlanAndExecute("现在几点" )).toBe(false);
-    expect(shouldUsePlanAndExecute("请检索本周会议记录，然后整理待办并安排下周提醒" )).toBe(true);
-  });
-
   it("解析规划时丢弃不存在的工具并保留可验证步骤", () => {
     const plan = parsePlan(`\n\`\`\`json
       {"id":"plan-1","objective":"准备会议","steps":[
@@ -112,12 +105,4 @@ describe("Plan-and-Execute contract", () => {
     });
   });
 
-  it("在模型规划不可用时提供可编辑的保守模板计划", () => {
-    const plan = createFallbackPlan("比较资料后给出投资分析", new Set(["web_search", "ask_user"]));
-
-    expect(plan.steps).toHaveLength(3);
-    expect(plan.steps[0].allowedTools).toEqual(["web_search"]);
-    expect(plan.steps[1].allowedTools).toEqual([]);
-    expect(plan.steps[2].allowedTools).toEqual(["ask_user"]);
-  });
 });
