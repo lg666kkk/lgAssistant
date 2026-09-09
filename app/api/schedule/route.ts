@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth/server";
-import { validateSchedule } from "@/lib/scheduler/cron";
+import { resolveUpdatedNextRunAt, validateSchedule } from "@/lib/scheduler/cron";
 import {
   createScheduledJob,
   deleteScheduledJob,
@@ -192,9 +192,14 @@ export async function PATCH(req: Request) {
   }
 
   try {
-    const nextRunAt = enabled
-      ? validateSchedule({ cron, runAt, timezone })
-      : existing.nextRunAt;
+    const nextRunAt = resolveUpdatedNextRunAt({
+      cron,
+      runAt,
+      timezone,
+      enabled,
+      reschedule: body.reschedule === true,
+      existingNextRunAt: existing.nextRunAt,
+    });
     const payload = normalizeScheduledJobPayload(type, rawPayload);
     if (enabled) await validateTaskModel(user.id, type, payload);
     const job = await updateScheduledJob({

@@ -577,13 +577,13 @@ export function ScheduleCenter() {
       const response = await authFetch("/api/schedule", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedJob.id }),
+        body: JSON.stringify({ id: selectedJob.id, reschedule: true }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "重新排期失败");
       setJobs((current) => current.map((job) => job.id === data.job.id ? data.job : job));
       setForm(toForm(data.job));
-      setNotice("任务已重新排期");
+      setNotice(selectedJob.enabled ? "任务已重新排期" : "任务已重新排期，启用后执行");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "重新排期失败");
     } finally {

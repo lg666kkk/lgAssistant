@@ -35,3 +35,18 @@ export function validateSchedule(input: {
 
   throw new Error("必须提供 cron 或 runAt");
 }
+
+export function resolveUpdatedNextRunAt(input: {
+  cron?: string | null;
+  runAt?: number | null;
+  timezone?: string;
+  enabled: boolean;
+  reschedule: boolean;
+  existingNextRunAt: number;
+}): number {
+  if (!input.enabled && !input.reschedule) {
+    return input.existingNextRunAt;
+  }
+
+  return validateSchedule(input);
+}
