@@ -48,7 +48,6 @@
 │  ├─ scheduler/               定时任务、领取执行和通知投递
 │  ├─ llm|search|langfuse/     用户级外部服务配置与连接适配
 │  └─ platform/                Supabase、Redis 和公共平台能力
-├─ local-skills/                本地技能定义、Schema、脚本和参考资料
 ├─ scripts/                     Worker、清理任务、评估和运维脚本
 ├─ docs/                        架构、数据库、Agent 与 RAG 专题文档
 ├─ deploy/                      Nginx 与 systemd 部署配置
