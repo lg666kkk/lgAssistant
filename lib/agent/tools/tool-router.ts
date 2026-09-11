@@ -148,7 +148,8 @@ export async function executeToolCall(
 
   try {
     const result = await withTimeout(
-      tool.execute(toolCall.input, {
+      (signal) => tool.execute(toolCall.input, {
+        signal,
         userId: options.userId,
         scopeId: options.scopeId,
         requestId: options.requestId,
@@ -156,6 +157,7 @@ export async function executeToolCall(
       }),
       tool.runtime.timeoutSeconds,
       tool.name,
+      options.signal,
     );
     const durationMs = Date.now() - startedAt;
     return {
@@ -184,28 +186,37 @@ export async function executeToolCall(
         durationMs,
         runtime: tool.runtime,
         costPerUse: tool.runtime.costPerUse,
-        timedOut: (e as Error).message.includes("timed out"),
+        timedOut: message.includes("timed out"),
       },
     };
   }
 }
 
 async function withTimeout<T>(
-  promise: Promise<T>,
+  execute: (signal: AbortSignal) => Promise<T>,
   timeoutSeconds: number,
   toolName: string,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
+  parentSignal?.throwIfAborted();
+  const controller = new AbortController();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
+  const abort = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  let rejectOnAbort: (() => void) | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectOnAbort = () => reject(controller.signal.reason);
+    controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
     timeoutId = setTimeout(() => {
-      reject(new Error(`Tool ${toolName} timed out after ${timeoutSeconds}s`));
+      controller.abort(new Error(`Tool ${toolName} timed out after ${timeoutSeconds}s`));
     }, timeoutSeconds * 1000);
   });
 
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([execute(controller.signal), timeoutPromise]);
   } finally {
+    parentSignal?.removeEventListener("abort", abort);
+    if (rejectOnAbort) controller.signal.removeEventListener("abort", rejectOnAbort);
     if (timeoutId) {
       clearTimeout(timeoutId);
     }

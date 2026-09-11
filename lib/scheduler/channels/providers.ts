@@ -23,10 +23,12 @@ async function responseJson(response: Response) {
 export async function sendNotification(
   channel: ResolvedNotificationChannel,
   text: string,
+  beforeSend?: () => Promise<void>,
 ): Promise<{ messageId?: string }> {
   if (channel.provider === "telegram" && channel.telegram) {
     let messageId: string | undefined;
     for (const part of chunks(text, MAX_TELEGRAM_TEXT)) {
+      await beforeSend?.();
       const response = await fetch(
         `https://api.telegram.org/bot${channel.telegram.botToken}/sendMessage`,
         {
@@ -47,6 +49,7 @@ export async function sendNotification(
 
   if (channel.provider === "wecom" && channel.wecom) {
     for (const part of chunks(text, MAX_WECOM_TEXT)) {
+      await beforeSend?.();
       const response = await fetch(channel.wecom.webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

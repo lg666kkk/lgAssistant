@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -147,6 +149,7 @@ function Stat({
   sub?: string;
   tone: string;
 }) {
+  const { user } = useAuth();
   return (
     <div className="min-w-0 py-2">
       <div className="flex items-center gap-2 text-sm text-slate-400">
@@ -155,8 +158,8 @@ function Stat({
         </span>
         <span>{label}</span>
       </div>
-      <div className="mt-3 text-2xl font-semibold text-slate-100">{value}</div>
-      {sub && <div className="mt-1 text-xs text-slate-600">{sub}</div>}
+      <div className="mt-3 text-2xl font-semibold text-slate-100">{user ? value : "—"}</div>
+      {user && sub && <div className="mt-1 text-xs text-slate-600">{sub}</div>}
     </div>
   );
 }
@@ -287,8 +290,17 @@ function ModelUsageRow({ usage }: { usage: UsageSummary }) {
   );
 }
 
+const EMPTY_USAGE: UsageResponse = {
+  total: { model: "", modelName: "", category: "all", pricingSource: "unknown", pricingConfigured: false,
+    unpricedTokens: 0, requestCount: 0, modelCallCount: 0, cacheHitCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheCreationTokens: 0, cacheHitRate: 0, estimatedCostCny: 0, cacheSavedCostCny: 0 },
+  models: [], availableModels: [], timeline: [], recentRequests: [],
+  analytics: { range: "24h", observedMinutes: 0, averageRpm: 0, averageTpm: 0 },
+  pagination: { page: 1, pageSize: 10, totalItems: 0, hasPreviousPage: false, hasNextPage: false },
+};
+
 export function UsageCenter() {
-  const [data, setData] = useState<UsageResponse | null>(null);
+  const { user } = useAuth();
+  const [data, setData] = useState<UsageResponse | null>(user ? null : EMPTY_USAGE);
   const [loading, setLoading] = useState(true);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -307,6 +319,7 @@ export function UsageCenter() {
   const selectedModelKey = selectedModels.join(",");
 
   const load = async (targetPage = page) => {
+    if (!user) { setLoading(false); return; }
     if (loadedRef.current) setRequestsLoading(true);
     else setLoading(true);
     setError(null);
@@ -493,7 +506,7 @@ export function UsageCenter() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-medium text-slate-200">消耗分布</h3>
-                    <span className="text-xs text-slate-500">总计 {formatChartValue(chartTotal, chartMetric)}</span>
+                    <span className="text-xs text-slate-500">总计 {user ? formatChartValue(chartTotal, chartMetric) : "—"}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-600">按模型堆叠展示当前时间范围内的用量变化。</p>
                 </div>
@@ -504,16 +517,16 @@ export function UsageCenter() {
                       ["tokens", "Token"],
                       ["calls", "调用"],
                     ] as const).map(([value, label]) => (
-                      <button key={value} type="button" onClick={() => setChartMetric(value)} className={`h-7 rounded px-2.5 text-xs ${chartMetric === value ? "bg-slate-700 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>{label}</button>
+                      <button data-guest-browse key={value} type="button" onClick={() => setChartMetric(value)} className={`h-7 rounded px-2.5 text-xs ${chartMetric === value ? "bg-slate-700 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>{label}</button>
                     ))}
                   </div>
                   <div className="inline-flex rounded-md border border-slate-700 p-0.5">
-                    <button type="button" onClick={() => setChartMode("bar")} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${chartMode === "bar" ? "bg-slate-700 text-slate-100" : "text-slate-500"}`}><BarChart3 className="h-3.5 w-3.5" />柱状</button>
-                    <button type="button" onClick={() => setChartMode("area")} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${chartMode === "area" ? "bg-slate-700 text-slate-100" : "text-slate-500"}`}><AreaChartIcon className="h-3.5 w-3.5" />面积</button>
+                    <button data-guest-browse type="button" onClick={() => setChartMode("bar")} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${chartMode === "bar" ? "bg-slate-700 text-slate-100" : "text-slate-500"}`}><BarChart3 className="h-3.5 w-3.5" />柱状</button>
+                    <button data-guest-browse type="button" onClick={() => setChartMode("area")} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${chartMode === "area" ? "bg-slate-700 text-slate-100" : "text-slate-500"}`}><AreaChartIcon className="h-3.5 w-3.5" />面积</button>
                   </div>
                 </div>
               </div>
-              <UsageChart data={data} metric={chartMetric} mode={chartMode} />
+              {user ? <UsageChart data={data} metric={chartMetric} mode={chartMode} /> : <div className="flex h-64 items-center justify-center rounded-md border border-dashed border-slate-800 text-sm text-slate-500">登录后查看用量趋势</div>}
               <div className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-500">
                 {data.availableModels
                   .filter((model) => data.timeline.some((point) => point.values[model.id]))
@@ -529,12 +542,12 @@ export function UsageCenter() {
             <section className="py-5">
               <h3 className="mb-3 text-sm font-medium text-slate-200">按模型拆分</h3>
               <div className="divide-y divide-slate-800 overflow-hidden rounded-md border border-slate-800 bg-slate-900/20">
-                {data.models.length > 0 ? data.models.map((model) => <ModelUsageRow key={model.model} usage={model} />) : <div className="px-4 py-10 text-center text-sm text-slate-500">还没有可统计的模型用量</div>}
+                {data.models.length > 0 ? data.models.map((model) => <ModelUsageRow key={model.model} usage={model} />) : <div className="px-4 py-10 text-center text-sm text-slate-500">{user ? "还没有可统计的模型用量" : "登录后查看模型用量"}</div>}
               </div>
             </section>
 
             <section className="border-t border-slate-800 py-5">
-              <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium text-slate-200">最近请求</h3><span className="text-xs text-slate-600">共 {data.pagination.totalItems} 条</span></div>
+              <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium text-slate-200">最近请求</h3><span className="text-xs text-slate-600">{user ? `共 ${data.pagination.totalItems} 条` : "登录后查看"}</span></div>
               <div className="overflow-x-auto rounded-md border border-slate-800">
                 <table className="w-full min-w-[760px] text-left text-xs">
                   <thead className="bg-slate-900 text-slate-500"><tr><th className="px-3 py-2 font-medium">时间</th><th className="px-3 py-2 font-medium">会话</th><th className="px-3 py-2 font-medium">主要模型</th><th className="px-3 py-2 text-right font-medium">Tokens</th><th className="px-3 py-2 text-right font-medium">费用</th></tr></thead>
@@ -548,7 +561,7 @@ export function UsageCenter() {
                         <td className={`px-3 py-2 text-right ${item.usage.unpricedTokens > 0 ? "text-amber-500" : "text-slate-300"}`}>{item.usage.unpricedTokens > 0 ? "未完整计价" : formatCny(item.usage.estimatedCostCny)}</td>
                       </tr>
                     ))}
-                    {recent.length === 0 && <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-500">还没有带 usage 的请求</td></tr>}
+                    {recent.length === 0 && <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-500">{user ? "还没有带 usage 的请求" : "登录后查看请求记录"}</td></tr>}
                   </tbody>
                 </table>
                 <div className="flex items-center justify-between border-t border-slate-800 bg-slate-900/30 px-3 py-2 text-xs text-slate-500">

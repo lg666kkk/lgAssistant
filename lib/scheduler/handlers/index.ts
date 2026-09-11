@@ -78,7 +78,10 @@ const agentTask: ScheduledJobHandler = async (job) => {
     job.userId,
   );
 
-  const text = extractLastAssistantText(result.loopMessages) || "Agent 定时任务已执行完成。";
+  const text = extractLastAssistantText(result.loopMessages).trim();
+  if (!result.completed || result.stopReason !== "completed" || !text) {
+    throw new Error(`Agent 定时任务未完成：${result.stopReason}`);
+  }
   return {
     text,
     metadata: {

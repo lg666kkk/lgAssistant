@@ -83,6 +83,25 @@ function retrievalPlan(): RetrievalPlan {
 describe("Plan-and-Execute runtime integration", () => {
   beforeEach(() => runAgentLoopMock.mockReset());
 
+  it("preserves a failed step as a failed plan awaiting only a final explanation", async () => {
+    runAgentLoopMock.mockResolvedValue({
+      loopMessages: [{ role: "assistant", content: "部分结果" }], completed: false,
+      stopReason: "max_iterations", metrics: metrics(), trace: createTrace("failed-step"),
+    });
+    const result = await executePlan({
+      messages: [{ role: "user", content: "执行计划" }], tools: [], toolRegistry: new ToolRegistry(),
+      maxToolIterations: 1, allToolSources: [], requestId: "failure",
+    }, {
+      id: "plan", objective: "执行计划", steps: [
+        { id: "one", goal: "读取", allowedTools: [], successCriteria: ["读取完成"] },
+        { id: "two", goal: "写入", allowedTools: [], successCriteria: ["写入完成"] },
+      ],
+    });
+    expect(result.trace).toMatchObject({ completed: false, stopReason: "error" });
+    expect(result.stopReason).toBe("error");
+    expect(runAgentLoopMock).toHaveBeenCalledOnce();
+  });
+
   it("propagates pending tool confirmation without continuing the plan", async () => {
     const pendingTrace = createTrace("todo-step");
     pendingTrace.steps.push({

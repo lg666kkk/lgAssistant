@@ -230,6 +230,15 @@ export function createTrace(requestId: string, sessionId?: string): AgentTrace {
   };
 }
 
+export function finalizeAnswerTrace(trace: AgentTrace, finishReason?: string): void {
+  if (finishReason === "max_tokens" && trace.completed) {
+    trace.completed = false;
+    trace.stopReason = "max_tokens";
+  }
+  trace.endedAt = Date.now();
+  trace.totalDurationMs = trace.endedAt - trace.startedAt;
+}
+
 export function prependMemoryRecallTraceStep(
   trace: AgentTrace,
   step: Omit<MemoryRecallTraceStep, "index">,

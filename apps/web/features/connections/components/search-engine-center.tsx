@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { SEARCH_PROVIDER_DEFINITIONS } from "@/lib/search/catalog";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -30,7 +33,8 @@ type TestState = {
 const inputClass = "h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-500";
 
 export function SearchEngineCenter() {
-  const [providers, setProviders] = useState<DraftProvider[]>([]);
+  const { user } = useAuth();
+  const [providers, setProviders] = useState<DraftProvider[]>(() => user ? [] : SEARCH_PROVIDER_DEFINITIONS.map(provider => ({ ...provider, apiKey: "", apiKeyConfigured: false, apiKeyHint: "", source: "unset", enabled: false })));
   const [defaultProvider, setDefaultProvider] = useState<SearchProviderId>("tavily");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,7 +42,8 @@ export function SearchEngineCenter() {
   const [notice, setNotice] = useState<string | null>(null);
   const [testStates, setTestStates] = useState<Partial<Record<SearchProviderId, TestState>>>({});
 
-  const loadCatalog = async () => {
+  const loadCatalog = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -53,11 +58,11 @@ export function SearchEngineCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     void loadCatalog();
-  }, []);
+  }, [loadCatalog]);
 
   const updateProvider = (id: SearchProviderId, patch: Partial<DraftProvider>) => {
     setProviders((current) => current.map((provider) =>
@@ -140,7 +145,7 @@ export function SearchEngineCenter() {
           <button
             type="button"
             onClick={() => void save()}
-            disabled={loading || saving || providers.length === 0}
+            disabled={Boolean(user) && (loading || saving || providers.length === 0)}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
           >
             {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -177,8 +182,8 @@ export function SearchEngineCenter() {
                 aria-label="默认搜索引擎"
               >
                 {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                    {provider.name}{provider.enabled ? "" : "（未启用）"}
+                  <option key={provider.id} value={provider.id} disabled={Boolean(user) && (!provider.enabled)}>
+                    {provider.name}{user && !provider.enabled ? "（未启用）" : ""}
                   </option>
                 ))}
               </select>
@@ -199,7 +204,7 @@ export function SearchEngineCenter() {
                       <div className="min-w-0">
                         <h3 className="font-medium text-slate-100">{provider.name}</h3>
                         <span className={`text-xs ${provider.apiKeyConfigured ? "text-emerald-400" : "text-slate-600"}`}>
-                          {provider.apiKeyConfigured
+                          {!user ? "登录后查看配置" : provider.apiKeyConfigured
                             ? provider.source === "environment"
                               ? "已配置 · 服务器后备"
                               : `已配置 ${provider.apiKeyHint}`
@@ -257,7 +262,7 @@ export function SearchEngineCenter() {
                       <button
                         type="button"
                         onClick={() => void testConnection(provider)}
-                        disabled={testStates[provider.id]?.status === "testing" || (!provider.apiKey.trim() && !provider.apiKeyConfigured)}
+                        disabled={Boolean(user) && (testStates[provider.id]?.status === "testing" || (!provider.apiKey.trim() && !provider.apiKeyConfigured))}
                         className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {testStates[provider.id]?.status === "testing"

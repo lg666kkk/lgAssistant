@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@web/lib/auth/client";
 import { TraceDetail } from "./trace-detail";
@@ -128,12 +130,14 @@ function SessionBlock({ group, onSelect }: { group: SessionGroup; onSelect: (id:
 }
 
 export function TraceCenter({ initialTraceId = null }: { initialTraceId?: string | null }) {
+  const { user } = useAuth();
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(initialTraceId);
 
   useEffect(() => {
+    if (!user) { setLoading(false); return; }
     authFetch("/api/traces?limit=200")
       .then(async (r) => {
         const data = await r.json();
@@ -143,11 +147,11 @@ export function TraceCenter({ initialTraceId = null }: { initialTraceId?: string
       .then((data) => setTraces(data.traces))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [user]);
 
   const groups = useMemo(() => groupBySession(traces), [traces]);
 
-  if (selectedTraceId) {
+  if (user && selectedTraceId) {
     return <TraceDetail id={selectedTraceId} onBack={() => setSelectedTraceId(null)} />;
   }
 
@@ -174,7 +178,7 @@ export function TraceCenter({ initialTraceId = null }: { initialTraceId?: string
 
         {!loading && !error && groups.length === 0 && (
           <div className="rounded-xl border border-slate-800 px-4 py-8 text-center text-slate-500">
-            还没有 trace。去对话页发一条消息后再回来。
+            {user ? "还没有 trace。去对话页发一条消息后再回来。" : "登录后查看执行记录"}
           </div>
         )}
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
@@ -19,6 +21,7 @@ export function NotionConnectionPanel({
 }: {
   onConfigChange?: (config: UserNotionConnectionView) => void;
 }) {
+  const { user } = useAuth();
   const [config, setConfig] = useState<UserNotionConnectionView | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [token, setToken] = useState("");
@@ -41,6 +44,7 @@ export function NotionConnectionPanel({
   }, [onConfigChange]);
 
   const load = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -53,7 +57,7 @@ export function NotionConnectionPanel({
     } finally {
       setLoading(false);
     }
-  }, [applyConfig]);
+  }, [applyConfig, user]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -120,7 +124,7 @@ export function NotionConnectionPanel({
             type="checkbox"
             checked={enabled}
             onChange={(event) => { setEnabled(event.target.checked); setNotice(null); }}
-            disabled={loading || saving}
+            disabled={Boolean(user) && (loading || saving)}
             className="h-4 w-4 accent-cyan-600"
           />
           启用
@@ -152,7 +156,7 @@ export function NotionConnectionPanel({
                 placeholder={config?.tokenConfigured ? `已配置 ${config.tokenHint}，留空保持不变` : "secret_... 或 ntn_..."}
                 autoComplete="new-password"
                 className={inputClass}
-                disabled={saving || testing}
+                disabled={Boolean(user) && (saving || testing)}
               />
             </label>
             <label className="block">
@@ -165,7 +169,7 @@ export function NotionConnectionPanel({
                 step={1}
                 onChange={(event) => setMaxDepth(Number(event.target.value))}
                 className={inputClass}
-                disabled={saving || testing}
+                disabled={Boolean(user) && (saving || testing)}
               />
             </label>
           </div>
@@ -176,7 +180,7 @@ export function NotionConnectionPanel({
                 type="checkbox"
                 checked={defaultRecursive}
                 onChange={(event) => setDefaultRecursive(event.target.checked)}
-                disabled={saving || testing}
+                disabled={Boolean(user) && (saving || testing)}
                 className="h-4 w-4 accent-cyan-600"
               />
               新同步默认递归子页面
@@ -185,7 +189,7 @@ export function NotionConnectionPanel({
               <button
                 type="button"
                 onClick={() => void test()}
-                disabled={testing || saving || (!token && !config?.tokenConfigured)}
+                disabled={Boolean(user) && (testing || saving || (!token && !config?.tokenConfigured))}
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-700 px-3 text-sm text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
               >
                 {testing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <TestTubeDiagonal className="h-4 w-4" />}
@@ -194,7 +198,7 @@ export function NotionConnectionPanel({
               <button
                 type="button"
                 onClick={() => void save()}
-                disabled={saving || testing}
+                disabled={Boolean(user) && (saving || testing)}
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-700 px-4 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
               >
                 {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

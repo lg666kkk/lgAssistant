@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -34,7 +36,8 @@ const STARTER_TEMPLATE = `# 关于我
 - `;
 
 export function UserProfileCenter() {
-  const [profile, setProfile] = useState<UserProfileView | null>(null);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<UserProfileView | null>(user ? null : { content: "", configured: false, revision: 0, maxChars: 8000 });
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [loading, setLoading] = useState(true);
@@ -42,7 +45,8 @@ export function UserProfileCenter() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -57,9 +61,9 @@ export function UserProfileCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const dirty = profile !== null && content.trim() !== profile.content;
   const estimatedTokens = useMemo(() => Math.ceil(content.length / 3), [content.length]);
@@ -110,7 +114,7 @@ export function UserProfileCenter() {
               每次聊天都会把画像作为独立上下文注入，并写入当前用户的 Trace 与 Langfuse；敏感字段会按现有规则脱敏后上报。
             </div>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading || saving} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
+          <button type="button" onClick={() => void load()} disabled={Boolean(user) && (loading || saving)} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />刷新
           </button>
         </div>
@@ -128,10 +132,10 @@ export function UserProfileCenter() {
           <section className="mt-5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900/30">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
               <div className="flex items-center gap-1 rounded-md bg-slate-950 p-1">
-                <button type="button" onClick={() => setMode("edit")} className={`inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm ${mode === "edit" ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>
+                <button data-guest-browse type="button" onClick={() => setMode("edit")} className={`inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm ${mode === "edit" ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>
                   <FileText className="h-4 w-4" />编辑
                 </button>
-                <button type="button" onClick={() => setMode("preview")} className={`inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm ${mode === "preview" ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>
+                <button data-guest-browse type="button" onClick={() => setMode("preview")} className={`inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm ${mode === "preview" ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>
                   <Eye className="h-4 w-4" />预览
                 </button>
               </div>
@@ -174,7 +178,7 @@ export function UserProfileCenter() {
                   </button>
                 )}
               </div>
-              <button type="button" onClick={() => void save()} disabled={saving || !dirty} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-600 px-4 text-sm font-medium text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40">
+              <button type="button" onClick={() => void save()} disabled={Boolean(user) && (saving || !dirty)} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-600 px-4 text-sm font-medium text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40">
                 {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 保存画像
               </button>

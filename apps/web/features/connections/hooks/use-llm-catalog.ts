@@ -1,17 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@web/lib/auth/client";
 import type { UserLlmCatalog } from "@/lib/llm/types";
 
-export function useLlmCatalog(enabled: boolean) {
+export function useLlmCatalog(userId?: string) {
   const [catalog, setCatalog] = useState<UserLlmCatalog | null>(null);
-  const [loading, setLoading] = useState(enabled);
+  const [loading, setLoading] = useState(Boolean(userId));
   const [error, setError] = useState<string | null>(null);
 
+  const generation = useRef({ id: 0 });
   const reload = useCallback(async () => {
-    if (!enabled) {
+    const requestGeneration = ++generation.current.id;
+    if (!userId) {
       setCatalog(null);
+      setError(null);
       setLoading(false);
       return;
     }
@@ -21,16 +24,19 @@ export function useLlmCatalog(enabled: boolean) {
       const response = await authFetch("/api/llm/providers", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "读取模型配置失败");
-      setCatalog(data as UserLlmCatalog);
+      if (generation.current.id === requestGeneration) setCatalog(data as UserLlmCatalog);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "读取模型配置失败");
+      if (generation.current.id === requestGeneration) setError(loadError instanceof Error ? loadError.message : "读取模型配置失败");
     } finally {
-      setLoading(false);
+      if (generation.current.id === requestGeneration) setLoading(false);
     }
-  }, [enabled]);
+  }, [userId]);
 
   useEffect(() => {
+    const requests = generation.current;
+    setCatalog(null);
     void reload();
+    return () => { requests.id++; };
   }, [reload]);
 
   return { catalog, loading, error, reload };

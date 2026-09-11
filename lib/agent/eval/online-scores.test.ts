@@ -3,6 +3,12 @@ import { createTrace } from "@/lib/agent/runtime/trace";
 import { buildOnlineScores, reportOnlineScores } from "./online-scores";
 
 describe("online scores", () => {
+  it.each(["awaiting_tool_confirmation", "awaiting_user_input", "max_tokens", "error"] as const)("does not score %s as successful completion", (stopReason) => {
+    const trace = createTrace("unfinished");
+    trace.completed = true;
+    trace.stopReason = stopReason;
+    expect(buildOnlineScores(trace)).toContainEqual({ name: "agent_completed（Agent 是否正常完成）", value: 0 });
+  });
   it("derives terminal, tool, and groundedness scores from an agent trace", () => {
     const trace = createTrace("request-1");
     trace.completed = true;

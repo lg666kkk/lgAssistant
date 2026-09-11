@@ -425,6 +425,7 @@ export async function callModel(
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
   telemetryFunctionId?: string,
+  signal?: AbortSignal,
 ): Promise<Anthropic.Message & {
   reasoning_content?: string;
   pricing?: ModelPricingCnyPerMillionTokens;
@@ -441,6 +442,7 @@ export async function callModel(
     model,
     telemetryMetadata,
     telemetryFunctionId,
+    signal,
   });
 
   return result as Anthropic.Message & {
@@ -484,6 +486,7 @@ ${input.digest}`;
 }
 
 export async function callCompressionModel(input: {
+  signal?: AbortSignal;
   digest: string;
   targetContextTokens: number;
   summaryTokenBudget: number;
@@ -493,6 +496,7 @@ export async function callCompressionModel(input: {
 }): Promise<string> {
   return generateTextWithProvider({
     model: input.model ?? defaultChatModel,
+    abortSignal: input.signal,
     maxOutputTokens: Math.min(Math.max(256, input.summaryTokenBudget), 2_000),
     telemetryFunctionId: "conversation-context-compress",
     system: COMPACTION_SYSTEM_PROMPT,
@@ -518,6 +522,7 @@ export async function executeTools(
     string,
     Awaited<ReturnType<typeof executeToolCall>>
   > = new Map(),
+  signal?: AbortSignal,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -578,6 +583,7 @@ export async function executeTools(
       userId,
       requestId,
       conversationContext,
+      signal,
     )),
     ...duplicateExecutionResults,
   ].sort(
@@ -811,6 +817,7 @@ async function executeToolUsesWithScheduler(
   userId?: string,
   requestId?: string,
   conversationContext?: string[],
+  signal?: AbortSignal,
 ) {
   type ScheduledToolUse = {
     index: number;
@@ -877,6 +884,7 @@ async function executeToolUsesWithScheduler(
               userId,
               requestId,
               conversationContext,
+              signal,
             ),
           })),
         )),
@@ -895,6 +903,7 @@ async function executeToolUsesWithScheduler(
         userId,
         requestId,
         conversationContext,
+        signal,
       ),
     });
   }
@@ -909,6 +918,7 @@ function executeSingleToolUse(
   userId?: string,
   requestId?: string,
   conversationContext?: string[],
+  signal?: AbortSignal,
 ) {
   return executeToolCall(
     toolRegistry,
@@ -917,7 +927,7 @@ function executeSingleToolUse(
       input: toolUse.input,
       id: toolUse.id,
     },
-    { scopeId, userId, requestId, conversationContext },
+    { scopeId, userId, requestId, conversationContext, signal },
   );
 }
 
@@ -997,6 +1007,7 @@ export async function runAgentLoop(
   initialSatisfiedCapabilities: Iterable<string> = [],
   onReasoning?: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) => void,
   initialRetrievalToolCalls: ReadonlyMap<string, number> = new Map(),
+  signal?: AbortSignal,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>();
@@ -1073,6 +1084,7 @@ export async function runAgentLoop(
       compressor: (input) =>
         callCompressionModel({
           ...input,
+          signal,
           model,
           telemetryMetadata: {
             operation: force ? "context-compaction-budget-guard" : "context-compaction",
@@ -1105,13 +1117,14 @@ export async function runAgentLoop(
   };
 
   for (let i = 0; i < maxToolIterations; i++) {
+    signal?.throwIfAborted();
     if (shouldStop()) {
       return {
         loopMessages,
         completed: false,
-        stopReason: "completed",
+        stopReason: "aborted",
         metrics,
-        trace: finalizeTrace("completed", false),
+        trace: finalizeTrace("aborted", false),
       };
     }
     const compactionStartedAt = Date.now();
@@ -1120,6 +1133,7 @@ export async function runAgentLoop(
       CONTEXT_COMPACTION_WINDOW_CAP,
     );
     const compacted = await compactWithObservation();
+    signal?.throwIfAborted();
     loopMessages = compacted.messages;
     if (compacted.compacted) {
       lastCompactedMessageCount = loopMessages.length;
@@ -1295,14 +1309,15 @@ export async function runAgentLoop(
         triggeringTools: loopTelemetry.triggeringTools,
       },
       loopTelemetry.functionId,
+      signal,
     );
     if (shouldStop()) {
       return {
         loopMessages,
         completed: false,
-        stopReason: "completed",
+        stopReason: "aborted",
         metrics,
-        trace: finalizeTrace("completed", false),
+        trace: finalizeTrace("aborted", false),
       };
     }
     const toolUses = extractToolUses(initialResponse.content);
@@ -1545,14 +1560,15 @@ export async function runAgentLoop(
       requestId,
       buildToolConversationContext(loopMessages),
       precomputedResults,
+      signal,
     );
     if (shouldStop()) {
       return {
         loopMessages,
         completed: false,
-        stopReason: "completed",
+        stopReason: "aborted",
         metrics,
-        trace: finalizeTrace("completed", false),
+        trace: finalizeTrace("aborted", false),
       };
     }
     metrics.toolCallCount += toolMetrics.length;
@@ -1690,6 +1706,7 @@ export async function streamModelResponse(
   model: ChatModelId = defaultChatModel,
   telemetryMetadata?: ModelTelemetryMetadata,
   onReasoningDelta?: (text: string) => void,
+  signal?: AbortSignal,
 ) {
   return streamTextWithProvider({
     model,
@@ -1697,6 +1714,7 @@ export async function streamModelResponse(
     system,
     telemetryMetadata,
     onReasoningDelta,
+    signal,
   });
 }
 

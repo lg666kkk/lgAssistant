@@ -42,11 +42,25 @@ beforeEach(() => {
   });
   mocks.runAgentLoop.mockResolvedValue({
     loopMessages: [{ role: "assistant", content: "日报内容" }],
-    stopReason: "end_turn",
+    completed: true,
+    stopReason: "completed",
   });
 });
 
 describe("scheduled agent handler", () => {
+  it.each(["max_iterations", "token_budget_exceeded", "awaiting_tool_confirmation", "awaiting_user_input", "aborted"])("rejects an unfinished run: %s", async (stopReason) => {
+    mocks.runAgentLoop.mockResolvedValue({
+      completed: stopReason.startsWith("awaiting"),
+      stopReason,
+      loopMessages: [{ role: "assistant", content: "尚未完成" }],
+    });
+    await expect(runScheduledJobHandler(job)).rejects.toThrow("未完成");
+  });
+
+  it("rejects a completed run without an answer", async () => {
+    mocks.runAgentLoop.mockResolvedValue({ completed: true, stopReason: "completed", loopMessages: [] });
+    await expect(runScheduledJobHandler(job)).rejects.toThrow("未完成");
+  });
   it("resolves and executes the model selected by the task", async () => {
     const result = await runScheduledJobHandler(job);
 
@@ -55,7 +69,7 @@ describe("scheduled agent handler", () => {
     expect(result).toEqual({
       text: "日报内容",
       metadata: {
-        stopReason: "end_turn",
+        stopReason: "completed",
         modelId: "model-record-1",
         modelName: "DeepSeek V4",
       },

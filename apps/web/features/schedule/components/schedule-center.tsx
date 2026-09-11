@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -247,6 +249,7 @@ function setRunsUrl(jobId?: string, replace = false) {
 }
 
 export function ScheduleCenter() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<ScheduleTab>("tasks");
   const [detailMode, setDetailMode] = useState(false);
   const [historyJobId, setHistoryJobId] = useState<string | null>(null);
@@ -287,7 +290,7 @@ export function ScheduleCenter() {
     [runs, selectedRunId],
   );
 
-  const syncChannelDrafts = (nextChannels: NotificationChannel[]) => {
+  const syncChannelDrafts = useCallback((nextChannels: NotificationChannel[]) => {
     setChannelDrafts((current) => ({
       telegram: {
         ...current.telegram,
@@ -299,9 +302,10 @@ export function ScheduleCenter() {
         enabled: nextChannels.find((item) => item.provider === "wecom")?.enabled ?? false,
       },
     }));
-  };
+  }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -341,11 +345,11 @@ export function ScheduleCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, syncChannelDrafts]);
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
     const syncFromUrl = () => {
@@ -617,10 +621,10 @@ export function ScheduleCenter() {
   };
 
   useEffect(() => {
-    if (!historyJobId || historyLoadedFor === historyJobId || loading) return;
+    if (!user || !historyJobId || historyLoadedFor === historyJobId || loading) return;
     const job = jobs.find((item) => item.id === historyJobId);
     if (job) void openRunHistory(job, true);
-  }, [historyJobId, historyLoadedFor, jobs, loading]);
+  }, [historyJobId, historyLoadedFor, jobs, loading, user]);
 
   const runTaskNow = async (job: ScheduledJob) => {
     setRunningId(job.id);
@@ -662,7 +666,7 @@ export function ScheduleCenter() {
   };
 
   const tabBar = (
-    <div className="flex border-b border-slate-800" role="tablist" aria-label="定时任务视图">
+    <div className="flex border-b border-slate-800" data-guest-browse role="tablist" aria-label="定时任务视图">
       <button
         type="button"
         role="tab"
@@ -779,11 +783,12 @@ function TaskList(props: {
   onViewRuns: (job: ScheduledJob) => void;
   runningId: string | null;
 }) {
+  const { user } = useAuth();
   const [menuId, setMenuId] = useState<string | null>(null);
   return (
     <section role="tabpanel" className="pt-5">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <span className="text-sm text-slate-500">{props.jobs.length} 个任务</span>
+        <span className="text-sm text-slate-500">{user ? `${props.jobs.length} 个任务` : "登录后查看任务"}</span>
         <button
           type="button"
           onClick={props.onCreate}
@@ -798,7 +803,7 @@ function TaskList(props: {
         <div className="py-12 text-center text-sm text-slate-500">加载中...</div>
       ) : props.jobs.length === 0 ? (
         <div className="border-y border-slate-800 py-16 text-center text-sm text-slate-500">
-          暂无定时任务
+          {user ? "暂无定时任务" : "登录后查看和管理定时任务"}
         </div>
       ) : (
         <div className="divide-y divide-slate-800 border-y border-slate-800">

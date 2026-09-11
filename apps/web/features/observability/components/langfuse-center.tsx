@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -28,7 +30,8 @@ type LangfuseConfigResponse = {
 const inputClass = "h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-500 disabled:opacity-50";
 
 export function LangfuseCenter() {
-  const [config, setConfig] = useState<LangfuseConfigResponse | null>(null);
+  const { user } = useAuth();
+  const [config, setConfig] = useState<LangfuseConfigResponse | null>(user ? null : { enabled: false, baseUrl: "", publicKeyConfigured: false, publicKeyHint: "", secretKeyConfigured: false, secretKeyHint: "" });
   const [enabled, setEnabled] = useState(false);
   const [baseUrl, setBaseUrl] = useState("https://cloud.langfuse.com");
   const [publicKey, setPublicKey] = useState("");
@@ -40,7 +43,8 @@ export function LangfuseCenter() {
   const [notice, setNotice] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -58,11 +62,11 @@ export function LangfuseCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   const save = async () => {
     setSaving(true);
@@ -162,19 +166,19 @@ export function LangfuseCenter() {
               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
                 <div className="text-xs text-slate-500">配置状态</div>
                 <div className={`mt-2 text-sm font-medium ${enabled ? "text-emerald-300" : "text-slate-400"}`}>
-                  {enabled ? "已启用" : "未启用"}
+                  {!user ? "登录后查看" : enabled ? "已启用" : "未启用"}
                 </div>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
                 <div className="text-xs text-slate-500">Public Key</div>
                 <div className={`mt-2 text-sm font-medium ${config.publicKeyConfigured ? "text-emerald-300" : "text-slate-500"}`}>
-                  {config.publicKeyConfigured ? config.publicKeyHint : "未配置"}
+                  {!user ? "—" : config.publicKeyConfigured ? config.publicKeyHint : "未配置"}
                 </div>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
                 <div className="text-xs text-slate-500">Secret Key</div>
                 <div className={`mt-2 text-sm font-medium ${config.secretKeyConfigured ? "text-emerald-300" : "text-slate-500"}`}>
-                  {config.secretKeyConfigured ? config.secretKeyHint : "未配置"}
+                  {!user ? "—" : config.secretKeyConfigured ? config.secretKeyHint : "未配置"}
                 </div>
               </div>
             </section>
@@ -254,7 +258,7 @@ export function LangfuseCenter() {
                   <button
                     type="button"
                     onClick={() => void test()}
-                    disabled={testing || (!publicKey && !config.publicKeyConfigured) || (!secretKey && !config.secretKeyConfigured)}
+                    disabled={Boolean(user) && (testing || (!publicKey && !config.publicKeyConfigured) || (!secretKey && !config.secretKeyConfigured))}
                     className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-40"
                   >
                     {testing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
@@ -263,7 +267,7 @@ export function LangfuseCenter() {
                   <button
                     type="button"
                     onClick={() => void save()}
-                    disabled={saving}
+                    disabled={Boolean(user) && (saving)}
                     className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
                   >
                     {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

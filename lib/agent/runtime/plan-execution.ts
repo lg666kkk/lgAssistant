@@ -567,6 +567,7 @@ export async function executePlan(
       usedCapabilities,
       input.onReasoning,
       usedRetrievalTools,
+      input.signal,
     );
     loopMessages = result.loopMessages;
     addMetrics(metrics, result.metrics);
@@ -658,14 +659,14 @@ export async function executePlan(
   trace.steps.forEach((step, index) => { step.index = index; });
   trace.endedAt = Date.now();
   trace.totalDurationMs = trace.endedAt - startedAt;
-  trace.stopReason = "completed";
+  trace.stopReason = planCompleted ? "completed" : input.shouldStop?.() ? "aborted" : "error";
   trace.completed = planCompleted;
   trace.metrics = metrics;
   return {
     loopMessages,
     // 让现有路由统一生成最终用户答复；步骤文本只作为该答复的上下文。
     completed: false,
-    stopReason: "completed",
+    stopReason: trace.stopReason,
     metrics,
     trace,
     evidenceBundles,

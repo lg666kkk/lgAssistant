@@ -7,6 +7,16 @@ afterEach(() => {
 });
 
 describe("notification providers", () => {
+  it("checks ownership before each chunk and stops after lease loss", async () => {
+    const transport = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", transport);
+    const beforeSend = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("lease lost"));
+    await expect(sendNotification({
+      provider: "telegram", userId: "user-1", telegram: { botToken: "test", chatId: "test" },
+    }, "x".repeat(8001), beforeSend)).rejects.toThrow("lease lost");
+    expect(beforeSend).toHaveBeenCalledTimes(2);
+    expect(transport).toHaveBeenCalledOnce();
+  });
   it("only accepts the official WeCom group robot endpoint", () => {
     expect(validateWeComWebhookUrl(
       "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc",

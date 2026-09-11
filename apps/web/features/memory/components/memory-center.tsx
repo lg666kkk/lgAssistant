@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Brain,
@@ -90,7 +92,7 @@ function formatTime(value?: string | null) {
 
 function NumberField({ label, value, min, max, step, onChange }: {
   label: string;
-  value: number;
+  value: number | "";
   min: number;
   max: number;
   step: number;
@@ -105,9 +107,15 @@ function NumberField({ label, value, min, max, step, onChange }: {
 }
 
 export function MemoryCenter() {
-  const [config, setConfig] = useState<UserMemoryConfigView | null>(null);
+  const { user } = useAuth();
+  const [config, setConfig] = useState<UserMemoryConfigView | null>(user ? null : {
+    enabled: false, recallLimit: 0, recallThreshold: 0, writeConfidence: 0,
+    ambiguousCandidateThreshold: 0, keywordAdmitThreshold: 0, fusionStrategy: "weighted",
+    rerank: { enabled: false, mode: "always", candidateCount: 0, timeoutMs: 0,
+      configured: false, model: "", instruct: "", url: "", apiKeyConfigured: false, apiKeyHint: "" },
+  });
   const [apiKey, setApiKey] = useState("");
-  const [data, setData] = useState<MemoryData | null>(null);
+  const [data, setData] = useState<MemoryData | null>(user ? null : { summary: { total: 0, active: 0, invalidated: 0, conflicted: 0, historyVersions: 0, byType: {}, bySource: {} }, memories: [], history: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -122,7 +130,8 @@ export function MemoryCenter() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -141,9 +150,9 @@ export function MemoryCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const patchConfig = (patch: Partial<UserMemoryConfigView>) => {
     setConfig((current) => current ? { ...current, ...patch } : current);
@@ -239,7 +248,7 @@ export function MemoryCenter() {
             <h2 className="text-xl font-semibold text-slate-100">记忆清单</h2>
             <p className="mt-1 text-sm text-slate-500">管理当前用户的记忆策略，并查看系统保存的长期记忆。</p>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
+          <button type="button" onClick={() => void load()} disabled={Boolean(user) && (loading)} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />刷新
           </button>
         </div>
@@ -255,7 +264,7 @@ export function MemoryCenter() {
           <div className="flex h-64 items-center justify-center text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />加载记忆数据</div>
         ) : config && data ? (
           <>
-            <nav aria-label="记忆清单视图" className="mt-5 flex border-b border-slate-800">
+            <nav data-guest-browse aria-label="记忆清单视图" className="mt-5 flex border-b border-slate-800">
               <button
                 type="button"
                 onClick={() => setActiveTab("settings")}
@@ -278,7 +287,7 @@ export function MemoryCenter() {
                   <h3 className="flex items-center gap-2 text-sm font-medium text-slate-200"><SlidersHorizontal className="h-4 w-4 text-cyan-400" />记忆设置</h3>
                   <p className="mt-1 text-xs text-slate-500">召回和写入参数按当前用户隔离，密钥不会回显。</p>
                 </div>
-                <button type="button" onClick={() => void save()} disabled={saving} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-40">
+                <button type="button" onClick={() => void save()} disabled={Boolean(user) && (saving)} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-40">
                   {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存设置
                 </button>
               </div>
@@ -289,12 +298,12 @@ export function MemoryCenter() {
               </label>
 
               <div className="grid gap-4 border-y border-slate-800 py-4 sm:grid-cols-2 lg:grid-cols-3">
-                <NumberField label="召回数量" value={config.recallLimit} min={1} max={10} step={1} onChange={(value) => patchConfig({ recallLimit: value })} />
-                <NumberField label="召回阈值" value={config.recallThreshold} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ recallThreshold: value })} />
-                <NumberField label="写入置信度" value={config.writeConfidence} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ writeConfidence: value })} />
-                <NumberField label="含糊候选阈值" value={config.ambiguousCandidateThreshold} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ ambiguousCandidateThreshold: value })} />
-                <NumberField label="关键词准入阈值" value={config.keywordAdmitThreshold} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ keywordAdmitThreshold: value })} />
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-400">融合策略</span><select value={config.fusionStrategy} onChange={(event) => patchConfig({ fusionStrategy: event.target.value as UserMemoryConfigView["fusionStrategy"] })} className={inputClass}><option value="weighted">Weighted</option><option value="rrf">RRF</option><option value="vector_only">仅向量</option></select></label>
+                <NumberField label="召回数量" value={user ? config.recallLimit : ""} min={1} max={10} step={1} onChange={(value) => patchConfig({ recallLimit: value })} />
+                <NumberField label="召回阈值" value={user ? config.recallThreshold : ""} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ recallThreshold: value })} />
+                <NumberField label="写入置信度" value={user ? config.writeConfidence : ""} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ writeConfidence: value })} />
+                <NumberField label="含糊候选阈值" value={user ? config.ambiguousCandidateThreshold : ""} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ ambiguousCandidateThreshold: value })} />
+                <NumberField label="关键词准入阈值" value={user ? config.keywordAdmitThreshold : ""} min={0} max={1} step={0.01} onChange={(value) => patchConfig({ keywordAdmitThreshold: value })} />
+                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-400">融合策略</span><select value={user ? config.fusionStrategy : ""} onChange={(event) => patchConfig({ fusionStrategy: event.target.value as UserMemoryConfigView["fusionStrategy"] })} className={inputClass}><option value="weighted">Weighted</option><option value="rrf">RRF</option><option value="vector_only">仅向量</option></select></label>
               </div>
 
               <div className="mt-4 border-b border-slate-800 pb-4">
@@ -303,17 +312,17 @@ export function MemoryCenter() {
                   <input type="checkbox" checked={config.rerank.enabled} onChange={(event) => patchRerank({ enabled: event.target.checked })} className="h-4 w-4 accent-cyan-500" />
                 </label>
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">Rerank URL</span><input value={config.rerank.url} onChange={(event) => patchRerank({ url: event.target.value })} className={inputClass} placeholder="https://.../reranks" /></label>
+                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">Rerank URL</span><input value={user ? config.rerank.url : ""} onChange={(event) => patchRerank({ url: event.target.value })} className={inputClass} placeholder="https://.../reranks" /></label>
                   <label><span className="mb-1.5 block text-xs font-medium text-slate-400">API Key（留空保持原值）</span><div className="relative"><KeyRound className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-600" /><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={`${inputClass} pl-9`} placeholder={config.rerank.apiKeyConfigured ? `已配置 ${config.rerank.apiKeyHint}` : "输入 API Key"} /></div></label>
-                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">模型</span><input value={config.rerank.model} onChange={(event) => patchRerank({ model: event.target.value })} className={inputClass} /></label>
-                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">模式</span><select value={config.rerank.mode} onChange={(event) => patchRerank({ mode: event.target.value as "always" | "conditional" })} className={inputClass}><option value="always">Always</option><option value="conditional">Conditional</option></select></label>
-                  <NumberField label="候选数量" value={config.rerank.candidateCount} min={2} max={24} step={1} onChange={(value) => patchRerank({ candidateCount: value })} />
-                  <NumberField label="超时（ms）" value={config.rerank.timeoutMs} min={200} max={8000} step={100} onChange={(value) => patchRerank({ timeoutMs: value })} />
-                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">准入阈值（留空回退规则）</span><input type="number" min="0" max="1" step="0.01" value={config.rerank.admitThreshold ?? ""} onChange={(event) => patchRerank({ admitThreshold: event.target.value === "" ? undefined : Number(event.target.value) })} className={inputClass} /></label>
+                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">模型</span><input value={user ? config.rerank.model : ""} onChange={(event) => patchRerank({ model: event.target.value })} className={inputClass} /></label>
+                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">模式</span><select value={user ? config.rerank.mode : ""} onChange={(event) => patchRerank({ mode: event.target.value as "always" | "conditional" })} className={inputClass}><option value="always">Always</option><option value="conditional">Conditional</option></select></label>
+                  <NumberField label="候选数量" value={user ? config.rerank.candidateCount : ""} min={2} max={24} step={1} onChange={(value) => patchRerank({ candidateCount: value })} />
+                  <NumberField label="超时（ms）" value={user ? config.rerank.timeoutMs : ""} min={200} max={8000} step={100} onChange={(value) => patchRerank({ timeoutMs: value })} />
+                  <label><span className="mb-1.5 block text-xs font-medium text-slate-400">准入阈值（留空回退规则）</span><input type="number" min="0" max="1" step="0.01" value={user ? config.rerank.admitThreshold ?? "" : ""} onChange={(event) => patchRerank({ admitThreshold: event.target.value === "" ? undefined : Number(event.target.value) })} className={inputClass} /></label>
                   <label className="md:col-span-2">
                     <span className="mb-1.5 block text-xs font-medium text-slate-400">任务指令</span>
                     <textarea
-                      value={config.rerank.instruct}
+                      value={user ? config.rerank.instruct : ""}
                       onChange={(event) => patchRerank({ instruct: event.target.value })}
                       rows={4}
                       className="min-h-24 w-full resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-slate-100 outline-none transition focus:border-cyan-500"
@@ -321,7 +330,7 @@ export function MemoryCenter() {
                   </label>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <button type="button" onClick={() => void test()} disabled={testing || (!apiKey && !config.rerank.apiKeyConfigured)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-40">{testing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}测试连接</button>
+                  <button type="button" onClick={() => void test()} disabled={Boolean(user) && (testing || (!apiKey && !config.rerank.apiKeyConfigured))} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-40">{testing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}测试连接</button>
                   {testResult && <span className={`text-xs ${testResult.ok ? "text-emerald-300" : "text-rose-300"}`}>{testResult.text}</span>}
                 </div>
               </div>
@@ -334,7 +343,7 @@ export function MemoryCenter() {
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-slate-800 bg-slate-800 sm:grid-cols-5">
-                {[['总记忆', data.summary.total], ['有效', data.summary.active], ['已失效', data.summary.invalidated], ['冲突', data.summary.conflicted], ['历史版本', data.summary.historyVersions]].map(([label, value]) => <div key={String(label)} className="bg-slate-950 px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-lg font-semibold text-slate-200">{value}</div></div>)}
+                {[['总记忆', data.summary.total], ['有效', data.summary.active], ['已失效', data.summary.invalidated], ['冲突', data.summary.conflicted], ['历史版本', data.summary.historyVersions]].map(([label, value]) => <div key={String(label)} className="bg-slate-950 px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-lg font-semibold text-slate-200">{user ? value : "—"}</div></div>)}
               </div>
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -369,7 +378,7 @@ export function MemoryCenter() {
                           <button
                             type="button"
                             onClick={() => void deleteMemory(row as MemoryRow)}
-                            disabled={deletingId === String(row.id)}
+                            disabled={Boolean(user) && (deletingId === String(row.id))}
                             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-600 hover:bg-rose-950/40 hover:text-rose-300 disabled:opacity-40"
                             title="永久删除记忆"
                             aria-label={`永久删除记忆 ${row.key}`}

@@ -42,6 +42,7 @@ import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
 import { mergeEvidenceBundles } from "@/lib/agent/rag/evidence";
 import {
   createTrace,
+  finalizeAnswerTrace,
   prependMemoryRecallTraceStep,
   prependUserProfileTraceStep,
   type AgentTrace,
@@ -632,6 +633,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         }
 
         const planInput = {
+          signal: req.signal,
           messages: loopMessages,
           tools,
           toolRegistry,
@@ -756,6 +758,10 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           retrievalPlan,
           [],
           contextPlan,
+          [],
+          undefined,
+          new Map(),
+          req.signal,
         );
         agentLoopResult.trace.steps.unshift(strategyStep);
         agentLoopResult.trace.steps.forEach((step, index) => { step.index = index; });
@@ -843,7 +849,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
               content: text,
             },
           }, enqueueText);
-        });
+        }, req.signal);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
@@ -923,10 +929,11 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         ];
         await persistSnapshot(completedMessages).catch((error: any) =>
           console.error("[context-snapshot] 保存失败:", error.message));
+        finalizeAnswerTrace(agentLoopResult.trace, finalStopReason);
         langfuseTrace.update({
           output: {
-            completed: true,
-            stopReason: finalStopReason ?? "end_turn",
+            completed: agentLoopResult.trace.completed,
+            stopReason: agentLoopResult.trace.stopReason,
             assistantMessage: redactSensitiveValue(finalAssistantText),
           },
         });
@@ -934,13 +941,6 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           input: traceDisplayInput,
           output: redactSensitiveValue(finalAssistantText),
         });
-        agentLoopResult.trace.endedAt = Date.now();
-        agentLoopResult.trace.totalDurationMs =
-          agentLoopResult.trace.endedAt - agentLoopResult.trace.startedAt;
-        // 工具循环虽可能因上限退出，但最终回答流成功结束后，整次请求才算完成。
-        agentLoopResult.trace.completed = true;
-        agentLoopResult.trace.stopReason =
-          finalStopReason === "max_tokens" ? "max_tokens" : "completed";
         projectTraceObservations(agentLoopResult.trace);
         await savePendingTrace();
         if (!explicitForgetHandled) {

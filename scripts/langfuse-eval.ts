@@ -143,6 +143,7 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
   );
   if (items.length === 0) throw new Error("没有找到可执行的 Dataset Item；请先运行 --sync。");
 
+  let failedCount = 0;
   for (const item of items) {
     const input = item.input as LangfuseEvalInput;
     const executionBoundary = input.kind === "routing" ? "retrieval-router" : "runAgentLoop";
@@ -166,9 +167,11 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
 
     try {
       const evaluation = await evaluateItem(input, item.expectedOutput, options.live);
+      if (evaluation.score !== 1) failedCount += 1;
       trace.update({ output: evaluation.output });
       trace.score({ name: evaluation.scoreName, value: evaluation.score, dataType: "NUMERIC" });
     } catch (error: any) {
+      failedCount += 1;
       trace.update({
         output: { error: error.message || "未知错误" },
       });
@@ -182,6 +185,7 @@ async function runDataset(langfuse: Langfuse, options: CliOptions) {
   }
 
   await langfuse.flushAsync();
+  if (failedCount > 0) throw new Error(`${failedCount}/${items.length} 个评估用例未通过`);
 }
 
 async function main() {

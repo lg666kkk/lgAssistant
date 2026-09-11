@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, InputHTMLAttributes, ReactNode } from "react";
 import {
@@ -90,6 +92,7 @@ const emptyVersion = (): VersionDraft => ({
 const terminalStatuses = new Set(["completed", "failed", "timed_out", "cancelled", "dead", "unavailable"]);
 
 export function SkillCenter() {
+  const { user } = useAuth();
   const [skills, setSkills] = useState<ConfiguredSkill[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [canEdit, setCanEdit] = useState(false);
@@ -113,6 +116,7 @@ export function SkillCenter() {
   const selectedProfile = profiles.find((profile) => profile.id === versionDraft.profileId);
 
   const load = async (preferredId?: string | null) => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -397,7 +401,7 @@ export function SkillCenter() {
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-slate-100">Skill 列表</h2>
-              <p className="mt-1 text-sm text-slate-500">{skills.length} 个 Skill</p>
+              <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill` : "登录后查看 Skill"}</p>
             </div>
             <button type="button" onClick={() => importInput.current?.click()} disabled={busy !== null} className="flex h-9 items-center gap-2 rounded-md bg-cyan-600 px-3 text-sm text-white hover:bg-cyan-500 disabled:opacity-50">
               <Upload className="h-4 w-4" />上传 Skill
@@ -440,7 +444,7 @@ export function SkillCenter() {
           ) : (
             <div className="flex min-h-64 flex-col items-center justify-center border border-dashed border-slate-800 text-center">
               <Box className="mb-3 h-6 w-6 text-slate-600" />
-              <p className="text-sm text-slate-400">暂无 Skill</p>
+              <p className="text-sm text-slate-400">{user ? "暂无 Skill" : "登录后查看和管理 Skill"}</p>
             </div>
           )}
         </div>

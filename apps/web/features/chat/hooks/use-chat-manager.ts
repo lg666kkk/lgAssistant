@@ -5,6 +5,7 @@ import { useAuth } from "@web/lib/auth/use-auth";
 
 export function useChatManager() {
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id;
   const sessionsRef = useRef<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [, forceUpdate] = useState(0);
@@ -17,7 +18,8 @@ export function useChatManager() {
     if (authLoading) return;
     let cancelled = false;
 
-    if (!user) {
+    if (!userId) {
+      sessionsRef.current.forEach((session) => session.abort());
       sessionsRef.current = [];
       setActiveId("");
       setLoading(false);
@@ -28,13 +30,13 @@ export function useChatManager() {
     setLoading(true);
     const loadSessions = async () => {
       try {
-        const sessionManager = new SessionManager(user.id);
+        const sessionManager = new SessionManager(userId);
         const dbSessions = await sessionManager.getSessions();
         if (cancelled) return;
 
         if (dbSessions.length > 0) {
           const sessions = dbSessions.map((dbSession) => {
-            const session = new ChatSession(dbSession.id, user.id);
+            const session = new ChatSession(dbSession.id, userId);
             session.title = dbSession.title;
             session.contextUsage = dbSession.metadata?.contextUsage ?? null;
             return session;
@@ -45,7 +47,7 @@ export function useChatManager() {
           await sessions[0].loadFromDatabase();
         } else {
           // 没有会话，创建一个新的
-          const session = new ChatSession(undefined, user.id);
+          const session = new ChatSession(undefined, userId);
           sessionsRef.current = [session];
           setActiveId(session.id);
         }
@@ -53,7 +55,7 @@ export function useChatManager() {
         if (cancelled) return;
         console.error('加载会话失败:', error);
         // 加载失败，创建一个新会话
-        const session = new ChatSession(undefined, user.id);
+        const session = new ChatSession(undefined, userId);
         sessionsRef.current = [session];
         setActiveId(session.id);
       } finally {
@@ -65,17 +67,17 @@ export function useChatManager() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user?.id, rerender]);
+  }, [authLoading, userId, rerender]);
 
   const sessions = sessionsRef.current;
   const activeSession = sessions.find((s) => s.id === activeId) ?? sessions[0];
 
   const createSession = useCallback(() => {
-    const session = new ChatSession(undefined, user?.id);
+    const session = new ChatSession(undefined, userId);
     sessionsRef.current = [session, ...sessionsRef.current];
     setActiveId(session.id);
     rerender();
-  }, [rerender, user?.id]);
+  }, [rerender, userId]);
 
   const moveSessionToTop = useCallback(
     (id: string) => {
@@ -109,19 +111,19 @@ export function useChatManager() {
       const target = list.find((s) => s.id === id);
       target?.abort();
 
-      const sessionManager = new SessionManager(user?.id);
+      const sessionManager = new SessionManager(userId);
       await sessionManager.deleteSession(id);
 
       const remainingSessions = list.filter((s) => s.id !== id);
       sessionsRef.current = remainingSessions.length > 0
         ? remainingSessions
-        : [new ChatSession(undefined, user?.id)];
+        : [new ChatSession(undefined, userId)];
       if (activeId === id) {
         setActiveId(sessionsRef.current[0].id);
       }
       rerender();
     },
-    [activeId, rerender, user?.id],
+    [activeId, rerender, userId],
   );
 
   const renameSession = useCallback(
@@ -134,12 +136,12 @@ export function useChatManager() {
       if (!session) throw new Error("会话不存在或已被删除");
       if (session.title === normalizedTitle) return;
 
-      const sessionManager = new SessionManager(user?.id);
+      const sessionManager = new SessionManager(userId);
       await sessionManager.updateSessionTitle(id, normalizedTitle);
       session.title = normalizedTitle;
       rerender();
     },
-    [rerender, user?.id],
+    [rerender, userId],
   );
   return {
     sessions,

@@ -8,12 +8,9 @@ import {
   Bot,
   ChartNoAxesColumnIncreasing,
   Clock3,
-  CodeXml,
   Database,
   Ellipsis,
-  FileText,
   Grid3x3,
-  Landmark,
   Languages,
   ListChecks,
   LogOut,
@@ -44,7 +41,7 @@ export type ConnectionTabId =
   | "memory-list"
   | "traces"
   | "langfuse";
-export type CustomAgentTabId = "english" | "go" | "finance" | "coding" | "research-report";
+export type CustomAgentTabId = "english" | "go";
 
 const connectionTabGroups: Array<{
   label: string;
@@ -86,9 +83,6 @@ const customAgentTabs: Array<{
 }> = [
   { id: "english", label: "英语", icon: Languages },
   { id: "go", label: "围棋", icon: Grid3x3 },
-  { id: "finance", label: "金融", icon: Landmark },
-  { id: "coding", label: "编码", icon: CodeXml },
-  { id: "research-report", label: "研报", icon: FileText },
 ];
 
 export function getConnectionTabLabel(tabId: ConnectionTabId) {
@@ -124,6 +118,7 @@ type AppSidebarProps = {
   onSwitchSession: (id: string) => void;
   onStopSession: (session: ChatSession) => void;
   onOpenSessionDialog: (mode: "rename" | "delete", session: ChatSession) => void;
+  onSignIn: () => void;
   onSignOut: () => void;
 };
 
@@ -142,6 +137,7 @@ export function AppSidebar({
   onSwitchSession,
   onStopSession,
   onOpenSessionDialog,
+  onSignIn,
   onSignOut,
 }: AppSidebarProps) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -331,7 +327,7 @@ export function AppSidebar({
       )}
 
       <div ref={accountMenuRef} className="relative border-t border-slate-800 p-3">
-        {accountMenuOpen && (
+        {userEmail && accountMenuOpen && (
           <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-2xl border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
             <button
               type="button"
@@ -350,13 +346,13 @@ export function AppSidebar({
         )}
         <button
           type="button"
-          onClick={() => setAccountMenuOpen((value) => !value)}
+          onClick={() => userEmail ? setAccountMenuOpen((value) => !value) : onSignIn()}
           className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-slate-300">
             <UserRound className="h-[18px] w-[18px]" aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm">{maskEmail(userEmail)}</span>
+          <span className="min-w-0 flex-1 truncate text-sm">{userEmail ? maskEmail(userEmail) : "登录 / 注册"}</span>
           <Ellipsis className="h-[18px] w-[18px] shrink-0 text-slate-500" aria-hidden="true" />
         </button>
       </div>

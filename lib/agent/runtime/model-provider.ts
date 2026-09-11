@@ -353,6 +353,7 @@ function compactMetadata(
 }
 
 export async function callModelWithProvider(input: {
+  signal?: AbortSignal;
   messages: ModelMessage[];
   tools: Anthropic.Tool[];
   system?: string;
@@ -369,6 +370,7 @@ export async function callModelWithProvider(input: {
     input.onReasoningDelta?.(reasoningDelta);
   });
   const result = streamText({
+    abortSignal: input.signal,
     model: provider.model,
     maxOutputTokens: provider.runtimeModel.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
@@ -407,6 +409,7 @@ export async function callModelWithProvider(input: {
   }
 
   const content: ModelContentBlock[] = [];
+  input.signal?.throwIfAborted();
   const sanitizedText = sanitizeModelText(text);
   if (sanitizedText) {
     content.push({
@@ -469,6 +472,7 @@ export async function generateTextWithProvider(input: {
 }
 
 export async function streamTextWithProvider(input: {
+  signal?: AbortSignal;
   messages: ModelMessage[];
   system?: string;
   model: ChatModelId;
@@ -487,6 +491,7 @@ export async function streamTextWithProvider(input: {
     temperature: provider.runtimeModel.temperature,
     system: input.system,
     messages: toAIMessages(input.messages),
+    abortSignal: input.signal,
     experimental_telemetry: {
       isEnabled: true,
       functionId: "final-answer-stream",
@@ -506,6 +511,7 @@ export async function streamTextWithProvider(input: {
         throw part.error;
       }
     }
+    input.signal?.throwIfAborted();
   }
 
   return {

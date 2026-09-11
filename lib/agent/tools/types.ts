@@ -108,6 +108,7 @@ export interface ToolExecutionResult extends ToolResult {
 }
 
 export type ExecuteToolCallOptions = {
+  signal?: AbortSignal;
   approved?: boolean;
   scopeId?: string;
   userId?: string;
@@ -116,6 +117,7 @@ export type ExecuteToolCallOptions = {
 };
 
 export type ToolExecutionContext = {
+  signal?: AbortSignal;
   userId?: string;
   scopeId?: string;
   requestId?: string;

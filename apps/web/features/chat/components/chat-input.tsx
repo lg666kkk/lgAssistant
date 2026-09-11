@@ -29,6 +29,7 @@ type ChatInputProps = {
   onImagesSelected: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
   onRetryAttachment: (id: string) => void;
+  onBeforeImageSelect?: () => boolean;
   onSend: () => void;
   onStop: () => void;
 };
@@ -91,6 +92,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       onImagesSelected,
       onRemoveAttachment,
       onRetryAttachment,
+      onBeforeImageSelect,
       onSend,
       onStop,
     },
@@ -377,7 +379,10 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 />
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => {
+                    if (onBeforeImageSelect && !onBeforeImageSelect()) return;
+                    fileInputRef.current?.click();
+                  }}
                   disabled={attachmentsUploading}
                   className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
                   title={attachmentsUploading ? "正在上传图片" : "添加图片"}

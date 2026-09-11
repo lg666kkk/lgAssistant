@@ -52,8 +52,8 @@ async function claimDueDeliveries(input: {
   return ((data ?? []) as DeliveryRow[]).map(toDelivery);
 }
 
-async function markDelivered(delivery: ScheduledDelivery, messageId?: string) {
-  const { error } = await getSupabase()
+async function markDelivered(delivery: ScheduledDelivery, workerId: string, messageId?: string) {
+  const { data, error } = await getSupabase()
     .from("scheduled_deliveries")
     .update({
       status: "delivered",
@@ -63,11 +63,18 @@ async function markDelivered(delivery: ScheduledDelivery, messageId?: string) {
       lease_until: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", delivery.id);
+    .eq("id", delivery.id)
+    .eq("lease_owner", workerId)
+    .eq("attempt_count", delivery.attemptCount)
+    .eq("status", "sending")
+    .gt("lease_until", Date.now())
+    .select("id")
+    .maybeSingle();
   if (error) throw new Error(`更新消息投递成功状态失败: ${error.message}`);
+  return Boolean(data);
 }
 
-async function markDeliveryFailure(delivery: ScheduledDelivery, cause: unknown, now: number) {
+async function markDeliveryFailure(delivery: ScheduledDelivery, workerId: string, cause: unknown, now: number) {
   const dead = delivery.attemptCount >= delivery.maxAttempts;
   const backoffMs = Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.max(0, delivery.attemptCount - 1));
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -81,7 +88,11 @@ async function markDeliveryFailure(delivery: ScheduledDelivery, cause: unknown, 
       lease_until: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", delivery.id);
+    .eq("id", delivery.id)
+    .eq("lease_owner", workerId)
+    .eq("attempt_count", delivery.attemptCount)
+    .eq("status", "sending")
+    .gt("lease_until", Date.now());
   if (error) throw new Error(`更新消息投递失败状态失败: ${error.message}`);
 }
 
@@ -97,31 +108,51 @@ export async function deliverDueNotifications(input: {
   now?: number;
   limit?: number;
 }): Promise<DeliveryTickResult> {
-  const now = input.now ?? Date.now();
-  const deliveries = await claimDueDeliveries({
-    workerId: input.workerId,
-    now,
-    limit: input.limit,
-  });
+  const startedAt = Date.now();
+  const now = () => (input.now ?? startedAt) + Date.now() - startedAt;
   const result: DeliveryTickResult = {
-    due: deliveries.length,
+    due: 0,
     delivered: 0,
     failed: 0,
     dead: 0,
   };
-  for (const delivery of deliveries) {
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
+  for (let index = 0; index < limit; index += 1) {
+    const [delivery] = await claimDueDeliveries({ workerId: input.workerId, now: now(), limit: 1 });
+    if (!delivery) break;
+    result.due += 1;
+    let sent: Awaited<ReturnType<typeof sendNotification>>;
     try {
       const channel = await resolveNotificationChannel({
         userId: delivery.userId,
         provider: delivery.provider,
       });
-      const sent = await sendNotification(channel, delivery.text);
-      await markDelivered(delivery, sent.messageId);
-      result.delivered += 1;
+      sent = await sendNotification(channel, delivery.text, async () => {
+        const { data, error } = await getSupabase()
+          .from("scheduled_deliveries")
+          .update({ lease_until: Date.now() + 60_000 })
+          .eq("id", delivery.id)
+          .eq("lease_owner", input.workerId)
+          .eq("attempt_count", delivery.attemptCount)
+          .eq("status", "sending")
+          .gt("lease_until", Date.now())
+          .select("id")
+          .maybeSingle();
+        if (error) throw new Error(`检查消息租约失败: ${error.message}`);
+        if (!data) throw new Error("消息投递租约已丢失");
+      });
     } catch (error) {
-      await markDeliveryFailure(delivery, error, now);
+      await markDeliveryFailure(delivery, input.workerId, error, now());
       result.failed += 1;
       if (delivery.attemptCount >= delivery.maxAttempts) result.dead += 1;
+      continue;
+    }
+    try {
+      if (await markDelivered(delivery, input.workerId, sent.messageId)) result.delivered += 1;
+      else result.failed += 1;
+    } catch (error) {
+      console.error("[scheduler] 消息已发送，但确认写入失败:", error);
+      result.failed += 1;
     }
   }
   return result;

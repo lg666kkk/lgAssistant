@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
@@ -127,8 +129,9 @@ const inputClass = "h-10 w-full rounded-md border border-slate-700 bg-slate-950 
 const modelInputClass = "h-9 w-full min-w-0 rounded-md border border-slate-700 bg-slate-950 px-2.5 text-sm text-slate-100 outline-none transition focus:border-cyan-500 disabled:text-slate-500";
 
 export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Props) {
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ProviderDraft | null>(null);
+  const [draft, setDraft] = useState<ProviderDraft | null>(() => user ? null : { ...createDraft(), models: [] });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -367,7 +370,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
           <button
             type="button"
             onClick={() => void onRefresh()}
-            disabled={loading}
+            disabled={Boolean(user) && (loading)}
             className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
@@ -405,7 +408,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
               </button>
             ))}
             {providers.length === 0 && !loading && (
-              <span className="text-sm text-slate-500">尚未配置 Provider</span>
+              <span className="text-sm text-slate-500">{user ? "尚未配置 Provider" : "登录后查看已连接的 Provider"}</span>
             )}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -472,7 +475,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                   <p className="mt-1 text-xs text-slate-500">能力开关决定工具和图片是否允许进入请求。</p>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => void discoverModels()} disabled={discovering} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50">
+                  <button type="button" onClick={() => void discoverModels()} disabled={Boolean(user) && (discovering)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50">
                     {discovering ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ListFilter className="h-3.5 w-3.5" />}
                     获取模型列表
                   </button>
@@ -507,7 +510,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                     <button
                       type="button"
                       onClick={addDiscoveredModels}
-                      disabled={selectedDiscoveredIds.length === 0}
+                      disabled={Boolean(user) && (selectedDiscoveredIds.length === 0)}
                       className="h-10 rounded-md bg-cyan-500 px-3 text-xs font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
                     >
                       添加已选（{selectedDiscoveredIds.length}）
@@ -525,7 +528,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                           <input
                             type="checkbox"
                             checked={checked}
-                            disabled={alreadyAdded}
+                            disabled={Boolean(user) && (alreadyAdded)}
                             onChange={(event) => setSelectedDiscoveredIds((current) =>
                               event.target.checked
                                 ? [...current, model.id]
@@ -552,7 +555,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                       <input className={modelInputClass} value={model.displayName} onChange={(event) => updateModel(index, { displayName: event.target.value })} placeholder="显示名称" aria-label="显示名称" />
                       <input type="number" className={modelInputClass} value={model.contextWindow} onChange={(event) => updateModel(index, { contextWindow: Number(event.target.value) })} title="上下文窗口" aria-label="上下文窗口" />
                       <input type="number" className={modelInputClass} value={model.maxOutputTokens} onChange={(event) => updateModel(index, { maxOutputTokens: Number(event.target.value) })} title="最大输出 Token" aria-label="最大输出 Token" />
-                      <button type="button" disabled={draft.models.length <= 1} onClick={() => setDraft({ ...draft, models: draft.models.filter((_, modelIndex) => modelIndex !== index) })} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-rose-950/40 hover:text-rose-300 disabled:opacity-30 md:col-start-3 md:row-start-1 xl:col-start-5" title="删除模型" aria-label="删除模型">
+                      <button type="button" disabled={Boolean(user) && (draft.models.length <= 1)} onClick={() => setDraft({ ...draft, models: draft.models.filter((_, modelIndex) => modelIndex !== index) })} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-rose-950/40 hover:text-rose-300 disabled:opacity-30 md:col-start-3 md:row-start-1 xl:col-start-5" title="删除模型" aria-label="删除模型">
                         <X className="h-4 w-4" />
                       </button>
                     </div>
@@ -615,18 +618,18 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
               <div className="flex gap-2">
                 {draft.id && (
-                  <button type="button" onClick={() => void testConnection()} disabled={testing || saving} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
+                  <button type="button" onClick={() => void testConnection()} disabled={Boolean(user) && (testing || saving)} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-50">
                     {testing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                     测试连接
                   </button>
                 )}
                 {draft.id && (
-                  <button type="button" onClick={() => void deleteProvider()} disabled={deleting || saving} className="inline-flex h-9 items-center gap-2 rounded-md border border-rose-900/60 px-3 text-sm text-rose-300 hover:bg-rose-950/30 disabled:opacity-50">
+                  <button type="button" onClick={() => void deleteProvider()} disabled={Boolean(user) && (deleting || saving)} className="inline-flex h-9 items-center gap-2 rounded-md border border-rose-900/60 px-3 text-sm text-rose-300 hover:bg-rose-950/30 disabled:opacity-50">
                     <Trash2 className="h-4 w-4" />删除
                   </button>
                 )}
               </div>
-              <button type="button" onClick={() => void saveProvider()} disabled={saving} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50">
+              <button type="button" onClick={() => void saveProvider()} disabled={Boolean(user) && (saving)} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50">
                 {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 保存 Provider
               </button>
@@ -645,7 +648,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
               <h3 className="text-sm font-medium text-slate-200">模型路由</h3>
               <p className="mt-1 text-xs text-slate-500">为聊天、后台快速任务和图片请求选择默认模型。</p>
             </div>
-            <button type="button" onClick={() => void savePreferences()} disabled={savingPreferences || enabledModels.length === 0} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-40">
+            <button type="button" onClick={() => void savePreferences()} disabled={Boolean(user) && (savingPreferences || enabledModels.length === 0)} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-900 disabled:opacity-40">
               {savingPreferences ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               保存路由
             </button>

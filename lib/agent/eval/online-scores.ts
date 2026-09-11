@@ -21,7 +21,7 @@ export function buildOnlineScores(trace: AgentTrace): OnlineScore[] {
   const validation = latestValidation(trace);
   // 先记录所有请求都具备的运行指标；RAG 质量指标仅在实际完成证据校验后上报。
   const scores: OnlineScore[] = [
-    { name: "agent_completed（Agent 是否正常完成）", value: trace.completed ? 1 : 0 },
+    { name: "agent_completed（Agent 是否正常完成）", value: trace.completed && trace.stopReason === "completed" ? 1 : 0 },
     {
       name: "tool_error_rate（工具调用失败率）",
       value: toolSteps.length === 0 ? 0 : failedTools.length / toolSteps.length,
@@ -65,7 +65,7 @@ export async function reportOnlineScores(input: {
       metadata: {
         requestId: input.trace.requestId,
         stopReason: input.trace.stopReason,
-        scoreVersion: "online-v1",
+        scoreVersion: "online-v2",
       },
     });
   }

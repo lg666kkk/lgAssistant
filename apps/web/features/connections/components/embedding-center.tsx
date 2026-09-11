@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useAuth } from "@web/lib/auth/use-auth";
+
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   BrainCircuit,
@@ -68,6 +70,7 @@ function IndexMetric({
   total: number;
   compatible: number;
 }) {
+  const { user } = useAuth();
   const healthy = total === compatible;
   const empty = total === 0;
   return (
@@ -82,12 +85,12 @@ function IndexMetric({
             ? "bg-slate-800 text-slate-400"
             : healthy ? "bg-emerald-950/50 text-emerald-300" : "bg-amber-950/50 text-amber-300"
         }`}>
-          {empty ? "暂无数据" : healthy ? "版本完整" : "版本未知"}
+          {!user ? "登录后查看" : empty ? "暂无数据" : healthy ? "版本完整" : "版本未知"}
         </span>
       </div>
-      <div className="mt-4 text-2xl font-semibold text-slate-100">{total.toLocaleString("zh-CN")}</div>
+      <div className="mt-4 text-2xl font-semibold text-slate-100">{user ? total.toLocaleString("zh-CN") : "—"}</div>
       <div className="mt-1 text-xs text-slate-500">
-        {healthy
+        {!user ? "登录后读取索引状态" : healthy
           ? `已记录当前版本 ${compatible.toLocaleString("zh-CN")} 条`
           : `已记录 ${compatible.toLocaleString("zh-CN")} 条，未标记 ${(total - compatible).toLocaleString("zh-CN")} 条`}
       </div>
@@ -96,7 +99,8 @@ function IndexMetric({
 }
 
 export function EmbeddingCenter() {
-  const [config, setConfig] = useState<UserEmbeddingConfigView | null>(null);
+  const { user } = useAuth();
+  const [config, setConfig] = useState<UserEmbeddingConfigView | null>(user ? null : emptyConfig);
   const [draft, setDraft] = useState<Draft>({
     provider: "dashscope",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -108,7 +112,8 @@ export function EmbeddingCenter() {
   const [notice, setNotice] = useState<string | null>(null);
   const [testState, setTestState] = useState<TestState | null>(null);
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
@@ -124,11 +129,11 @@ export function EmbeddingCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     void loadConfig();
-  }, []);
+  }, [loadConfig]);
 
   const save = async () => {
     setSaving(true);
@@ -183,7 +188,7 @@ export function EmbeddingCenter() {
     }
   };
 
-  const status = config ? statusLabel(config) : null;
+  const status = !user ? { text: "登录后查看配置", className: "bg-slate-800 text-slate-400" } : config ? statusLabel(config) : null;
   const unknownMemoryVectors = config
     ? Math.max(0, config.indexHealth.memoryVectors - config.indexHealth.compatibleMemoryVectors)
     : 0;
@@ -213,7 +218,7 @@ export function EmbeddingCenter() {
           <button
             type="button"
             onClick={() => void save()}
-            disabled={loading || saving || !draft.baseUrl.trim() || (!config?.apiKeyConfigured && !draft.apiKey.trim())}
+            disabled={Boolean(user) && (loading || saving || !draft.baseUrl.trim() || (!config?.apiKeyConfigured && !draft.apiKey.trim()))}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -336,7 +341,7 @@ export function EmbeddingCenter() {
                 <button
                   type="button"
                   onClick={() => void testConnection()}
-                  disabled={testState?.tone === "testing" || (!draft.apiKey.trim() && !config.apiKeyConfigured)}
+                  disabled={Boolean(user) && (testState?.tone === "testing" || (!draft.apiKey.trim() && !config.apiKeyConfigured))}
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {testState?.tone === "testing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}

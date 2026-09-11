@@ -47,7 +47,7 @@ import {
   uploadChatImage,
   type ComposerImageAttachment,
 } from "@/lib/chat/image-storage";
-import { AuthGate } from "@web/lib/auth/auth-gate";
+import { PrivatePageBoundary } from "@web/lib/auth/private-page-boundary";
 import { useAuth } from "@web/lib/auth/use-auth";
 import { createUuid } from "@/lib/platform/uuid";
 
@@ -75,13 +75,13 @@ function readFileAsDataUrl(file: File) {
 }
 
 export default function Home() {
-  const { user, supabase } = useAuth();
+  const { user, supabase, requestLogin, requireLogin } = useAuth();
   const {
     catalog: llmCatalog,
     loading: llmCatalogLoading,
     error: llmCatalogError,
     reload: reloadLlmCatalog,
-  } = useLlmCatalog(Boolean(user));
+  } = useLlmCatalog(user?.id);
   const {
     sessions,
     activeId,
@@ -92,7 +92,6 @@ export default function Home() {
     deleteSession,
     renameSession,
     rerender,
-    loading: sessionsLoading,
   } = useChatManager();
 
   const [input, setInput] = useState("");
@@ -112,6 +111,19 @@ export default function Home() {
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const sessionScrollPositionsRef = useRef(new Map<string, number>());
   const inputRef = useRef<HTMLDivElement>(null);
+
+  const previousUserId = useRef(user?.id);
+  useEffect(() => {
+    if (previousUserId.current && previousUserId.current !== user?.id) {
+      setAttachments([]);
+      setAttachmentError(null);
+      setPreviewImage(null);
+      setSessionDialog(null);
+      setRequestedTraceId(null);
+      sessionScrollPositionsRef.current.clear();
+    }
+    previousUserId.current = user?.id;
+  }, [user?.id]);
 
   const { loading, streaming, contextUsage } = activeSession || {};
   const isAgentRunning = Boolean(loading || streaming);
@@ -138,8 +150,8 @@ export default function Home() {
     (attachment) => attachment.uploadStatus === "ready",
   );
   const configuredModels = useMemo(
-    () => (llmCatalog?.models ?? []).filter((model) => model.enabled),
-    [llmCatalog?.models],
+    () => (user ? llmCatalog?.models ?? [] : []).filter((model) => model.enabled),
+    [llmCatalog?.models, user],
   );
   useEffect(() => {
     if (window.matchMedia("(max-width: 767px)").matches) {
@@ -180,6 +192,7 @@ export default function Home() {
   }, [configuredModels, llmCatalog?.preferences.defaultModelId, llmCatalogLoading, selectedModel]);
 
   const handleSend = async () => {
+    if (!requireLogin()) return;
     if (
       (!input.trim() && attachments.length === 0)
       || loading
@@ -266,6 +279,7 @@ export default function Home() {
   };
 
   const handleImagesSelected = async (files: File[]) => {
+    if (!requireLogin()) return;
     if (files.length === 0) return;
     setAttachmentError(null);
     if (!user || !activeSession) {
@@ -422,6 +436,7 @@ export default function Home() {
   };
 
   const handleCreateSession = async () => {
+    if (!requireLogin()) return;
     if (attachmentsUploading) {
       setAttachmentError("图片正在处理中，请稍候");
       return;
@@ -494,32 +509,28 @@ export default function Home() {
     }
     try {
       await clearPendingAttachments();
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setInput("");
+      setPreviewImage(null);
+      setSessionDialog(null);
+      setRequestedTraceId(null);
     } catch (signOutError) {
       setAttachmentError(signOutError instanceof Error ? signOutError.message : "退出前清理图片失败");
     }
   };
 
-  // 加载中状态
-  if (sessionsLoading) {
-    return (
-      <div className="flex h-full items-center justify-center bg-slate-950">
-        <div className="text-slate-400">加载中...</div>
-      </div>
-    );
-  }
-
   return (
-    <AuthGate>
     <div className="flex h-full bg-slate-950">
       <AppSidebar
         open={sidebarOpen}
         activeCapability={activeCapability}
         activeConnectionTab={activeConnectionTab}
         activeCustomAgentTab={activeCustomAgentTab}
-        sessions={sessions}
+        sessions={user ? sessions : []}
         activeSessionId={activeId}
         userEmail={user?.email}
+        onSignIn={requestLogin}
         onCapabilityChange={setActiveCapability}
         onConnectionTabChange={setActiveConnectionTab}
         onCustomAgentTabChange={setActiveCustomAgentTab}
@@ -565,8 +576,14 @@ export default function Home() {
 
         {activeCapability === "chat" ? (
           <>
+            {!user && (
+              <div className="px-6 pt-10 text-center">
+                <h2 className="text-2xl font-semibold text-slate-100">让知识，成为你的助力</h2>
+                <p className="mt-3 text-sm leading-6 text-slate-400">与助手对话、整理知识、探索想法。发送消息时登录，继续你的思考。</p>
+              </div>
+            )}
             <ChatThread
-              session={activeSession}
+              session={user ? activeSession : undefined}
               scrollRef={messagesScrollRef}
               onScrollPositionChange={(position) => {
                 if (activeId) sessionScrollPositionsRef.current.set(activeId, position);
@@ -599,6 +616,7 @@ export default function Home() {
               attachments={attachments}
               attachmentsUploading={attachmentsUploading}
               attachmentError={attachmentError}
+              onBeforeImageSelect={requireLogin}
               onImagesSelected={(files) => void handleImagesSelected(files)}
               onRemoveAttachment={(id) => void handleRemoveAttachment(id)}
               onRetryAttachment={(id) => void handleRetryAttachment(id)}
@@ -608,7 +626,7 @@ export default function Home() {
               disabled={
                 attachmentsUploading
                 || !attachmentsReady
-                || !selectedModel
+                || (Boolean(user) && !selectedModel)
                 || (!input.trim() && attachments.length === 0)
               }
             />
@@ -617,7 +635,9 @@ export default function Home() {
               onClose={() => setPreviewImage(null)}
             />
           </>
-        ) : activeCapability === "connections" && activeConnectionTab === "language-model" ? (
+        ) : (
+          <PrivatePageBoundary key={user?.id ?? "guest"}>
+          {activeCapability === "connections" && activeConnectionTab === "language-model" ? (
           <LanguageModelCenter
             catalog={llmCatalog}
             loading={llmCatalogLoading}
@@ -649,8 +669,10 @@ export default function Home() {
             {mainTitle}配置将在后续接入
           </div>
         )}
+          </PrivatePageBoundary>
+        )}
       </main>
-      {sessionDialog && (
+      {user && sessionDialog && (
         <SessionDialog
           dialog={sessionDialog}
           onClose={() => setSessionDialog(null)}
@@ -659,6 +681,5 @@ export default function Home() {
         />
       )}
     </div>
-    </AuthGate>
   );
 }

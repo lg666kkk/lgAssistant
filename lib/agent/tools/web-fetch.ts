@@ -195,18 +195,15 @@ async function readResponseTextWithLimit(response: Response) {
   };
 }
 
-async function fetchPage(rawUrl: string): Promise<FetchPageResult> {
+async function fetchPage(rawUrl: string, signal?: AbortSignal): Promise<FetchPageResult> {
   let current = validatePublicHttpUrl(rawUrl);
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let response: Response;
-
-    try {
-      response = await fetch(current.toString(), {
+    signal?.throwIfAborted();
+    const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    const response = await fetch(current.toString(), {
         redirect: "manual",
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (compatible; PersonalAssistantBot/1.0)",
@@ -214,9 +211,6 @@ async function fetchPage(rawUrl: string): Promise<FetchPageResult> {
           "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         },
       });
-    } finally {
-      clearTimeout(timeout);
-    }
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
@@ -262,10 +256,10 @@ async function fetchPage(rawUrl: string): Promise<FetchPageResult> {
   throw new Error(`网页重定向次数过多，超过 ${MAX_REDIRECTS} 次`);
 }
 
-async function fetchPageWithReader(rawUrl: string): Promise<FetchPageResult> {
+async function fetchPageWithReader(rawUrl: string, signal?: AbortSignal): Promise<FetchPageResult> {
   const original = validatePublicHttpUrl(rawUrl).toString();
   const readerUrl = toReaderProxyUrl(original);
-  const page = await fetchPage(readerUrl);
+  const page = await fetchPage(readerUrl, signal);
 
   return {
     ...page,
@@ -675,7 +669,7 @@ export function createWebFetchTool(options: {
     maxConcurrency: 3,
   },
   riskLevel: "safe",
-  execute: async (input: unknown): Promise<ToolResult> => {
+  execute: async (input, context): Promise<ToolResult> => {
     const startedAt = Date.now();
     const finalize = (result: ToolResult) =>
       attachEvidenceBundle(result, options.retrievalPlan, Date.now() - startedAt);
@@ -690,7 +684,7 @@ export function createWebFetchTool(options: {
 
     try {
       const rewritten = rewriteKnownSourceUrl(url);
-      const page = await fetchPage(rewritten.url);
+      const page = await fetchPage(rewritten.url, context?.signal);
       const result = buildWebFetchResult({
         requestedUrl: url,
         fetchedUrl: rewritten.url,
@@ -700,7 +694,7 @@ export function createWebFetchTool(options: {
       });
 
       if (!result.ok && shouldTryReaderFallback(result.error)) {
-        const fallbackPage = await fetchPageWithReader(url);
+        const fallbackPage = await fetchPageWithReader(url, context?.signal);
         return finalize(buildWebFetchResult({
           requestedUrl: url,
           fetchedUrl: toReaderProxyUrl(url),
@@ -711,9 +705,10 @@ export function createWebFetchTool(options: {
 
       return finalize(result);
     } catch (error) {
+      context?.signal?.throwIfAborted();
       if (shouldTryReaderFallback(undefined, error)) {
         try {
-          const fallbackPage = await fetchPageWithReader(url);
+          const fallbackPage = await fetchPageWithReader(url, context?.signal);
           return finalize(buildWebFetchResult({
             requestedUrl: url,
             fetchedUrl: toReaderProxyUrl(url),

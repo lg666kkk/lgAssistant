@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@web/lib/auth/use-auth";
+
 import { useCallback, useEffect, useState } from "react";
 import {
   Database,
@@ -159,6 +161,7 @@ function eventTone(event: SyncEvent) {
 }
 
 export function KnowledgeCenter() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<KnowledgeTab>("documents");
   const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
@@ -189,7 +192,8 @@ export function KnowledgeCenter() {
   const [resetPreview, setResetPreview] = useState<KnowledgeResetResult | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
 
-  const loadPages = () => {
+  const loadPages = useCallback(() => {
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     Promise.all([
@@ -212,9 +216,10 @@ export function KnowledgeCenter() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  };
+  }, [user]);
 
-  const loadKnowledgeProfile = () => {
+  const loadKnowledgeProfile = useCallback(() => {
+    if (!user) { setProfileLoading(false); return; }
     setProfileLoading(true);
     setProfileError(null);
     authFetch("/api/knowledge/profile", { cache: "no-store" })
@@ -229,9 +234,10 @@ export function KnowledgeCenter() {
       })
       .catch((error) => setProfileError(error.message))
       .finally(() => setProfileLoading(false));
-  };
+  }, [user]);
 
-  const loadIngestionJobs = () => {
+  const loadIngestionJobs = useCallback(() => {
+    if (!user) { return; }
     authFetch("/api/knowledge/ingestion/jobs", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
@@ -240,13 +246,13 @@ export function KnowledgeCenter() {
       })
       .then((data) => setIngestionJobs(data.jobs ?? []))
       .catch(() => setIngestionJobs([]));
-  };
+  }, [user]);
 
   useEffect(() => {
     loadPages();
     loadKnowledgeProfile();
     loadIngestionJobs();
-  }, []);
+  }, [loadPages, loadKnowledgeProfile, loadIngestionJobs]);
 
   async function startSync() {
     const input = notionInput.trim();
@@ -476,16 +482,16 @@ export function KnowledgeCenter() {
             <button
               type="button"
               onClick={() => { loadPages(); loadKnowledgeProfile(); loadIngestionJobs(); }}
-              disabled={loading}
+              disabled={Boolean(user) && (loading)}
               className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
             >
               刷新
             </button>
-            <div className="text-sm text-slate-500">{pages.length} 个页面</div>
+            <div className="text-sm text-slate-500">{user ? `${pages.length} 个页面` : "登录后查看文档"}</div>
           </div>
       </div>
 
-      <nav aria-label="知识库视图" className="mx-auto flex w-full max-w-6xl shrink-0 overflow-x-auto border-b border-zinc-800 px-6">
+      <nav data-guest-browse aria-label="知识库视图" className="mx-auto flex w-full max-w-6xl shrink-0 overflow-x-auto border-b border-zinc-800 px-6">
         {knowledgeTabs.map((tab) => {
           const Icon = tab.icon;
           const selected = activeTab === tab.id;
@@ -545,12 +551,12 @@ export function KnowledgeCenter() {
                   }}
                   placeholder="https://app.notion.com/p/..."
                   className="min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-700"
-                  disabled={syncing}
+                  disabled={Boolean(user) && (syncing)}
                 />
                 <button
                   type="button"
                   onClick={startSync}
-                  disabled={syncing || !notionInput.trim() || !notionReady}
+                  disabled={Boolean(user) && (syncing || !notionInput.trim() || !notionReady)}
                   className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                 >
                   {syncing ? "同步中" : "开始同步"}
@@ -564,7 +570,7 @@ export function KnowledgeCenter() {
                   type="checkbox"
                   checked={syncTree}
                   onChange={(event) => setSyncTree(event.target.checked)}
-                  disabled={syncing}
+                  disabled={Boolean(user) && (syncing)}
                   className="h-4 w-4 accent-cyan-600"
                 />
                 递归同步子页面
@@ -574,7 +580,7 @@ export function KnowledgeCenter() {
                   type="checkbox"
                   checked={syncForce}
                   onChange={(event) => setSyncForce(event.target.checked)}
-                  disabled={syncing}
+                  disabled={Boolean(user) && (syncing)}
                   className="h-4 w-4 accent-cyan-600"
                 />
                 强制刷新 chunks 和向量
@@ -656,7 +662,7 @@ export function KnowledgeCenter() {
                   type="checkbox"
                   checked={compileForce}
                   onChange={(event) => setCompileForce(event.target.checked)}
-                  disabled={compiling}
+                  disabled={Boolean(user) && (compiling)}
                   className="h-4 w-4 accent-cyan-600"
                 />
                 强制重编译
@@ -664,7 +670,7 @@ export function KnowledgeCenter() {
               <button
                 type="button"
                 onClick={startCompile}
-                disabled={compiling || pages.length === 0}
+                disabled={Boolean(user) && (compiling || pages.length === 0)}
                 className="rounded-md bg-violet-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
                 {compiling ? "编译中" : "编译 Wiki"}
@@ -794,7 +800,7 @@ export function KnowledgeCenter() {
                     maxLength={knowledgeProfile.maxCustomProfileChars}
                     placeholder="输入自定义知识范围"
                     className="mt-2 min-h-32 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-700"
-                    disabled={profileSaving}
+                    disabled={Boolean(user) && (profileSaving)}
                   />
                   <div className="mt-3 flex min-h-9 flex-wrap items-center justify-between gap-2">
                     <div className="text-xs">
@@ -805,7 +811,7 @@ export function KnowledgeCenter() {
                       <button
                         type="button"
                         onClick={restoreGeneratedProfile}
-                        disabled={profileSaving || !knowledgeProfile.customProfile}
+                        disabled={Boolean(user) && (profileSaving || !knowledgeProfile.customProfile)}
                         className="inline-flex items-center gap-2 rounded-md border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
                       >
                         <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -814,11 +820,11 @@ export function KnowledgeCenter() {
                       <button
                         type="button"
                         onClick={saveKnowledgeProfile}
-                        disabled={
+                        disabled={Boolean(user) && (
                           profileSaving
                           || !profileDraft.trim()
                           || profileDraft.trim() === knowledgeProfile.customProfile
-                        }
+                        )}
                         className="inline-flex items-center gap-2 rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                       >
                         <Save className="h-4 w-4" aria-hidden="true" />
@@ -865,7 +871,7 @@ export function KnowledgeCenter() {
               <button
                 type="button"
                 onClick={() => runReset(false)}
-                disabled={resetting || (!resetIncludeRag && !resetIncludeCompiledWiki)}
+                disabled={Boolean(user) && (resetting || (!resetIncludeRag && !resetIncludeCompiledWiki))}
                 className="rounded-md border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-600"
               >
                 {resetting ? "处理中" : "预览清空"}
@@ -873,7 +879,7 @@ export function KnowledgeCenter() {
               <button
                 type="button"
                 onClick={() => runReset(true)}
-                disabled={resetting || syncing || compiling || (!resetIncludeRag && !resetIncludeCompiledWiki)}
+                disabled={Boolean(user) && (resetting || syncing || compiling || (!resetIncludeRag && !resetIncludeCompiledWiki))}
                 className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
                 确认清空
@@ -891,7 +897,7 @@ export function KnowledgeCenter() {
                     setResetIncludeRag(event.target.checked);
                     setResetPreview(null);
                   }}
-                  disabled={resetting}
+                  disabled={Boolean(user) && (resetting)}
                   className="h-4 w-4 accent-rose-600"
                 />
                 Raw RAG 页面和 chunks
@@ -904,7 +910,7 @@ export function KnowledgeCenter() {
                     setResetIncludeCompiledWiki(event.target.checked);
                     setResetPreview(null);
                   }}
-                  disabled={resetting}
+                  disabled={Boolean(user) && (resetting)}
                   className="h-4 w-4 accent-rose-600"
                 />
                 编译 Wiki 页面和关系
@@ -1013,7 +1019,7 @@ export function KnowledgeCenter() {
                 {pages.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
-                      暂无已同步页面
+                      {user ? "暂无已同步页面" : "登录后查看知识库文档"}
                     </td>
                   </tr>
                 )}

@@ -1,12 +1,30 @@
 import { describe, it, expect } from "vitest";
 import {
   createTrace,
+  finalizeAnswerTrace,
   formatTraceTree,
   prependMemoryRecallTraceStep,
   prependUserProfileTraceStep,
 } from "./trace";
 
 describe("trace 冒烟测试", () => {
+  it.each(["error", "max_iterations", "token_budget_exceeded", "repeated_tool_call", "aborted"] as const)("preserves %s after the final answer succeeds", (stopReason) => {
+    const trace = createTrace("failed-run");
+    trace.stopReason = stopReason;
+    finalizeAnswerTrace(trace, "end_turn");
+    expect(trace).toMatchObject({ completed: false, stopReason });
+    expect(trace.endedAt).toBeDefined();
+  });
+
+  it("marks truncated answers incomplete without masking an existing execution failure", () => {
+    const trace = createTrace("success");
+    trace.completed = true;
+    finalizeAnswerTrace(trace, "max_tokens");
+    expect(trace).toMatchObject({ completed: false, stopReason: "max_tokens" });
+    trace.stopReason = "error";
+    finalizeAnswerTrace(trace, "max_tokens");
+    expect(trace.stopReason).toBe("error");
+  });
   it("records the execution strategy independently from tool authorization", () => {
     const trace = createTrace("strategy-1");
     trace.steps.push({

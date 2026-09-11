@@ -46,14 +46,11 @@ export async function getAccessToken() {
   return session?.access_token ?? null;
 }
 
-function redirectToLogin() {
-  if (typeof window === "undefined") return;
+export const LOGIN_REQUIRED_EVENT = "auth:login-required";
 
-  const current = `${window.location.pathname}${window.location.search}`;
-  const target = `/login?next=${encodeURIComponent(current)}`;
-
-  if (window.location.pathname !== "/login") {
-    window.location.assign(target);
+function requestLogin() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(LOGIN_REQUIRED_EVENT));
   }
 }
 
@@ -72,7 +69,7 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
 
   if (response.status === 401) {
     await getBrowserSupabase().auth.signOut().catch(() => undefined);
-    redirectToLogin();
+    requestLogin();
   }
 
   return response;
