@@ -37,12 +37,14 @@ export function ModelPicker({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-700 bg-slate-800/70 px-3.5 text-sm font-medium text-slate-400 transition-colors hover:border-cyan-500/40 hover:text-cyan-300"
+        className="inline-flex h-8 max-w-[8.5rem] items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/70 px-3 text-xs font-medium text-slate-400 transition-colors hover:border-cyan-500/40 hover:text-cyan-300 sm:h-9 sm:max-w-none sm:gap-2 sm:px-3.5 sm:text-sm"
         aria-expanded={open}
       >
-        {loading
-          ? "加载模型..."
-          : selectedModelOption?.displayName ?? "请配置模型"}
+        <span className="min-w-0 truncate">
+          {loading
+            ? "加载模型..."
+            : selectedModelOption?.displayName ?? "请配置模型"}
+        </span>
         <svg
           aria-hidden="true"
           width="16"
@@ -53,14 +55,14 @@ export function ModelPicker({
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`transition-transform ${open ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 shrink-0 transition-transform sm:h-4 sm:w-4 ${open ? "rotate-180" : ""}`}
         >
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-20 mb-3 w-[min(24rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/50">
+        <div className="fixed bottom-28 right-3 z-50 w-[min(24rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/50 sm:absolute sm:bottom-full sm:left-0 sm:right-auto sm:z-20 sm:mb-3 sm:w-[min(24rem,calc(100vw-3rem))]">
           <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-3">
             <svg
               aria-hidden="true"
@@ -80,7 +82,7 @@ export function ModelPicker({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search all models"
+              placeholder="搜索模型"
               className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
             />
           </div>
@@ -135,7 +137,7 @@ export function ModelPicker({
               );
             })}
             {!loading && filteredModels.length === 0 && (
-              <div className="px-3 py-6 text-center text-sm text-slate-500">
+              <div className="px-3 py-4 text-center text-sm leading-6 text-slate-500">
                 请先在连接的大语言模型页面添加 Provider
               </div>
             )}

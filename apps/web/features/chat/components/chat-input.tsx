@@ -229,13 +229,13 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
               }}
               className="max-h-40 min-h-[88px] overflow-y-auto whitespace-pre-wrap px-1 text-base leading-7 text-slate-100 outline-none empty:before:text-slate-500 empty:before:content-[attr(data-placeholder)]"
             />
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="mt-4 flex items-center justify-between gap-2 sm:gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
                 <button
                   type="button"
                   onClick={() => onWebSearchEnabledChange(!webSearchEnabled)}
                   aria-pressed={webSearchEnabled}
-                  className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition-colors ${
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors sm:h-9 sm:gap-2 sm:px-3.5 sm:text-sm ${
                     webSearchEnabled
                       ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200"
                       : "border-slate-700 bg-slate-800/70 text-slate-400 hover:border-cyan-500/40 hover:text-cyan-300"
@@ -245,6 +245,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     aria-hidden="true"
                     width="18"
                     height="18"
+                    className="h-4 w-4 sm:h-[18px] sm:w-[18px]"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -266,7 +267,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                   onSelectedModelChange={onSelectedModelChange}
                 />
               </div>
-              <div className="flex shrink-0 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
                 <Tooltip.Provider delayDuration={120}>
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
@@ -384,37 +385,38 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     fileInputRef.current?.click();
                   }}
                   disabled={attachmentsUploading}
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 sm:h-10 sm:w-10"
                   title={attachmentsUploading ? "正在上传图片" : "添加图片"}
                   aria-label={attachmentsUploading ? "正在上传图片" : "添加图片"}
                 >
                   {attachmentsUploading ? (
-                    <LoaderCircle className="h-[22px] w-[22px] animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    <LoaderCircle className="h-[18px] w-[18px] animate-spin motion-reduce:animate-none sm:h-[22px] sm:w-[22px]" aria-hidden="true" />
                   ) : (
-                    <ImagePlus className="h-[22px] w-[22px]" aria-hidden="true" />
+                    <ImagePlus className="h-[18px] w-[18px] sm:h-[22px] sm:w-[22px]" aria-hidden="true" />
                   )}
                 </button>
                 {isRunning ? (
                   <button
                     type="button"
                     onClick={onStop}
-                    className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400 sm:h-11 sm:w-11"
                     title="停止"
                   >
-                    <span className="h-3.5 w-3.5 rounded-sm bg-white" />
+                    <span className="h-3 w-3 rounded-sm bg-white sm:h-3.5 sm:w-3.5" />
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={onSend}
                     disabled={disabled}
-                    className="flex h-11 w-11 items-center justify-center rounded-full bg-cyan-500 text-white transition-colors hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500 text-white transition-colors hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 sm:h-11 sm:w-11"
                     title="发送"
                   >
                     <svg
                       aria-hidden="true"
                       width="23"
                       height="23"
+                      className="h-[19px] w-[19px] sm:h-[23px] sm:w-[23px]"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"

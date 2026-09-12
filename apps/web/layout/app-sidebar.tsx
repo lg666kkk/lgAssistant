@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import {
   Activity,
   Blocks,
@@ -167,10 +168,15 @@ export function AppSidebar({
     >
       <div className="border-b border-slate-800 px-3 py-4">
         <div className="mb-4 flex items-center gap-3 px-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">
-            <span className="text-sm font-semibold">AI</span>
-          </div>
-          <span className="truncate text-sm font-semibold text-slate-100">知识助手</span>
+          <Image
+            src="/icon.png"
+            alt="知识助手"
+            width={32}
+            height={32}
+            priority
+            className="h-8 w-8 shrink-0 rounded-lg p-1"
+          />
+          <span className="truncate text-lg font-semibold text-slate-100">知识助手</span>
         </div>
         <nav aria-label="主要功能" className="space-y-1">
           {([
