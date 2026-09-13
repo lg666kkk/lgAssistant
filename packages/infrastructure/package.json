@@ -9,6 +9,7 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./chat": "./src/chat/index.ts"
+    "./chat": "./src/chat/index.ts",
+    "./mcp/user-config": "./src/mcp/user-config.ts"
   }
 }

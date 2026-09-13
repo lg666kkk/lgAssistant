@@ -18,6 +18,7 @@ import {
 } from "@web/layout/app-sidebar";
 import { LanguageModelCenter } from "@web/features/connections/components/language-model-center";
 import { EmbeddingCenter } from "@web/features/connections/components/embedding-center";
+import { McpCenter } from "@web/features/connections/components/mcp-center";
 import { SearchEngineCenter } from "@web/features/connections/components/search-engine-center";
 import { LangfuseCenter } from "@web/features/observability/components/langfuse-center";
 import { MemoryCenter } from "@web/features/memory/components/memory-center";
@@ -646,6 +647,8 @@ export default function Home() {
           />
         ) : activeCapability === "connections" && activeConnectionTab === "search-engine" ? (
           <SearchEngineCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "mcp" ? (
+          <McpCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "embedding" ? (
           <EmbeddingCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "usage" ? (

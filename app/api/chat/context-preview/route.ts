@@ -18,6 +18,7 @@ export async function POST(request: Request) {
   try {
     const usage = await previewChatContextUseCase({
       userId: user.id,
+      signal: request.signal,
       dependencies: createProductionChatDependencies(),
       sessionId: body.sessionId,
       modelId: body.model,

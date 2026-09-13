@@ -84,6 +84,7 @@ export interface ToolOrchestrationPolicy {
 }
 
 export interface ToolDefinition {
+  display?: { source: "mcp"; serverName: string; remoteToolName: string; description: string };
   name: string; // 工具名称
   description: string; // 工具说明
   capabilities: string[]; // 工具能完成的稳定能力，不与具体工具名绑定

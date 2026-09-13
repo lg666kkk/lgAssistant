@@ -18,12 +18,14 @@ import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
 import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import type { ChatApplicationDependencies } from "./ports";
+import { openExternalToolSession } from "../mcp/session";
 
 type ModelMessage = Anthropic.MessageParam;
 
 export type PreviewChatContextInput = {
   userId: string;
-  dependencies: Pick<ChatApplicationDependencies, "userContext" | "sessions">;
+  dependencies: Pick<ChatApplicationDependencies, "userContext" | "sessions" | "externalTools">;
+  signal?: AbortSignal;
   sessionId?: unknown;
   modelId?: unknown;
   webSearchEnabled?: unknown;
@@ -142,6 +144,17 @@ export async function previewChatContextUseCase(
     knowledgeProfile: knowledgeSnapshot?.profile,
     retrievalPlan,
   });
+  const external = await openExternalToolSession({
+    port: selectedModel.supportsTools ? deps.externalTools : undefined,
+    userId: input.userId,
+    signal: input.signal ?? new AbortController().signal,
+  });
+  try {
+    for (const tool of external.tools) toolRegistry.register(tool);
+  } finally {
+    // Preview only needs schemas; it never executes remote tools.
+    await external.close();
+  }
   const routeToolDefinitions = filterToolsForRetrievalRoute(
     toolRegistry.list(),
     retrievalPlan.route,
@@ -210,4 +223,3 @@ export async function previewChatContextUseCase(
     },
   };
 }
-

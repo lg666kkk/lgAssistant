@@ -74,7 +74,7 @@ function checkRateLimit(toolName: string, rateLimit?: number, scopeId?: string) 
  *    读文件、查数据库、调 API、跑命令
  * 所以 Router 统一设计成异步。
  */
-export async function executeToolCall(
+async function executeToolCallInternal(
   registry: ToolRegistry,
   toolCall: ToolCall,
   options: ExecuteToolCallOptions = {},
@@ -221,4 +221,16 @@ async function withTimeout<T>(
       clearTimeout(timeoutId);
     }
   }
+}
+
+/** Attach presentation metadata even when execution is blocked or awaiting approval. */
+export async function executeToolCall(
+  registry: ToolRegistry,
+  toolCall: ToolCall,
+  options: ExecuteToolCallOptions = {},
+): Promise<ToolExecutionResult> {
+  const result = await executeToolCallInternal(registry, toolCall, options);
+  const display = registry.get(toolCall.name)?.display;
+  if (!display) return result;
+  return { ...result, metadata: { ...result.metadata, ...display, toolDescription: display.description } };
 }

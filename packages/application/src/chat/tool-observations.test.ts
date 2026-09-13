@@ -25,6 +25,21 @@ function setup(steps = [toolStep()]) {
 }
 
 describe("tool observations", () => {
+  it("projects MCP identity, status, duration and redacted arguments", () => {
+    const { project, trace, external } = setup([toolStep({
+      name: "mcp_internal_hash", input: { query: "campaigns", apiKey: "private-key" },
+      metadata: { source: "mcp", serverId: "server-1", serverName: "营销服务", remoteToolName: "campaign-list", status: "pending_confirmation", authorization: "hidden" },
+      ok: false,
+    })]);
+    project(trace);
+    expect(external.startObservation).toHaveBeenCalledWith("mcp:营销服务:campaign-list", expect.objectContaining({
+      metadata: expect.objectContaining({ source: "mcp", serverId: "server-1", serverName: "营销服务", remoteToolName: "campaign-list", measuredDurationMs: 125, toolName: "mcp_internal_hash" }),
+      output: expect.objectContaining({ status: "pending_confirmation" }), level: "WARNING",
+    }), { asType: "tool" });
+    expect(JSON.stringify(external.startObservation.mock.calls)).not.toContain("private-key");
+    expect(JSON.stringify(external.startObservation.mock.calls)).not.toContain("hidden");
+  });
+
   it("projects discovery, loading, sandbox execution and ordinary tools", () => {
     const { project, trace, external, end } = setup([
       toolStep({ name: "list_skills", index: 0, input: {} }),

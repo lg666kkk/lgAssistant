@@ -437,6 +437,7 @@ export class ChatSession {
       typeof result.error === "string" ? result.error : undefined;
     toolCall.metadata = {
       ...toolCall.metadata,
+      ...result.metadata,
       status: result.ok ? "confirmed" : "failed",
       confirmedAt: new Date().toISOString(),
       result,

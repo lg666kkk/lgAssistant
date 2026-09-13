@@ -1,5 +1,7 @@
 "use client";
 
+import { getMcpCallPresentation } from "@web/features/chat/components/mcp-tool-call";
+
 import { useEffect, useState } from "react";
 import { authFetch } from "@web/lib/auth/client";
 
@@ -904,7 +906,7 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                           step.ok ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
-                        🔧 {step.name} {step.ok ? "" : "(失败)"}
+                        🔧 {getMcpCallPresentation(step)?.label ?? step.name} {step.ok ? "" : step.metadata?.status === "pending_confirmation" ? "(待确认)" : "(失败)"}
                       </span>
                     ) : step.type === "context_compaction" ? (
                       <span className="font-medium text-amber-300">

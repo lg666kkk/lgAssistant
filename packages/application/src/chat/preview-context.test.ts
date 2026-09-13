@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PreviewChatContextInput } from "./preview-context";
 import { previewChatContextUseCase } from "./preview-context";
+import { getCurrentTimeTool } from "@/lib/agent/tools/current-time";
 
 function fakeDependencies(): PreviewChatContextInput["dependencies"] {
   return {
@@ -55,6 +56,20 @@ function fakeDependencies(): PreviewChatContextInput["dependencies"] {
 }
 
 describe("previewChatContextUseCase", () => {
+  it("counts external schemas and closes discovery without executing tools", async () => {
+    const dependencies = fakeDependencies();
+    const baseline = await previewChatContextUseCase({ userId: "user-1", dependencies });
+    const close = vi.fn(async () => {});
+    const execute = vi.fn();
+    dependencies.externalTools = { open: vi.fn(async () => ({
+      tools: [{ ...getCurrentTimeTool, name: "mcp_preview_test", description: "External tool description", execute }], close,
+    })) };
+    const usage = await previewChatContextUseCase({ userId: "user-1", dependencies });
+    expect(usage.breakdown!.toolSchemaTokens).toBeGreaterThan(baseline.breakdown!.toolSchemaTokens);
+    expect(execute).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("shows baseline system, profile, conversation and tool schema usage while idle", async () => {
     const dependencies = fakeDependencies();
     const usage = await previewChatContextUseCase({
@@ -114,4 +129,3 @@ describe("previewChatContextUseCase", () => {
     expect(withImages.estimatedTokens - withoutImage.estimatedTokens).toBeGreaterThanOrEqual(700);
   });
 });
-

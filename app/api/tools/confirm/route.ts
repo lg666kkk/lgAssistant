@@ -1,5 +1,6 @@
-import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
-import { executeToolCall } from "@/lib/agent/tools/tool-router";
+import { randomUUID } from "node:crypto";
+import { confirmTool } from "@repo/application/mcp/confirm-tool";
+import { createProductionChatDependencies } from "@repo/infrastructure/chat";
 import { requireUser } from "@/lib/auth/server";
 
 export async function POST(req: Request) {
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "请求体格式错误" }, { status: 400 });
   }
 
-  const { toolCall, sessionId } = body;
+  const { toolCall, sessionId } = body ?? {};
 
   if (!toolCall || typeof toolCall !== "object") {
     return Response.json({ error: "缺少 toolCall" }, { status: 400 });
@@ -24,21 +25,14 @@ export async function POST(req: Request) {
     return Response.json({ error: "toolCall.name 必须是字符串" }, { status: 400 });
   }
 
-  const registry = createBuiltinToolRegistry();
-
-  const result = await executeToolCall(
-    registry,
-    {
-      id: typeof toolCall.id === "string" ? toolCall.id : undefined,
-      name: toolCall.name,
-      input: toolCall.input,
-    },
-    {
-      approved: true,
-      scopeId: typeof sessionId === "string" ? sessionId : undefined,
-      userId: user.id,
-    },
-  );
+  const result = await confirmTool({
+    userId: user.id,
+    sessionId: typeof sessionId === "string" ? sessionId : undefined,
+    requestId: randomUUID(),
+    signal: req.signal,
+    toolCall: { id: typeof toolCall.id === "string" ? toolCall.id : undefined, name: toolCall.name, input: toolCall.input },
+    dependencies: createProductionChatDependencies(),
+  });
 
   return Response.json(result);
 }

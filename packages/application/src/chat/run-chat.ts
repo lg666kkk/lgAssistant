@@ -66,6 +66,7 @@ import { createToolObservationProjector } from "./tool-observations";
 import { prepareExecutionRoute } from "./execution-routing";
 import { parseChatRequest } from "./request";
 import type { ChatApplicationDependencies } from "./ports";
+import { openExternalToolSession } from "../mcp/session";
 
 export type RunChatUseCaseInput = {
   request: Request;
@@ -159,6 +160,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
   });
   // 有哪些工具
   const toolRegistry = createBuiltinToolRegistry({ knowledgeProfile, retrievalPlan });
+  const external = await openExternalToolSession({
+    port: selectedRuntimeModel.supportsTools ? deps.externalTools : undefined,
+    userId: user.id,
+    signal: req.signal,
+  });
+  try {
+  for (const tool of external.tools) toolRegistry.register(tool);
   // 给模型看的工具说明
   // 先在完整 ToolDefinition 上按元数据过滤，再投影成模型 schema。若先调用
   // listForModel，会丢失 outputPolicy/orchestration，路由只能退回硬编码工具名。
@@ -181,6 +189,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
     ? undefined
     : normalizeExecutionPlan(body.approvedPlan, new Set(tools.map((tool) => tool.name)));
   if (body.approvedPlan !== undefined && !approvedPlan) {
+    await external.close();
     return new Response(
       JSON.stringify({ error: "确认的计划格式无效，或不包含至少两个有效步骤" }),
       { status: 400, headers: { "Content-Type": "application/json" } },
@@ -198,11 +207,12 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
   // 构建 Web 标准的 ReadableStream，将 API 的流式事件转发给浏览器
   const readable = new ReadableStream({
     async start(controller) {
+      try {
       let closed = false;
       let pendingTrace: AgentTrace | undefined;
       let reportExternalScores: ((trace: AgentTrace) => Promise<void>) | undefined;
       const enqueueText = (text: string) => {
-        if (closed || req.signal.aborted) return false;
+        if (closed || external.signal.aborted) return false;
         try {
           controller.enqueue(encoder.encode(text));
           return true;
@@ -633,7 +643,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         }
 
         const planInput = {
-          signal: req.signal,
+          signal: external.signal,
           messages: loopMessages,
           tools,
           toolRegistry,
@@ -647,13 +657,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           model: selectedModel,
           retrievalPlan,
           contextPlan,
-          shouldStop: () => req.signal.aborted || closed,
+          shouldStop: () => external.signal.aborted || closed,
           onProgress: (plan: PlanProgressEventData) => enqueueEvent({ type: "plan_progress", plan }, enqueueText),
           onReasoning: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) =>
             enqueueEvent({ type: "reasoning", reasoning }, enqueueText),
         };
         const strategyStartedAt = Date.now();
-        const executionRoute = await prepareExecutionRoute({ ...planInput, approvedPlan: approvedPlan ?? undefined, signal: req.signal });
+        const executionRoute = await prepareExecutionRoute({ ...planInput, approvedPlan: approvedPlan ?? undefined, signal: external.signal });
         if (planInput.shouldStop()) {
           closeStream();
           return;
@@ -751,7 +761,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           sessionId,
           undefined, // deps 用默认
           systemPrompt, // ② 注入召回的记忆和联网搜索策略
-          () => req.signal.aborted || closed,
+          () => external.signal.aborted || closed,
           selectedModel,
           systemSegments, // 段化结构，写进 trace 供详情页按段展示
           user.id,
@@ -761,7 +771,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           [],
           undefined,
           new Map(),
-          req.signal,
+          external.signal,
         );
         agentLoopResult.trace.steps.unshift(strategyStep);
         agentLoopResult.trace.steps.forEach((step, index) => { step.index = index; });
@@ -849,7 +859,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
               content: text,
             },
           }, enqueueText);
-        }, req.signal);
+        }, external.signal);
         // 遍历 API 推送的每个事件块（chunk）
         // Anthropic 流会推送多种事件类型：message_start, content_block_delta, message_stop 等
         // 我们只关心 content_block_delta + text_delta，那才是实际的文字内容
@@ -859,11 +869,11 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
             finalAssistantText += text;
             return enqueueTextEvent(text);
           },
-          () => req.signal.aborted || closed,
+          () => external.signal.aborted || closed,
         );
         finalAssistantText = sanitizeModelText(finalAssistantText);
 
-        if (req.signal.aborted || closed) {
+        if (external.signal.aborted || closed) {
           // Agent Loop 已有部分执行记录，但用户中止不应被统计为成功完成。
           agentLoopResult.trace.completed = false;
           agentLoopResult.trace.stopReason = "aborted";
@@ -953,13 +963,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         if (pendingTrace) {
           // 保留已完成的步骤，并用终态覆盖循环中的临时 stopReason，供线上评分正确归类。
           pendingTrace.completed = false;
-          pendingTrace.stopReason = req.signal.aborted || closed ? "aborted" : "error";
+          pendingTrace.stopReason = external.signal.aborted || closed ? "aborted" : "error";
           pendingTrace.endedAt = Date.now();
           pendingTrace.totalDurationMs = pendingTrace.endedAt - pendingTrace.startedAt;
           projectTraceObservations(pendingTrace);
         }
         await savePendingTrace();
-        if (req.signal.aborted || closed) {
+        if (external.signal.aborted || closed) {
           langfuseTrace.update({
             output: {
               completed: false,
@@ -1005,6 +1015,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         closeStream();
       }
       });
+      } finally {
+        await external.close();
+      }
+    },
+    async cancel() {
+      external.abort();
+      await external.close();
     },
   });
 
@@ -1015,4 +1032,8 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
       "Connection": "keep-alive",
     },
   });
+  } catch (error) {
+    await external.close();
+    throw error;
+  }
 }

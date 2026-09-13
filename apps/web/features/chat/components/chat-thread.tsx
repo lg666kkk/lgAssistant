@@ -10,6 +10,7 @@ import type {
 } from "@repo/contracts";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
 import { summarizeToolCalls } from "@web/features/chat/model/tool-call-summary";
+import { getMcpCallPresentation, McpToolCallDetails } from "./mcp-tool-call";
 import { getChatImagePreviewUrl } from "@/lib/chat/image-storage";
 import type { PreviewImage } from "./image-preview-dialog";
 import {
@@ -228,9 +229,10 @@ export function ChatThread({
                           <div key={toolKey} className="py-1 text-xs text-slate-300">
                             <div className="flex min-w-0 items-center gap-2 pl-0.5">
                               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
-                              <span className="truncate font-mono text-[12px] text-slate-300">{toolCall.name}</span>
+                              <span className="min-w-0 break-words text-[12px] text-slate-300">{getMcpCallPresentation(toolCall)?.label ?? toolCall.name}</span>
                               <span className={`shrink-0 text-[10px] ${statusClass}`}>{statusLabel}</span>
                             </div>
+                            <McpToolCallDetails tool={toolCall} />
                             {toolCall.name === "view_skill" && toolCall.ok && (
                               <StandardSkillCard content={toolCall.content} />
                             )}

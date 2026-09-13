@@ -10,6 +10,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./chat": "./src/chat/index.ts",
-    "./chat/ports": "./src/chat/ports.ts"
+    "./chat/ports": "./src/chat/ports.ts",
+    "./mcp/confirm-tool": "./src/mcp/confirm-tool.ts",
+    "./mcp/ports": "./src/mcp/ports.ts"
   }
 }

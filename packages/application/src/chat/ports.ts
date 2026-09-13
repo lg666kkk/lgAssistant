@@ -4,6 +4,7 @@ import type { ContextSnapshot } from "@/lib/agent/context/types";
 import type { ResolvedUserLlmModel } from "@/lib/llm/types";
 import type { MemoryExecutionConfig } from "@/lib/memory-config/types";
 import type { UserProfileSnapshot } from "@/lib/user-profile/types";
+import type { ExternalToolsPort } from "../mcp/ports";
 
 export type KnowledgeProfileSnapshot = {
   profile: string;
@@ -114,6 +115,7 @@ export interface ChatTelemetryPort {
 }
 
 export type ChatApplicationDependencies = {
+  externalTools?: ExternalToolsPort;
   userContext: ChatUserContextPort;
   sessions: ChatSessionPort;
   traces: ChatTracePort;

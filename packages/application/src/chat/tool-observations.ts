@@ -60,7 +60,17 @@ export function createToolObservationProjector(trace: ExternalTracePort, request
         const status = typeof step.metadata?.status === "string" ? step.metadata.status : (step.ok ? "succeeded" : "failed");
         const input = preview(step.input);
         const output = preview(step.contentSummary);
-        const observation = trace.startObservation(`tool:${step.name.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80)}`, {
+        const mcp = step.metadata?.source === "mcp";
+        const mcpIdentity = mcp ? {
+          source: "mcp",
+          serverId: safeValue(step.metadata?.serverId),
+          serverName: safeValue(step.metadata?.serverName),
+          remoteToolName: safeValue(step.metadata?.remoteToolName),
+        } : {};
+        const observationName = mcp
+          ? `mcp:${String(safeValue(step.metadata?.serverName ?? "MCP"))}:${String(safeValue(step.metadata?.remoteToolName ?? step.name))}`.slice(0, 200)
+          : `tool:${step.name.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80)}`;
+        const observation = trace.startObservation(observationName, {
           input,
           output: {
             ok: step.ok,
@@ -76,6 +86,7 @@ export function createToolObservationProjector(trace: ExternalTracePort, request
             toolCallId: step.toolCallId,
             stepIndex: step.index,
             ...skillIdentity(step),
+            ...mcpIdentity,
             measuredDurationMs: step.durationMs,
             recordedAtMs: step.startedAt,
             projectedAfterExecution: true,
