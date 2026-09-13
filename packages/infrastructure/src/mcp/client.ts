@@ -8,6 +8,7 @@ import type { McpToolPolicy } from "@/lib/agent/tools/mcp-adapter";
 
 export type McpServerConfig = {
   name?: string;
+  revision?: string;
   id: string;
   url: string;
   tools: McpToolPolicy[];
@@ -101,6 +102,7 @@ export async function connectMcpServer(
       return adaptMcpTool({
         serverId: config.id,
         serverName: config.name,
+        configurationRevision: config.revision,
         userId: input.userId,
         tool,
         policy,

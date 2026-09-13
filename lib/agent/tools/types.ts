@@ -84,6 +84,7 @@ export interface ToolOrchestrationPolicy {
 }
 
 export interface ToolDefinition {
+  configurationRevision?: string;
   display?: { source: "mcp"; serverName: string; remoteToolName: string; description: string };
   name: string; // 工具名称
   description: string; // 工具说明

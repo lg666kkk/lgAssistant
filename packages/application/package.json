@@ -12,6 +12,7 @@
     "./chat": "./src/chat/index.ts",
     "./chat/ports": "./src/chat/ports.ts",
     "./mcp/confirm-tool": "./src/mcp/confirm-tool.ts",
+    "./mcp/continuation": "./src/mcp/continuation.ts",
     "./mcp/ports": "./src/mcp/ports.ts"
   }
 }

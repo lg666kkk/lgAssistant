@@ -115,6 +115,7 @@ export interface ChatTelemetryPort {
 }
 
 export type ChatApplicationDependencies = {
+  confirmations?: import("../mcp/continuation").ConfirmationStore;
   externalTools?: ExternalToolsPort;
   userContext: ChatUserContextPort;
   sessions: ChatSessionPort;

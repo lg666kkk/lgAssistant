@@ -53,6 +53,7 @@ export function normalizeMcpResult(result: McpCallResult, serverId: string, remo
 export function adaptMcpTool(input: {
   serverId: string;
   serverName?: string;
+  configurationRevision?: string;
   userId: string;
   tool: RemoteMcpTool;
   policy: McpToolPolicy;
@@ -67,6 +68,7 @@ export function adaptMcpTool(input: {
   const riskLevel = writes ? "confirm" : input.policy.riskLevel;
   return {
     name: mcpToolName(input.serverId, input.tool.name),
+    configurationRevision: input.configurationRevision,
     display: { source: "mcp", serverName: input.serverName || "MCP 服务", remoteToolName: input.tool.name, description: (input.tool.description ?? "").slice(0, 2000) },
     description: `[MCP: ${input.serverId}/${input.tool.name}] ${(input.tool.description ?? "").slice(0, 2_000)}`,
     input_schema: input.tool.inputSchema,

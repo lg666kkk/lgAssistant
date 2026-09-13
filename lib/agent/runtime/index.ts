@@ -97,7 +97,10 @@ export type AgentLoopStopReason =
   | "repeated_tool_call"
   | "max_iterations";
 
+export type RuntimeResumeState = { executedToolKeys?: string[]; spentTokens?: number };
+
 export type AgentLoopResult = {
+  pausedPlanStep?: number;
   loopMessages: ModelMessage[];
   completed: boolean;
   stopReason: AgentLoopStopReason;
@@ -156,7 +159,7 @@ interface ToolResultBlock {
   is_error: boolean;
 }
 
-export function getToolCallKey(toolUse: ToolUseBlock): string {
+export function getToolCallKey(toolUse: Pick<ToolUseBlock, "type" | "id" | "name" | "input">): string {
   return JSON.stringify({
     name: toolUse.name,
     input: toolUse.input,
@@ -1008,10 +1011,12 @@ export async function runAgentLoop(
   onReasoning?: (reasoning: import("@/lib/agent/runtime/events").ReasoningEventData) => void,
   initialRetrievalToolCalls: ReadonlyMap<string, number> = new Map(),
   signal?: AbortSignal,
+  resume?: RuntimeResumeState,
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
-  const seenToolCalls = new Set<string>();
+  const seenToolCalls = new Set<string>(resume?.executedToolKeys);
   const tokenBudget = new TokenBudget(AGENT_LOOP_TOKEN_BUDGET);
+  tokenBudget.spend(resume?.spentTokens ?? 0);
   const trace = createTrace(requestId, sessionId);
   trace.contextPlan = contextPlan;
   let stepIndex = 0; // model/tool step 共享的全局递增序号
@@ -1369,7 +1374,7 @@ export async function runAgentLoop(
       spentAfter: tokenBudget.spent,
       remainingAfter: tokenBudget.remaining(),
     };
-    metrics.estimatedTokensSpent = tokenBudget.spent;
+    metrics.estimatedTokensSpent = tokenBudget.spent - (resume?.spentTokens ?? 0);
     // 记录本轮注入的 system prompt（截断后），供 trace 详情页展示「喂了什么上下文」
     const systemSummary = system ? summarizeText(system) : undefined;
     const modelStep: ModelTraceStep = {
@@ -1666,15 +1671,6 @@ export async function runAgentLoop(
       (toolCall) => toolCall.metadata?.status === "awaiting_user_input",
     );
     if (userQuestion) {
-      const question =
-        typeof userQuestion.metadata?.question === "string"
-          ? userQuestion.metadata.question
-          : userQuestion.content;
-      enqueueEvent({ type: "text", content: `${question}\n` }, enqueueText);
-      loopMessages = [
-        ...loopMessages,
-        { role: "assistant" as const, content: question },
-      ];
       return {
         loopMessages,
         completed: true,

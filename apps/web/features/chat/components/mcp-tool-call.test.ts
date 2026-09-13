@@ -9,9 +9,9 @@ describe("MCP call presentation", () => {
     expect(getMcpCallPresentation({ name: "mcp_old", metadata: { remoteToolName: "campaign-list-all" } })?.label).toBe("MCP 服务 · campaign-list-all");
     expect(getMcpCallPresentation({ name: "calculator" })).toBeNull();
   });
-  it("renders pending arguments open without presenting a result as executed", () => {
+  it("renders pending arguments collapsed without presenting a result as executed", () => {
     const html = renderToStaticMarkup(createElement(McpToolCallDetails, { tool: { id: "1", name: "mcp_test", ok: false, content: "pending", input: { campaign: "summer" }, metadata: { status: "pending_confirmation" } } }));
-    expect(html).toContain('open=""');
+    expect(html).not.toContain('open=""');
     expect(html).toContain("summer");
     expect(html).toContain("等待确认，尚未执行");
   });

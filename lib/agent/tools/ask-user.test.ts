@@ -28,3 +28,15 @@ describe("ask_user tool", () => {
     ).rejects.toThrow("choices");
   });
 });
+
+describe("ask_user question batches", () => {
+  it("preserves multiple questions and infers choice mode", async () => {
+    const result = await askUserTool.execute({ questions: [{ question: "工作范围？", choices: ["当前文件", "整个项目"] }, { question: "还有其他要求吗？" }] });
+    expect(result.metadata?.questions).toMatchObject([{ question: "工作范围？", mode: "single_choice" }, { question: "还有其他要求吗？", mode: "free_text" }]);
+    expect(result.metadata?.question).toContain("2. 还有其他要求吗？");
+  });
+  it("rejects empty or oversized batches", async () => {
+    await expect(askUserTool.execute({ questions: [] })).rejects.toThrow("1 到 3");
+    await expect(askUserTool.execute({ questions: Array(4).fill({ question: "test" }) })).rejects.toThrow("1 到 3");
+  });
+});

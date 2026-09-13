@@ -1,5 +1,5 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
-import { getAccessToken, authFetch } from "@web/lib/auth/client";
+import { getAccessToken } from "@web/lib/auth/client";
 import type {
   AgentEvent,
   ChatModelId,
@@ -31,6 +31,7 @@ export interface Message {
     excerpt: string;
   }>;
   toolCalls?: Array<{
+    id?: string;
     name: string;
     input?: unknown;
     ok: boolean;
@@ -52,6 +53,7 @@ export class ChatSession {
   messages: Message[] = [];
   loading = false;
   streaming = false;
+  streamingMessage: Message | null = null;
   error: string | null = null;
   contextUsage: ContextUsageEventData | null = null;
   historyLoading = false;
@@ -238,9 +240,13 @@ export class ChatSession {
             else reasoning.push({ ...evt.reasoning });
             break;
           }
-          case "tool_call":
-            (last().toolCalls ??= []).push(evt.toolCall);
+          case "tool_call": {
+            const calls = (last().toolCalls ??= []);
+            const existing = calls.findIndex(call => call.id === evt.toolCall.id);
+            if (existing >= 0) calls[existing] = evt.toolCall;
+            else calls.push(evt.toolCall);
             break;
+          }
           case "sources":
             last().sources = evt.sources;
             break;
@@ -408,64 +414,93 @@ export class ChatSession {
     }
   }
 
-  async confirmToolCall(messageIndex: number, toolCallIndex: number) {
+  async confirmToolCall(messageIndex: number, toolCallIndex: number, onUpdate: () => void = () => {}, action: "confirm" | "cancel" | "answer" = "confirm", answer?: string) {
+    if (this.loading) return;
     const message = this.messages[messageIndex];
     const toolCall = message?.toolCalls?.[toolCallIndex];
     if (!message || !toolCall) return;
-    const response = await authFetch("/api/tools/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: this.id,
-        toolCall:
-          typeof toolCall.metadata?.toolCall === "object" &&
-          toolCall.metadata.toolCall !== null
-            ? toolCall.metadata.toolCall
-            : { name: toolCall.name, input: toolCall.input },
-      }),
-    });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.error || errorData.message || "确认工具调用失败",
-      );
+    const token = toolCall.metadata?.confirmationToken;
+    if (typeof token !== "string" || !toolCall.id) {
+      this.error = "此旧记录没有可恢复上下文，请重新发起请求。";
+      onUpdate(); return;
     }
-    const result = await response.json();
-    toolCall.ok = Boolean(result.ok);
-    toolCall.content = String(result.content ?? "");
-    toolCall.error =
-      typeof result.error === "string" ? result.error : undefined;
-    toolCall.metadata = {
-      ...toolCall.metadata,
-      ...result.metadata,
-      status: result.ok ? "confirmed" : "failed",
-      confirmedAt: new Date().toISOString(),
-      result,
-    };
-    if (message.id) {
-      await this.sessionManager.updateMessageMetadata(message.id, {
-        toolCalls: message.toolCalls,
+    this.loading = true; this.streaming = true; this.error = null;
+    this.abortController = new AbortController();
+    onUpdate();
+    this.streamingMessage = message;
+    const followup = message;
+    let receivedText = false;
+    try {
+      const apply = (event: AgentEvent) => {
+        if (event.type === "error") throw new Error(event.message || event.error);
+
+        if (event.type === "tool_call") {
+          const old = this.messages.flatMap(item => item.toolCalls ?? []).find(call => call.id === event.toolCall.id);
+          if (old) Object.assign(old, event.toolCall);
+          else {
+            const calls = (followup.toolCalls ??= []);
+            const found = calls.findIndex(call => call.id === event.toolCall.id);
+            if (found >= 0) calls[found] = event.toolCall; else calls.push(event.toolCall);
+          }
+        } else if (event.type === "text") {
+          if (!receivedText && event.content) {
+            // Remove only the application-generated waiting suffix, keeping the model's preamble.
+            followup.content = followup.content.replace(/(?:请确认工具调用，确认后我会继续完成任务。|还有一个操作需要确认，确认后我会继续。)\s*$/, "").trimEnd();
+            if (followup.content) followup.content += "\n\n";
+            receivedText = true;
+          }
+          followup.content += event.content;
+        }
+        else if (event.type === "reasoning") {
+          const items = (followup.reasoning ??= []);
+          const existing = items.find(item => item.id === event.reasoning.id);
+          if (existing) existing.content += event.reasoning.content; else items.push({ ...event.reasoning });
+        }
+        else if (event.type === "model_usage") (followup.modelUsages ??= []).push(event.usage);
+        else if (event.type === "sources") followup.sources = Array.from(new Map([...(followup.sources ?? []), ...event.sources].map(source => [source.pageUrl, source])).values());
+        else if (event.type === "plan_progress") {
+          const steps = (followup.planSteps ??= []);
+          const index = steps.findIndex(step => step.stepId === event.plan.stepId);
+          if (index >= 0) steps[index] = event.plan; else steps.push(event.plan);
+        }
+      };
+      let completed = false;
+      const accessToken = await getAccessToken();
+      await fetchEventSource("/api/tools/confirm", {
+        method: "POST", openWhenHidden: true,
+        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        signal: this.abortController.signal,
+        body: JSON.stringify({ token, callId: toolCall.id, sessionId: this.id, action, answer }),
+        onopen: async response => {
+          if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || "确认失败"); }
+          if (!response.headers.get("content-type")?.startsWith(EventStreamContentType)) throw new Error("确认服务返回格式错误");
+        },
+        onmessage: event => {
+          if (!event.data) return;
+          const data = JSON.parse(event.data) as AgentEvent;
+          if (data.type === "done") completed = true;
+          apply(data);
+          onUpdate();
+        },
+        onclose: () => { if (!completed) throw new Error("确认连接中断，操作可能已执行，请查询结果后继续"); },
+        onerror: error => { throw error; },
       });
+    } catch (error) {
+      this.error = error instanceof Error && error.name !== "AbortError" ? error.message : "确认请求已中止，远端操作可能已执行。再次确认将查询已有结果，不会重复执行。";
+    } finally {
+      try {
+        const metadata = { toolCalls: message.toolCalls, modelUsages: message.modelUsages, reasoning: message.reasoning, plan: message.plan, planSteps: message.planSteps };
+        if (message.id) {
+          await this.sessionManager.updateAssistantMessage(message.id, message.content, { sources: message.sources, metadata });
+        } else {
+          const saved = await this.sessionManager.saveAssistantMessage(this.id, message.content, { sources: message.sources, metadata });
+          message.id = saved.id; message.createdAt = saved.created_at;
+        }
+      } catch { this.error = this.error || "执行结果已返回，但消息保存失败，请稍后刷新核实。"; }
+      this.loading = false; this.streaming = false; this.streamingMessage = null; this.abortController = null; onUpdate();
     }
   }
-  async cancelToolCall(messageIndex: number, toolCallIndex: number) {
-    const message = this.messages[messageIndex];
-    const toolCall = message?.toolCalls?.[toolCallIndex];
-
-    if (!message || !toolCall) return;
-
-    toolCall.ok = false;
-    toolCall.content = "用户已取消执行";
-    toolCall.metadata = {
-      ...toolCall.metadata,
-      status: "cancelled",
-      cancelledAt: new Date().toISOString(),
-    };
-
-    if (message.id) {
-      await this.sessionManager.updateMessageMetadata(message.id, {
-        toolCalls: message.toolCalls,
-      });
-    }
+  async cancelToolCall(messageIndex: number, toolCallIndex: number, onUpdate: () => void = () => {}) {
+    return this.confirmToolCall(messageIndex, toolCallIndex, onUpdate, "cancel");
   }
 }

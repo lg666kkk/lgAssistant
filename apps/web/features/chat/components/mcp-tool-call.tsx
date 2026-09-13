@@ -15,7 +15,7 @@ export function McpToolCallDetails({ tool }: { tool: Omit<ToolCallEventData, "id
   const pending = tool.metadata?.status === "pending_confirmation";
   const duration = tool.metadata?.durationMs;
   const input = tool.input ?? (tool.metadata?.toolCall as { input?: unknown } | undefined)?.input;
-  return <details className="ml-3.5 mt-2 rounded-md border border-slate-700/50 bg-slate-950/30 px-3 py-2" open={pending || undefined}>
+  return <details className="ml-3.5 mt-2 rounded-md border border-slate-700/50 bg-slate-950/30 px-3 py-2">
     <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
       查看参数与结果{typeof duration === "number" ? ` · ${duration} ms` : ""}
     </summary>

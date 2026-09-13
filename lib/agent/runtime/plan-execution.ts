@@ -3,6 +3,7 @@ import { defaultChatModel, type ChatModelId } from "@/lib/agent/models";
 import { generateTextWithProvider } from "@/lib/agent/runtime/model-provider";
 import {
   runAgentLoop,
+  getToolCallKey,
   type AgentLoopMetrics,
   type AgentLoopResult,
   type ToolSourceType,
@@ -40,6 +41,10 @@ export type ExecutionPlan = ExecutionPlanData;
 type PlanProgress = Omit<PlanProgressEventData, "planId">;
 
 export type PlanAndExecuteInput = {
+  resume?: import("./index").RuntimeResumeState;
+  initialEvidenceBundles?: EvidenceBundle[];
+  initialCapabilities?: string[];
+  initialRetrievalCalls?: Array<[string, number]>;
   messages: ModelMessage[];
   tools: Anthropic.Tool[];
   toolRegistry: ToolRegistry;
@@ -445,12 +450,14 @@ export async function executePlan(
   const startAtStep = control.startAtStep ?? 0;
   const skipStepIds = new Set(control.skipStepIds ?? []);
   const priorStepResults = control.priorStepResults ?? [];
-  const evidenceBundles: EvidenceBundle[] = [];
+  const evidenceBundles: EvidenceBundle[] = [...(input.initialEvidenceBundles ?? [])];
   const usedGroundingModes = new Set<ToolGroundingMode>();
   let toolEvidenceRequired = false;
-  const usedCapabilities = new Set<string>();
+  const usedCapabilities = new Set<string>(input.initialCapabilities);
   const evidenceBundleIds = new Set<string>();
-  const usedRetrievalTools = new Map<string, number>();
+  const usedRetrievalTools = new Map<string, number>(input.initialRetrievalCalls);
+  const executedToolKeys = new Set(input.resume?.executedToolKeys ?? []);
+  let spentTokens = input.resume?.spentTokens ?? 0;
 
   trace.steps.push(planTraceStep({
     planId: plan.id,
@@ -568,8 +575,11 @@ export async function executePlan(
       input.onReasoning,
       usedRetrievalTools,
       input.signal,
+      input.resume ? { executedToolKeys: Array.from(executedToolKeys), spentTokens } : undefined,
     );
     loopMessages = result.loopMessages;
+    spentTokens += result.metrics.estimatedTokensSpent;
+    for (const item of result.trace.steps) if (item.type === "tool" && item.ok) executedToolKeys.add(getToolCallKey({ type: "tool_use", id: item.toolCallId ?? "", name: item.name, input: item.input }));
     addMetrics(metrics, result.metrics);
     for (const bundle of result.evidenceBundles ?? []) {
       if (evidenceBundleIds.has(bundle.bundleId)) continue;
@@ -600,6 +610,7 @@ export async function executePlan(
       trace.completed = true;
       trace.metrics = metrics;
       return {
+        pausedPlanStep: stepIndex,
         loopMessages,
         completed: true,
         stopReason: result.stopReason,

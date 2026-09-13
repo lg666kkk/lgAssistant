@@ -95,6 +95,18 @@ export class SessionManager {
     if (error) throw error;
   }
 
+  /** Continue an existing assistant reply without inserting a second message. */
+  async updateAssistantMessage(messageId: string, content: string, options: { sources?: any[]; metadata: Record<string, unknown> }): Promise<void> {
+    const userId = await this.getUserId();
+    const { data, error: readError } = await this.supabase.from('messages').select('metadata')
+      .eq('user_id', userId).eq('id', messageId).eq('role', 'assistant').single();
+    if (readError) throw readError;
+    const { error } = await this.supabase.from('messages').update({
+      content, sources: options.sources, metadata: { ...data?.metadata, ...options.metadata },
+    }).eq('user_id', userId).eq('id', messageId).eq('role', 'assistant');
+    if (error) throw error;
+  }
+
   /**
    * 创建新会话
    */

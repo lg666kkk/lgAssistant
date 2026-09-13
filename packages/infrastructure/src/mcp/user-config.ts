@@ -198,11 +198,12 @@ export async function deleteMcpServer(userId: string, id: string) {
 }
 
 function runtimeConfig(
-  value: Pick<Row, "id" | "name" | "url" | "tools">,
+  value: Pick<Row, "id" | "name" | "url" | "tools" | "updated_at">,
 ): McpServerConfig {
   return {
     id: `u_${value.id.replace(/-/g, "").slice(0, 30)}`,
     name: value.name,
+    revision: value.updated_at,
     url: value.url,
     tools: value.tools
       .filter((tool) => tool.enabled)

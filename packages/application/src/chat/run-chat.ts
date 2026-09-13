@@ -66,6 +66,7 @@ import { createToolObservationProjector } from "./tool-observations";
 import { prepareExecutionRoute } from "./execution-routing";
 import { parseChatRequest } from "./request";
 import type { ChatApplicationDependencies } from "./ports";
+import { checkpoint, confirmationEvents } from "../mcp/continuation";
 import { openExternalToolSession } from "../mcp/session";
 
 export type RunChatUseCaseInput = {
@@ -781,6 +782,24 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         prependUserProfileTraceStep(agentLoopResult.trace, userProfileTraceStep);
         pendingTrace = agentLoopResult.trace;
         loopMessages = agentLoopResult.loopMessages;
+
+        if (["awaiting_tool_confirmation", "awaiting_user_input"].includes(agentLoopResult.stopReason)) {
+          if (!deps.confirmations) throw new Error("确认状态存储不可用，本次工具尚未执行");
+          const state = checkpoint({
+            requestId, sessionId, model: selectedModel, system: systemPrompt,
+            tools: executionRoute.tools.map(tool => tool.name), retrievalPlan, sources: allToolSources,
+            remainingIterations: Math.max(0, maxToolIterations - agentLoopResult.metrics.modelCallCount),
+            plan: executionRoute.plan ?? undefined, planStep: agentLoopResult.pausedPlanStep, planControl: planExecution,
+          }, agentLoopResult, toolRegistry);
+          const token = await deps.confirmations.create(user.id, state);
+          for (const event of confirmationEvents(state, token)) enqueueEvent(event, enqueueText);
+          if (agentLoopResult.stopReason === "awaiting_tool_confirmation") enqueueEvent({ type: "text", content: "请确认工具调用，确认后我会继续完成任务。" }, enqueueText);
+          projectTraceObservations(agentLoopResult.trace);
+          await savePendingTrace();
+          enqueueEvent({ type: "done" }, enqueueText);
+          closeStream();
+          return;
+        }
 
         const lastUserMessage = [...requestMessages]
           .reverse()

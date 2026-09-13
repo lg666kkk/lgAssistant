@@ -9,6 +9,7 @@ import type {
   PlanProgressEventData,
 } from "@repo/contracts";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
+import { AskUserCard, readUserQuestions } from "./ask-user-card";
 import { summarizeToolCalls } from "@web/features/chat/model/tool-call-summary";
 import { getMcpCallPresentation, McpToolCallDetails } from "./mcp-tool-call";
 import { getChatImagePreviewUrl } from "@/lib/chat/image-storage";
@@ -43,7 +44,6 @@ export function ChatThread({
   onScrollPositionChange,
   onLoadOlderMessages,
   onPreviewImage,
-  onInputSuggestion,
   onExecutePlan,
   onPlanRecovery,
   onSessionUpdate,
@@ -83,7 +83,7 @@ export function ChatThread({
           const isStreaming = Boolean(
             streaming
             && message.role === "assistant"
-            && messageIndex === messages.length - 1,
+            && (session?.streamingMessage ? message === session.streamingMessage : messageIndex === messages.length - 1),
           );
           const toolCallSummary = summarizeToolCalls(message.toolCalls ?? []);
           return (
@@ -236,41 +236,22 @@ export function ChatThread({
                             {toolCall.name === "view_skill" && toolCall.ok && (
                               <StandardSkillCard content={toolCall.content} />
                             )}
-                            {toolStatus === "awaiting_user_input" && (
-                              <div className="ml-3.5 mt-1.5 space-y-1.5 rounded-md bg-slate-800/30 px-3 py-2.5">
-                                <div className="text-slate-400">
-                                  {String(toolCall.metadata?.question ?? toolCall.content)}
-                                </div>
-                                {String(toolCall.metadata?.mode) === "single_choice" && (
-                                  <div className="text-slate-500">请选择一项，也可以在输入框中补充说明。</div>
-                                )}
-                                {String(toolCall.metadata?.mode) === "confirmation" && (
-                                  <div className="text-slate-500">请选择是否继续。</div>
-                                )}
-                                {Array.isArray(toolCall.metadata?.choices) && toolCall.metadata.choices
-                                  .filter((choice): choice is string => typeof choice === "string")
-                                  .map((choice) => (
-                                    <button
-                                      key={choice}
-                                      type="button"
-                                      onClick={() => onInputSuggestion(choice)}
-                                      className="mr-1.5 rounded-md border border-slate-600 bg-slate-700/70 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600"
-                                    >
-                                      {choice}
-                                    </button>
-                                  ))}
-                              </div>
+                            {(toolStatus === "awaiting_user_input" || toolStatus === "answered") && (
+                              <AskUserCard questions={readUserQuestions(toolCall.metadata)} disabled={Boolean(loading)} submitted={typeof toolCall.metadata?.answer === "string" ? toolCall.metadata.answer : undefined} onSubmit={async answer => {
+                                await session?.confirmToolCall(messageIndex, toolIndex, onSessionUpdate, "answer", answer);
+                                if (session?.error) throw new Error(session.error);
+                              }} />
                             )}
                             {toolStatus === "pending_confirmation" && (
                               <div className="ml-3.5 mt-1.5 flex gap-2">
                                 <button
                                   type="button"
-                                  disabled={confirmingToolKey === toolKey}
+                                  disabled={Boolean(confirmingToolKey) || Boolean(loading)}
                                   className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600 disabled:cursor-not-allowed disabled:text-slate-500"
                                   onClick={async () => {
                                     setConfirmingToolKey(toolKey);
                                     try {
-                                      await session?.confirmToolCall(messageIndex, toolIndex);
+                                      await session?.confirmToolCall(messageIndex, toolIndex, onSessionUpdate);
                                       onSessionUpdate();
                                     } finally {
                                       setConfirmingToolKey(null);
@@ -281,9 +262,9 @@ export function ChatThread({
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={Boolean(confirmingToolKey)}
+                                  disabled={Boolean(confirmingToolKey) || Boolean(loading)}
                                   onClick={async () => {
-                                    await session?.cancelToolCall(messageIndex, toolIndex);
+                                    await session?.cancelToolCall(messageIndex, toolIndex, onSessionUpdate);
                                     onSessionUpdate();
                                   }}
                                   className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600 disabled:cursor-not-allowed disabled:text-slate-500"
