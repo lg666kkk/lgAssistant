@@ -43,6 +43,15 @@ export type RetrievalPlan = {
   indexVersion: string;
   steps: RetrievalPlanStep[];
   createdAt: string;
+  routeDecision?: {
+    provider: "rules" | "jev";
+    model?: string;
+    confidence?: number;
+    probabilities?: Record<string, number>;
+    proposedRoute?: RetrievalRoute;
+    accepted?: boolean;
+    reason?: string;
+  };
 };
 
 export type EvidenceTrustLevel =

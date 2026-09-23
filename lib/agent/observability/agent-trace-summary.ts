@@ -16,6 +16,7 @@ export function summarizeRetrievalRoute(plan: RetrievalPlan) {
     sources: Array.from(new Set(plan.steps.map((step) => step.source))),
     queryType: plan.queryType,
     indexVersion: plan.indexVersion,
+    routeDecision: plan.routeDecision,
   };
 }
 

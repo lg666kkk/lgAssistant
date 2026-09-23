@@ -8,6 +8,7 @@ import type {
   RetrievalFilters,
   RetrievalRoute,
   RetrievalSource,
+  RetrievalPlan,
 } from "@/lib/agent/rag/types";
 import type { ContextPlan } from "@/lib/agent/context/types";
 import type { MemoryConsolidationOutcome } from "@/lib/agent/memory/memory-flow";
@@ -137,6 +138,7 @@ export type RetrievalTraceStep = TraceStepBase & {
   degradationReason?: string;
   attempts?: RetrievalAttempt[];
   timings?: Record<string, number>;
+  routeDecision?: RetrievalPlan["routeDecision"];
 };
 
 export type AnswerValidationTraceStep = TraceStepBase & {

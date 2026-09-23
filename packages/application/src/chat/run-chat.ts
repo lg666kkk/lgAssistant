@@ -28,9 +28,9 @@ import {
 } from "@/lib/agent/multimodal";
 import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import {
-  buildRetrievalPlan,
   filterToolsForRetrievalRoute,
   resolveRetrievalAnchor,
+  buildRetrievalPlanWithJev,
 } from "@/lib/agent/rag/retrieval-router";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
@@ -137,12 +137,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
   } catch (error: any) {
     console.error("[knowledge] 读取工具画像快照失败，使用默认描述:", error.message);
   }
-  const retrievalPlan = buildRetrievalPlan({
+  const retrievalPlan = await buildRetrievalPlanWithJev({
     query: retrievalQuery,
     conversationContext: retrievalAnchor.conversationContext,
     knowledgeProfile,
     indexVersion: knowledgeIndexVersion,
     webEnabled: enableWebSearch,
+    userId: user.id,
   });
   const userMemoryConfig = await deps.userContext.resolveMemoryConfig(user.id).catch((error) => {
     console.error("[memory-config] 读取失败，关闭本轮记忆:", error instanceof Error ? error.message : error);

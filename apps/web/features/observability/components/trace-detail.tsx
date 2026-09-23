@@ -131,6 +131,15 @@ type RetrievalStep = {
   degradationReason?: string;
   attempts?: Array<Record<string, unknown>>;
   timings?: Record<string, number>;
+  routeDecision?: {
+    provider?: string;
+    model?: string;
+    confidence?: number;
+    probabilities?: Record<string, number>;
+    proposedRoute?: string;
+    accepted?: boolean;
+    reason?: string;
+  };
 };
 
 type AnswerValidationStep = {
@@ -1145,6 +1154,15 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                           ? ` · confidence=${step.confidence.toFixed(2)}`
                           : ""}
                       </div>
+                      {step.routeDecision && (
+                        <div className="text-fuchsia-300">
+                          决策来源={step.routeDecision.provider ?? "-"}
+                          {step.routeDecision.model ? ` · model=${step.routeDecision.model}` : ""}
+                          {step.routeDecision.proposedRoute ? ` · Jev建议=${step.routeDecision.proposedRoute}` : ""}
+                          {step.routeDecision.accepted === false ? ` · 未采纳(${step.routeDecision.reason ?? "不确定"})` : ""}
+                          {step.routeDecision.probabilities ? ` · probabilities=${toText(step.routeDecision.probabilities)}` : ""}
+                        </div>
+                      )}
                       {step.grade && (
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
                           <span>grade {step.grade.grade}</span>

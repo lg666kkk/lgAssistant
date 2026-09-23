@@ -20,9 +20,11 @@ import { LanguageModelCenter } from "@web/features/connections/components/langua
 import { EmbeddingCenter } from "@web/features/connections/components/embedding-center";
 import { McpCenter } from "@web/features/connections/components/mcp-center";
 import { SearchEngineCenter } from "@web/features/connections/components/search-engine-center";
+import { JevCenter } from "@web/features/connections/components/jev-center";
 import { LangfuseCenter } from "@web/features/observability/components/langfuse-center";
 import { MemoryCenter } from "@web/features/memory/components/memory-center";
 import { UserProfileCenter } from "@web/features/memory/components/user-profile-center";
+import { AccountCenter } from "@web/features/account/components/account-center";
 import { KnowledgeCenter } from "@web/features/knowledge/components/knowledge-center";
 import { TraceCenter } from "@web/features/observability/components/trace-center";
 import { ScheduleCenter } from "@web/features/schedule/components/schedule-center";
@@ -162,7 +164,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
-    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile") return;
+    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile" && panel !== "jev") return;
     setActiveCapability("connections");
     setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
@@ -171,7 +173,9 @@ export default function Home() {
     ? activeSession?.title ?? "新对话"
     : activeCapability === "connections"
       ? getConnectionTabLabel(activeConnectionTab)
-      : getCustomAgentTabLabel(activeCustomAgentTab);
+      : activeCapability === "account"
+        ? "用户信息"
+        : getCustomAgentTabLabel(activeCustomAgentTab);
 
   useLayoutEffect(() => {
     if (activeCapability !== "chat" || !activeId || !historyLoaded) return;
@@ -531,6 +535,7 @@ export default function Home() {
         sessions={user ? sessions : []}
         activeSessionId={activeId}
         userEmail={user?.email}
+        userDisplayName={typeof user?.user_metadata?.display_name === "string" ? user.user_metadata.display_name : undefined}
         onSignIn={requestLogin}
         onCapabilityChange={setActiveCapability}
         onConnectionTabChange={setActiveConnectionTab}
@@ -638,13 +643,17 @@ export default function Home() {
           </>
         ) : (
           <PrivatePageBoundary key={user?.id ?? "guest"}>
-          {activeCapability === "connections" && activeConnectionTab === "language-model" ? (
+          {activeCapability === "account" ? (
+          <AccountCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "language-model" ? (
           <LanguageModelCenter
             catalog={llmCatalog}
             loading={llmCatalogLoading}
             error={llmCatalogError}
             onRefresh={reloadLlmCatalog}
           />
+        ) : activeCapability === "connections" && activeConnectionTab === "jev" ? (
+          <JevCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "search-engine" ? (
           <SearchEngineCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "mcp" ? (

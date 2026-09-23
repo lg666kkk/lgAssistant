@@ -28,9 +28,10 @@ import {
 } from "lucide-react";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
 
-export type PrimaryCapability = "chat" | "connections" | "custom-agents";
+export type PrimaryCapability = "chat" | "connections" | "custom-agents" | "account";
 export type ConnectionTabId =
   | "language-model"
+  | "jev"
   | "embedding"
   | "search-engine"
   | "usage"
@@ -52,6 +53,7 @@ const connectionTabGroups: Array<{
     label: "API 密钥",
     items: [
       { id: "language-model", label: "大语言模型", icon: Bot },
+      { id: "jev", label: "Jev 决策模型", icon: Blocks },
       { id: "embedding", label: "向量嵌入", icon: Database },
       { id: "search-engine", label: "搜索引擎", icon: Search },
       { id: "usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
@@ -112,6 +114,7 @@ type AppSidebarProps = {
   sessions: ChatSession[];
   activeSessionId: string;
   userEmail?: string | null;
+  userDisplayName?: string | null;
   onCapabilityChange: (capability: PrimaryCapability) => void;
   onConnectionTabChange: (tab: ConnectionTabId) => void;
   onCustomAgentTabChange: (tab: CustomAgentTabId) => void;
@@ -131,6 +134,7 @@ export function AppSidebar({
   sessions,
   activeSessionId,
   userEmail,
+  userDisplayName,
   onCapabilityChange,
   onConnectionTabChange,
   onCustomAgentTabChange,
@@ -309,7 +313,7 @@ export function AppSidebar({
             </section>
           ))}
         </nav>
-      ) : (
+      ) : activeCapability === "custom-agents" ? (
         <nav aria-label="定制化" className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
           {customAgentTabs.map((item) => {
             const Icon = item.icon;
@@ -330,22 +334,35 @@ export function AppSidebar({
             );
           })}
         </nav>
+      ) : (
+        <div className="flex-1 px-2 py-4">
+          <div className="flex h-10 items-center gap-3 rounded-lg bg-slate-800 px-3 text-sm text-white">
+            <UserRound className="h-[18px] w-[18px] text-cyan-300" aria-hidden="true" />
+            用户信息
+          </div>
+        </div>
       )}
 
       <div ref={accountMenuRef} className="relative border-t border-slate-800 p-3">
         {userEmail && accountMenuOpen && (
-          <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-2xl border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
+          <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
+            <button
+              type="button"
+              onClick={() => changeCapability("account")}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
+            >
+              <UserRound className="h-[18px] w-[18px] text-slate-400" aria-hidden="true" />
+              用户信息
+            </button>
             <button
               type="button"
               onClick={() => {
                 setAccountMenuOpen(false);
                 onSignOut();
               }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
+              className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 text-slate-300">
-                <LogOut className="h-[18px] w-[18px]" aria-hidden="true" />
-              </span>
+              <LogOut className="h-[18px] w-[18px] text-slate-400" aria-hidden="true" />
               <span>退出登录</span>
             </button>
           </div>
@@ -358,7 +375,7 @@ export function AppSidebar({
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-slate-300">
             <UserRound className="h-[18px] w-[18px]" aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm">{userEmail ? maskEmail(userEmail) : "登录 / 注册"}</span>
+          <span className="min-w-0 flex-1 truncate text-sm">{userEmail ? userDisplayName?.trim() || maskEmail(userEmail) : "登录 / 注册"}</span>
           <Ellipsis className="h-[18px] w-[18px] shrink-0 text-slate-500" aria-hidden="true" />
         </button>
       </div>

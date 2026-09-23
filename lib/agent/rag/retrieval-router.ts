@@ -10,6 +10,8 @@ import {
   type RetrievalRoute,
   type RetrievalSource,
 } from "./types";
+import { evaluateWithJev } from "@/lib/jev/client";
+import { resolveUserJevConfig } from "@/lib/jev/service";
 
 const KNOWLEDGE_CUES = /(?:我的|个人|之前|过去|曾经).{0,8}(?:笔记|文档|记录|资料|收藏|整理|写过)|(?:知识库|Notion|笔记里|文档里|记录里)|\b(?:my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|(?:in|from|according\s+to)\s+my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|what\s+did\s+i\s+(?:write|note|save|bookmark)|i\s+(?:wrote|noted|saved|bookmarked))\b/i;
 // freshness 与显式来源必须分开："今天几号"需要新鲜时间，但不要求网页引用；
@@ -25,7 +27,21 @@ export type BuildRetrievalPlanInput = {
   indexVersion?: string;
   webEnabled?: boolean;
   now?: Date;
+  userId?: string;
+  routeDecisionOverride?: RouteDecision;
 };
+
+type RouteDecision = {
+  route: RetrievalRoute;
+  reason: string;
+  confidence: number;
+  freshnessRequired: boolean;
+  evidenceRequired: boolean;
+  routeDecision?: RetrievalPlan["routeDecision"];
+};
+
+const JEV_ROUTE_MIN_CONFIDENCE = 0.7;
+const JEV_ROUTE_TIMEOUT_MS = 2_500;
 
 const PLAN_CONTROL_MESSAGE = /^(?:执行已确认的计划|跳过失败步骤并继续执行计划|重试失败步骤)$/;
 
@@ -58,11 +74,14 @@ export function buildRetrievalPlan(input: BuildRetrievalPlanInput): RetrievalPla
   const originalQuery = input.query.trim();
   const standaloneQuery = buildStandaloneQuery(originalQuery, input.conversationContext);
   const queryType = classifyQuery(standaloneQuery);
-  const routeDecision = routeQuery({
-    query: standaloneQuery,
-    knowledgeProfile: input.knowledgeProfile,
-    webEnabled: input.webEnabled !== false,
-  });
+  const routeDecision: RouteDecision = input.routeDecisionOverride ?? {
+    ...routeQuery({
+      query: standaloneQuery,
+      knowledgeProfile: input.knowledgeProfile,
+      webEnabled: input.webEnabled !== false,
+    }),
+    routeDecision: undefined,
+  };
   const filters = extractFilters(standaloneQuery, input.now ?? new Date());
   const sourceQueries = decomposeQuery(standaloneQuery, queryType);
   const sources = routeSources(routeDecision.route);
@@ -102,7 +121,86 @@ export function buildRetrievalPlan(input: BuildRetrievalPlanInput): RetrievalPla
     indexVersion,
     steps,
     createdAt: (input.now ?? new Date()).toISOString(),
+    routeDecision: routeDecision.routeDecision ?? { provider: "rules" },
   };
+}
+
+export async function buildRetrievalPlanWithJev(input: BuildRetrievalPlanInput): Promise<RetrievalPlan> {
+  const base = buildRetrievalPlan(input);
+  // Explicit user source requests and high-confidence rules remain authoritative.
+  if (!input.userId || base.confidence >= 0.8) return base;
+  try {
+    const config = await resolveUserJevConfig(input.userId);
+    const response = await evaluateWithJev({
+      config,
+      signal: AbortSignal.timeout(JEV_ROUTE_TIMEOUT_MS),
+      state: {
+        query: base.standaloneQuery,
+        knowledgeProfile: input.knowledgeProfile ?? "",
+        webEnabled: input.webEnabled !== false,
+      },
+      questions: {
+        route: {
+          type: "choice",
+          instructions: "Which evidence source should answer this user query?",
+          criteria: {
+            knowledge: "Use the user's private notes, documents, or knowledge base.",
+            web: "Use current public information from the internet.",
+            both: "Compare the user's private information with current public information.",
+            no_retrieval: "No external retrieval is needed; answer from the conversation and model knowledge.",
+          },
+        },
+      },
+    });
+    const answer = response.answers.route as { choice?: unknown; confidence?: unknown; probabilities?: unknown } | undefined;
+    const route = answer?.choice;
+    if (!(route === "knowledge" || route === "web" || route === "both" || route === "no_retrieval")) return base;
+    const proposedRoute: RetrievalRoute = route;
+    const confidence = typeof answer?.confidence === "number" && Number.isFinite(answer.confidence)
+      ? answer.confidence
+      : 0;
+    const probabilities = answer?.probabilities && typeof answer.probabilities === "object"
+      ? Object.fromEntries(Object.entries(answer.probabilities).filter(([, value]) => typeof value === "number")) as Record<string, number>
+      : undefined;
+    const rejectedReason = (route === "web" || route === "both") && input.webEnabled === false
+      ? "web_disabled"
+      : confidence < JEV_ROUTE_MIN_CONFIDENCE
+        ? "low_confidence"
+        : undefined;
+    const routeDecision = {
+      provider: "jev" as const,
+      model: response.model,
+      confidence,
+      probabilities,
+      proposedRoute,
+      accepted: !rejectedReason,
+      reason: rejectedReason ?? "accepted",
+    };
+    if (rejectedReason) return { ...base, routeDecision };
+    return buildRetrievalPlan({
+      ...input,
+      routeDecisionOverride: {
+        route,
+        reason: "jev_structured_route",
+        confidence,
+        freshnessRequired: base.freshnessRequired ?? false,
+        evidenceRequired: route === "web" || route === "both" ? base.evidenceRequired : false,
+        routeDecision,
+      },
+    });
+  } catch (error) {
+    console.warn("[retrieval] Jev 路由不可用，回退到规则路由:", error instanceof Error ? error.message : error);
+    return {
+      ...base,
+      routeDecision: {
+        provider: "rules",
+        accepted: false,
+        reason: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+          ? "jev_timeout"
+          : "jev_unavailable",
+      },
+    };
+  }
 }
 
 function retrievalSourcesForRoute(route: RetrievalRoute) {
