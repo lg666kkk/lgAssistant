@@ -37,7 +37,7 @@ const versionDraft = {
   runtime: "node",
   entrypoint: ["node", "scripts/run.mjs"],
   profileId: "skill-trusted",
-  imageDigest: `node@sha256:${"a".repeat(64)}`,
+  templateId: "skill-template",
   bundleBase64: "YnVuZGxl",
   inputSchema: "schemas/input.json",
   outputSchema: "schemas/output.json",

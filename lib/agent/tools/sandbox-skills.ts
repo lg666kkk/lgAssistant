@@ -155,16 +155,15 @@ export const runSkillTool: ToolDefinition = {
       }
       const resultText = run.result === undefined ? "" : JSON.stringify(run.result);
       const resultPreview = resultText.length > 8_000
-        ? `${resultText.slice(0, 8_000)}\n[结果已截断，完整内容见 resultRef]`
+        ? `${resultText.slice(0, 8_000)}\n[结果已截断]`
         : resultText;
       return {
         ok: run.status === "completed" || !isTerminal(run.status),
         content: [
           `Skill Run：${run.runId}`,
           `状态：${run.status}`,
-          run.stdoutRef ? `stdout：${run.stdoutRef}` : "",
-          run.stderrRef ? `stderr：${run.stderrRef}` : "",
-          run.resultRef ? `result：${run.resultRef}` : "",
+          run.stdout ? `stdout：${run.stdout.slice(0, 4_000)}` : "",
+          run.stderr ? `stderr：${run.stderr.slice(0, 4_000)}` : "",
           resultPreview ? `输出：${resultPreview}` : "",
           run.message ?? "",
         ].filter(Boolean).join("\n"),

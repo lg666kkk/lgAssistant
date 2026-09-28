@@ -156,6 +156,32 @@ export function createDeepSeekThinkingFetch(
   };
 }
 
+export function createStrategyDiagnosticFetch(
+  baseFetch: typeof fetch,
+  requestId: string | number | boolean | null | undefined,
+  model: ChatModelId,
+): typeof fetch {
+  return async (input, init) => {
+    const startedAt = Date.now();
+    console.info("[execution.strategy] HTTP request started", { requestId, model });
+    try {
+      const response = await baseFetch(input, init);
+      console.info("[execution.strategy] HTTP headers received", {
+        requestId, model, elapsedMs: Date.now() - startedAt, httpStatus: response.status,
+      });
+      return response;
+    } catch (error) {
+      const details = error as { name?: unknown; code?: unknown } | null;
+      console.error("[execution.strategy] HTTP request failed", {
+        requestId, model, elapsedMs: Date.now() - startedAt,
+        errorName: typeof details?.name === "string" ? details.name : typeof error,
+        errorCode: typeof details?.code === "string" ? details.code : undefined,
+      });
+      throw error;
+    }
+  };
+}
+
 type ExecutionModel = Pick<
   ResolvedUserLlmModel,
   "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing"
@@ -195,13 +221,16 @@ async function createProvider(
 ) {
   const runtimeModel = await resolveExecutionModel(model, telemetryMetadata);
   const safeFetch = createSafeProviderFetch(runtimeModel.baseUrl);
+  const observedFetch = telemetryMetadata?.operation === "execution.strategy"
+    ? createStrategyDiagnosticFetch(safeFetch, telemetryMetadata.requestId, model)
+    : safeFetch;
   const providerFetch = runtimeModel.reasoningMode === "deepseek"
     ? createDeepSeekThinkingFetch(
-        safeFetch,
+        observedFetch,
         messages as DeepSeekAssistantMessage[],
         onReasoningDelta,
       )
-    : safeFetch;
+    : observedFetch;
   const provider = createOpenAI({
     name: "user-openai-compatible",
     apiKey: runtimeModel.apiKey,
@@ -449,26 +478,61 @@ export async function generateTextWithProvider(input: {
   abortSignal?: AbortSignal;
   maxRetries?: number;
 }) {
-  const provider = await createProvider(input.model, input.telemetryMetadata);
-  const result = await generateText({
-    model: provider.model,
-    abortSignal: input.abortSignal,
-    maxRetries: input.maxRetries,
-    maxOutputTokens: input.maxOutputTokens,
-    temperature: provider.runtimeModel.temperature,
-    system: input.system,
-    prompt: input.prompt,
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: input.telemetryFunctionId ?? "generate-text",
-      metadata: compactMetadata(input.telemetryFunctionId ?? "generate-text", {
-        ...input.telemetryMetadata,
-        model: input.model,
-      }),
-    },
-  });
-
-  return result.text;
+  const logStrategy = input.telemetryFunctionId === "execution.strategy";
+  const startedAt = Date.now();
+  const requestId = input.telemetryMetadata?.requestId;
+  let phase: "resolve_model" | "generate_text" = "resolve_model";
+  try {
+    const provider = await createProvider(input.model, input.telemetryMetadata);
+    phase = "generate_text";
+    if (logStrategy) {
+      console.info("[execution.strategy] model resolved", {
+        requestId, model: input.model,
+        providerName: provider.runtimeModel.providerName,
+        providerModelId: provider.runtimeModel.modelId,
+        resolveMs: Date.now() - startedAt,
+      });
+    }
+    const result = await generateText({
+      model: provider.model,
+      abortSignal: input.abortSignal,
+      maxRetries: input.maxRetries,
+      maxOutputTokens: input.maxOutputTokens,
+      temperature: provider.runtimeModel.temperature,
+      system: input.system,
+      prompt: input.prompt,
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: input.telemetryFunctionId ?? "generate-text",
+        metadata: compactMetadata(input.telemetryFunctionId ?? "generate-text", {
+          ...input.telemetryMetadata,
+          model: input.model,
+        }),
+      },
+    });
+    if (logStrategy) {
+      console.info("[execution.strategy] model completed", {
+        requestId, model: input.model,
+        totalMs: Date.now() - startedAt,
+        outputChars: result.text.length,
+      });
+    }
+    return result.text;
+  } catch (error) {
+    if (logStrategy) {
+      const details = error as { name?: unknown; code?: unknown; status?: unknown; statusCode?: unknown } | null;
+      console.error("[execution.strategy] model failed", {
+        requestId, model: input.model, phase,
+        elapsedMs: Date.now() - startedAt,
+        aborted: Boolean(input.abortSignal?.aborted),
+        errorName: typeof details?.name === "string" ? details.name : typeof error,
+        errorCode: typeof details?.code === "string" ? details.code : undefined,
+        httpStatus: typeof details?.status === "number" ? details.status
+          : typeof details?.statusCode === "number" ? details.statusCode : undefined,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function streamTextWithProvider(input: {

@@ -14,7 +14,7 @@ function input(task: string) {
 }
 
 describe("structured execution strategy", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it.each([
     ["请先查看可用的 Skill，然后使用 text-stats 统计一句话", direct],
@@ -53,9 +53,11 @@ describe("structured execution strategy", () => {
   });
 
   it("falls back on provider errors without logging raw secrets", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const result = await selectExecutionStrategy(input("先给计划，不要执行"), vi.fn().mockRejectedValue(new Error("secret-provider-key")));
     expect(result).toMatchObject({ source: "fallback", fallbackReason: "provider_error" });
     expect(JSON.stringify(result)).not.toContain("secret-provider-key");
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("secret-provider-key");
   });
 
   it("skips the classifier when no tools are available", async () => {
@@ -83,6 +85,8 @@ describe("structured execution strategy", () => {
 
   it("aborts the provider on timeout instead of leaving generation running", async () => {
     vi.useFakeTimers();
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const generate = vi.fn<typeof generateTextWithProvider>(({ abortSignal }) => new Promise((resolve, reject) => {
       abortSignal?.addEventListener("abort", () => reject(abortSignal.reason), { once: true });
     }));
@@ -90,6 +94,12 @@ describe("structured execution strategy", () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(await pending).toMatchObject({ source: "fallback", fallbackReason: "timeout" });
     expect(generate.mock.calls[0][0].abortSignal?.aborted).toBe(true);
+    expect(warned).toHaveBeenCalledWith("[execution.strategy] timeout reached", expect.objectContaining({
+      requestId: "request-strategy", model: "test-model", timeoutMs: 10_000, elapsedMs: 10_000,
+    }));
+    expect(logged).toHaveBeenCalledWith("[execution.strategy] fallback", expect.objectContaining({
+      fallbackReason: "timeout", elapsedMs: 10_000,
+    }));
   });
 
   it("does not fall back into execution when the caller cancels", async () => {

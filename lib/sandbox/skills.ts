@@ -10,7 +10,7 @@ export type SkillManifest = {
   runtime: SkillRuntime;
   entrypoint: string[];
   profileId: SandboxProfileId;
-  imageDigest: string;
+  templateId: string | null;
   bundleSha256: string;
   network: "disabled";
   inputSchema: string;
@@ -33,28 +33,21 @@ export const SANDBOX_PROFILES = [
   {
     id: "skill-trusted" as const,
     label: "受信任 Skill",
-    cpuQuotaMilli: 500,
-    memoryLimitMb: 256,
-    pidLimit: 64,
     timeoutSeconds: 30,
     network: "disabled" as const,
-    imageDigest: process.env.SANDBOX_SKILL_IMAGE_DIGEST ?? "",
+    templateId: process.env.E2B_SKILL_TEMPLATE_ID ?? "base",
   },
   {
     id: "coding-untrusted" as const,
     label: "编码沙盒",
-    cpuQuotaMilli: 1000,
-    memoryLimitMb: 1024,
-    pidLimit: 128,
     timeoutSeconds: 300,
     network: "disabled" as const,
-    imageDigest: process.env.SANDBOX_CODING_IMAGE_DIGEST ?? "",
+    templateId: process.env.E2B_CODING_TEMPLATE_ID ?? "base",
   },
 ];
 
 const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VERSION = /^v?\d+\.\d+\.\d+$/;
-const IMAGE_DIGEST = /^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/;
 const RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+$/;
 const MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
 
@@ -75,7 +68,7 @@ type VersionRow = {
   runtime: SkillRuntime;
   entrypoint: string[];
   profile_id: SandboxProfileId;
-  image_digest: string;
+  e2b_template_id: string | null;
   bundle_sha256: string;
   network: "disabled";
   input_schema_path: string;
@@ -88,7 +81,7 @@ export async function listConfiguredSkills(): Promise<ConfiguredSkill[]> {
     supabase.from("sandbox_skills").select("id,name,description,enabled,skill_md,support_files,created_at,updated_at").is("deleted_at", null).order("id"),
     supabase
       .from("sandbox_skill_versions")
-      .select("skill_id,version,runtime,entrypoint,profile_id,image_digest,bundle_sha256,network,input_schema_path,output_schema_path,created_at")
+      .select("skill_id,version,runtime,entrypoint,profile_id,e2b_template_id,bundle_sha256,network,input_schema_path,output_schema_path,created_at")
       .order("created_at", { ascending: false }),
   ]);
   if (skillError) throw skillDatabaseError("读取 Skill 配置", skillError.message);
@@ -180,7 +173,7 @@ export async function publishSkillVersion(input: {
   runtime: SkillRuntime;
   entrypoint: string[];
   profileId: SandboxProfileId;
-  imageDigest: string;
+  templateId: string;
   bundleBase64: string;
   inputSchema: string;
   outputSchema: string;
@@ -189,7 +182,7 @@ export async function publishSkillVersion(input: {
   const skillId = input.skillId.trim();
   const version = input.version.trim();
   const entrypoint = input.entrypoint.map((item) => item.trim()).filter(Boolean);
-  const imageDigest = input.imageDigest.trim();
+  const templateId = input.templateId.trim();
   const inputSchema = input.inputSchema.trim();
   const outputSchema = input.outputSchema.trim();
   if (!SKILL_ID.test(skillId)) throw new Error("Skill ID 格式错误");
@@ -201,10 +194,10 @@ export async function publishSkillVersion(input: {
     throw new Error(`入口必须以 ${expectedRuntime} 加 Bundle 内相对脚本路径开头`);
   }
   if (!SANDBOX_PROFILES.some((profile) => profile.id === input.profileId)) throw new Error("未知 Sandbox Profile");
-  if (!IMAGE_DIGEST.test(imageDigest)) throw new Error("容器镜像必须使用完整 sha256 digest");
+  if (!templateId || templateId.length > 128) throw new Error("E2B 模板 ID 格式错误");
   const configuredProfile = SANDBOX_PROFILES.find((profile) => profile.id === input.profileId);
-  if (!configuredProfile?.imageDigest) throw new Error("所选 Sandbox Profile 尚未配置镜像 digest");
-  if (configuredProfile.imageDigest !== imageDigest) throw new Error("镜像 digest 与所选 Sandbox Profile 不一致");
+  if (!configuredProfile?.templateId) throw new Error("所选 Sandbox Profile 尚未配置 E2B 模板");
+  if (configuredProfile.templateId !== templateId) throw new Error("E2B 模板与所选 Sandbox Profile 不一致");
   if (!RELATIVE_PATH.test(inputSchema) || !RELATIVE_PATH.test(outputSchema)) {
     throw new Error("输入和输出 Schema 必须是 Bundle 内相对路径");
   }
@@ -221,7 +214,7 @@ export async function publishSkillVersion(input: {
     p_runtime: input.runtime,
     p_entrypoint: entrypoint,
     p_profile_id: input.profileId,
-    p_image_digest: imageDigest,
+    p_template_id: templateId,
     p_bundle_sha256: bundleSha256,
     p_bundle_base64: input.bundleBase64,
     p_input_schema_path: inputSchema,
@@ -242,7 +235,7 @@ function toManifest(row: VersionRow): SkillManifest {
     runtime: row.runtime,
     entrypoint: row.entrypoint,
     profileId: row.profile_id,
-    imageDigest: row.image_digest,
+    templateId: row.e2b_template_id,
     bundleSha256: row.bundle_sha256,
     network: row.network,
     inputSchema: row.input_schema_path,

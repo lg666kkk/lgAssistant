@@ -28,8 +28,8 @@
 | 数据 | Supabase（PostgreSQL、Auth、Storage、pgvector）、Redis |
 | 知识集成 | Notion API、向量嵌入、Tavily / Exa / Brave Search |
 | 可观测性 | OpenTelemetry、Langfuse |
-| 沙箱 | Go 1.26、PostgreSQL、rootless Podman 或开发环境 Docker |
-| 质量保障 | Vitest、ESLint、TypeScript、Go test / race / vet、架构边界检查 |
+| 沙箱 | E2B 托管 Sandbox、PostgreSQL 运行记录 |
+| 质量保障 | Vitest、ESLint、TypeScript、架构边界检查 |
 
 ## 代码结构
 
@@ -38,7 +38,6 @@
 ├─ app/                         Next.js 页面、登录页和 API Route 适配器
 ├─ apps/
 │  ├─ web/                     浏览器组件、Hooks、页面状态和认证客户端
-│  └─ sandbox-broker/          独立的 Go Broker/Worker 沙箱服务
 ├─ packages/
 │  ├─ contracts/               跨端 DTO、事件协议和纯序列化逻辑
 │  ├─ application/             应用用例、流程编排和 Ports
@@ -144,16 +143,9 @@ Redis 返回 `PONG` 后，访问 [http://localhost:3000](http://localhost:3000)�
 docker compose -f docker-compose.dev.yml down
 ```
 
-## 可选：运行 Sandbox Broker
+## Skill 沙箱
 
-Sandbox Broker 是独立服务，不会被 Next.js 自动启动。仅调试 Broker API 时可使用内存存储并关闭本地鉴权：
-
-```powershell
-$env:SANDBOX_BROKER_AUTH_DISABLED = "true"
-npm run sandbox:dev
-```
-
-默认监听 `127.0.0.1:8081`。生产环境必须使用 PostgreSQL 存储、HMAC 鉴权和独立 Worker，且不允许把 Docker/Podman Socket 挂载给 Next.js 容器。具体配置见 [Sandbox Broker 说明](apps/sandbox-broker/README.md) 和 [远程部署指南](apps/sandbox-broker/docs/remote-deployment.md)。
+Skill 使用 E2B 托管 Sandbox。应用 [E2B 运行迁移](docs/schemas/migrations/20260928-e2b-skill-runtime.sql)和[用户密钥迁移](docs/schemas/migrations/20260928-user-sandbox-config.sql)后，登录用户可在“连接 > 沙盒环境”保存自己的 E2B API Key。默认使用 E2B `base` 模板；需要固定依赖时配置 `E2B_SKILL_TEMPLATE_ID`。部署与运行限制见 [E2B Skill Runtime](docs/architecture/e2b-skill-runtime.md)。
 
 ## 常用命令
 
@@ -170,8 +162,6 @@ npm run sandbox:dev
 | `npm run rag:sync` / `npm run rag:search` | 同步或检索知识库 |
 | `npm run rag:ingestion:work` | 启动 RAG 摄取 Worker |
 | `npm run scheduler:dev` | 启动本地定时任务触发器 |
-| `npm run sandbox:test` | 运行 Go 沙箱测试 |
-| `npm run sandbox:race` / `npm run sandbox:vet` | 执行 Go 竞态检测与静态检查 |
 
 ## 部署与文档
 

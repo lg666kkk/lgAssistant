@@ -479,29 +479,24 @@ export function McpCenter() {
             </button>
           </div>
         ) : (
-          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+          <div className="mt-6 grid max-w-3xl gap-4">
             {servers.map((server) => (
               <article
                 key={server.id}
-                className="rounded-xl border border-slate-800 bg-slate-900/30 p-5"
+                className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="rounded-lg bg-slate-800 p-2.5 text-cyan-300">
-                      <Plug className="h-5 w-5" />
-                    </span>
-                    <h3 className="truncate font-medium">{server.name}</h3>
-                  </div>
+                  <h3 className="min-w-0 truncate font-medium">{server.name}</h3>
                   <span
                     className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${server.enabled ? "bg-emerald-500/10 text-emerald-400" : "bg-slate-800 text-slate-500"}`}
                   >
                     {server.enabled ? "已启用" : "未启用"}
                   </span>
                 </div>
-                <p className="mt-4 break-all text-sm text-slate-500">
+                <p className="mt-2 break-all text-sm text-slate-500">
                   {server.url}
                 </p>
-                <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-400">
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
                   <span className="rounded bg-slate-800 px-2 py-1">
                     Streamable HTTP
                   </span>
@@ -514,7 +509,7 @@ export function McpCenter() {
                   </span>
                 </div>
                 <details
-                  className="mt-4 text-sm text-slate-400"
+                  className="mt-3 text-sm text-slate-400"
                   data-guest-browse
                 >
                   <summary className="cursor-pointer">查看工具</summary>
@@ -536,7 +531,7 @@ export function McpCenter() {
                     ))}
                   </ul>
                 </details>
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3">
                   {deleting === server.id ? (
                     <>
                       <span className="text-xs text-rose-300">

@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     !Array.isArray(body.entrypoint) ||
     !body.entrypoint.every((item) => typeof item === "string") ||
     (body.profileId !== "skill-trusted" && body.profileId !== "coding-untrusted") ||
-    typeof body.imageDigest !== "string" ||
+    typeof body.templateId !== "string" ||
     typeof body.bundleBase64 !== "string" ||
     typeof body.inputSchema !== "string" ||
     typeof body.outputSchema !== "string"
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       runtime: body.runtime,
       entrypoint: body.entrypoint as string[],
       profileId: body.profileId,
-      imageDigest: body.imageDigest,
+      templateId: body.templateId,
       bundleBase64: body.bundleBase64,
       inputSchema: body.inputSchema,
       outputSchema: body.outputSchema,

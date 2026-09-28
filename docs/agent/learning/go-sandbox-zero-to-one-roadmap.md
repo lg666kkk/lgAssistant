@@ -2,7 +2,7 @@
 
 > 适用项目：`/Users/lg/Desktop/personal-assistant`
 >
-> 实践主线：`apps/sandbox-broker`
+> 历史学习资料：实践主线 `apps/sandbox-broker` 已移除，当前 Skill 执行见 [E2B Skill Runtime](../../architecture/e2b-skill-runtime.md)。
 >
 > 适合背景：熟悉 TypeScript、React、Next.js，但尚未系统学习 Go、Linux 进程隔离和容器安全。
 

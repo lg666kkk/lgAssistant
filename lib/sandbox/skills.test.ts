@@ -11,19 +11,19 @@ describe("sandbox skill configuration validation", () => {
     })).rejects.toThrow("Skill ID");
   });
 
-  it("rejects mutable images before publication", async () => {
+  it("rejects an unconfigured E2B template before publication", async () => {
     await expect(publishSkillVersion({
       skillId: "markdown-check",
       version: "1.0.0",
       runtime: "node",
       entrypoint: ["node", "scripts/run.mjs"],
       profileId: "skill-trusted",
-      imageDigest: "node:latest",
+      templateId: "unconfigured-template",
       bundleBase64: Buffer.from("bundle").toString("base64"),
       inputSchema: "schemas/input.json",
       outputSchema: "schemas/output.json",
       actorId: "admin-1",
-    })).rejects.toThrow("sha256 digest");
+    })).rejects.toThrow("E2B 模板");
   });
 
   it("rejects unsafe delete identifiers before database access", async () => {

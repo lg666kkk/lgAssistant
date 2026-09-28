@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   Activity,
   Blocks,
+  Box,
   BookOpen,
   Bot,
   ChartNoAxesColumnIncreasing,
@@ -34,6 +35,7 @@ export type ConnectionTabId =
   | "jev"
   | "embedding"
   | "search-engine"
+  | "sandbox"
   | "usage"
   | "knowledge"
   | "mcp"
@@ -56,6 +58,7 @@ const connectionTabGroups: Array<{
       { id: "jev", label: "Jev 决策模型", icon: Blocks },
       { id: "embedding", label: "向量嵌入", icon: Database },
       { id: "search-engine", label: "搜索引擎", icon: Search },
+      { id: "sandbox", label: "沙盒环境", icon: Box },
       { id: "usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
     ],
   },

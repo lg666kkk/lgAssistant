@@ -21,6 +21,7 @@ import { EmbeddingCenter } from "@web/features/connections/components/embedding-
 import { McpCenter } from "@web/features/connections/components/mcp-center";
 import { SearchEngineCenter } from "@web/features/connections/components/search-engine-center";
 import { JevCenter } from "@web/features/connections/components/jev-center";
+import { SandboxCenter } from "@web/features/connections/components/sandbox-center";
 import { LangfuseCenter } from "@web/features/observability/components/langfuse-center";
 import { MemoryCenter } from "@web/features/memory/components/memory-center";
 import { UserProfileCenter } from "@web/features/memory/components/user-profile-center";
@@ -164,7 +165,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
-    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile" && panel !== "jev") return;
+    if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "sandbox" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile" && panel !== "jev") return;
     setActiveCapability("connections");
     setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
@@ -654,6 +655,8 @@ export default function Home() {
           />
         ) : activeCapability === "connections" && activeConnectionTab === "jev" ? (
           <JevCenter />
+        ) : activeCapability === "connections" && activeConnectionTab === "sandbox" ? (
+          <SandboxCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "search-engine" ? (
           <SearchEngineCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "mcp" ? (

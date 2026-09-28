@@ -14,6 +14,7 @@
 | [context-management-interview-questions.md](./interview/context-management-interview-questions.md) | 上下文工程专题面试题 |
 | [harness-interview-questions.md](./interview/harness-interview-questions.md) | Harness 专题面试题 |
 | [agent-evaluation-observability-interview-questions.md](./interview/agent-evaluation-observability-interview-questions.md) | 评估与可观测性专题面试题 |
+| [mcp-skill-interview-guide.md](./interview/mcp-skill-interview-guide.md) | MCP 与 Skill 实现讲解、设计取舍、已知缺口与高频追问 |
 
 ## Agent 路线图
 
@@ -26,6 +27,9 @@
 | 文档 | 用途 |
 |---|---|
 | [module-boundaries.md](./architecture/module-boundaries.md) | Web、Contracts、Application、Infrastructure 的依赖方向和自动门禁 |
+| [mcp-skill-implementation.md](./architecture/mcp-skill-implementation.md) | MCP 与 Skill 的配置、存储、Agent 调用、Broker 执行和验证边界 |
+| [mcp-skill-interview-guide.md](./architecture/mcp-skill-interview-guide.md) | MCP 与 Skill 的面试讲解、设计取舍、追问和演示路径 |
+| [sandbox-options-comparison.md](./architecture/sandbox-options-comparison.md) | E2B、OpenSandbox、Modal、Daytona、自建容器和云厂商代码解释器的选型比较 |
 
 ## Agent 学习
 
@@ -34,9 +38,8 @@
 | [agent-learning-plan.md](./agent/learning/agent-learning-plan.md) | Agent 系统学习路线 |
 | [agent-tool-calling-learning-roadmap.md](./agent/learning/agent-tool-calling-learning-roadmap.md) | Tool Use、Registry、Router 与 Agent Loop 学习路线 |
 | [frontend-to-ai-infra-roadmap.md](./agent/learning/frontend-to-ai-infra-roadmap.md) | 前端转型 Agent Infra / AI Platform 的岗位地图与 24 周实践路线 |
-| [go-sandbox-zero-to-one-roadmap.md](./agent/learning/go-sandbox-zero-to-one-roadmap.md) | 从零学习 Go，并以 Sandbox Broker 为主线完成容器隔离、持久 Worker、Skill 和 Coding Agent 的 16 周路线 |
-| [sandbox remote deployment](../apps/sandbox-broker/docs/remote-deployment.md) | Sandbox Broker 与 rootless Podman Worker 的远端部署边界、验收和回滚说明 |
-| [sandbox Skill management](../apps/sandbox-broker/docs/skill-management.md) | Skill 可编辑配置、不可变版本、Bundle 约定、Schema 校验与 Sandbox Profile 关联 |
+| [go-sandbox-zero-to-one-roadmap.md](./agent/learning/go-sandbox-zero-to-one-roadmap.md) | 历史 Go 学习路线；本地 Sandbox Broker 源码已移除 |
+| [E2B Skill Runtime](./architecture/e2b-skill-runtime.md) | E2B 接入、数据库迁移、运行与取消边界 |
 | [20260905-skill-list-detail.sql](./schemas/migrations/20260905-skill-list-detail.sql) | Skill 宫格列表、详情视图所需的软删除字段与管理员删除 RPC |
 
 ## Agent Runtime

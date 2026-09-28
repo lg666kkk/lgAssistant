@@ -24,12 +24,9 @@ import { authFetch } from "@web/lib/auth/client";
 type Profile = {
   id: "skill-trusted" | "coding-untrusted";
   label: string;
-  cpuQuotaMilli: number;
-  memoryLimitMb: number;
-  pidLimit: number;
   timeoutSeconds: number;
   network: "disabled";
-  imageDigest: string;
+  templateId: string;
 };
 
 type Manifest = {
@@ -38,7 +35,7 @@ type Manifest = {
   runtime: "node" | "python";
   entrypoint: string[];
   profileId: Profile["id"];
-  imageDigest: string;
+  templateId: string | null;
   bundleSha256: string;
   network: "disabled";
   inputSchema: string;
@@ -62,7 +59,7 @@ type VersionDraft = {
   runtime: "node" | "python";
   entrypoint: string;
   profileId: Profile["id"];
-  imageDigest: string;
+  templateId: string;
   inputSchema: string;
   outputSchema: string;
   bundle: File | null;
@@ -74,6 +71,9 @@ type RunState = {
   profileId: string;
   skillVersion?: string;
   message?: string;
+  result?: unknown;
+  stdout?: string;
+  stderr?: string;
 };
 
 const emptySkill = (): SkillDraft => ({ id: "", name: "", description: "", enabled: false });
@@ -83,7 +83,7 @@ const emptyVersion = (): VersionDraft => ({
   runtime: "node",
   entrypoint: "node scripts/run.mjs",
   profileId: "skill-trusted",
-  imageDigest: "",
+  templateId: "",
   inputSchema: "schemas/input.json",
   outputSchema: "schemas/output.json",
   bundle: null,
@@ -127,9 +127,9 @@ export function SkillCenter() {
       setSkills(nextSkills);
       const nextProfiles = (data.profiles ?? []) as Profile[];
       setProfiles(nextProfiles);
-      setVersionDraft((current) => current.imageDigest
+      setVersionDraft((current) => current.templateId
         ? current
-        : { ...current, imageDigest: nextProfiles.find((profile) => profile.id === current.profileId)?.imageDigest ?? "" });
+        : { ...current, templateId: nextProfiles.find((profile) => profile.id === current.profileId)?.templateId ?? "" });
       setCanEdit(Boolean(data.canEdit));
       const nextId = preferredId !== undefined
         ? preferredId && nextSkills.some((item) => item.id === preferredId) ? preferredId : null
@@ -137,7 +137,7 @@ export function SkillCenter() {
       setSelectedId(nextId);
       const nextSkill = nextSkills.find((item) => item.id === nextId);
       if (nextSkill) setSkillDraft(toDraft(nextSkill));
-      setSelectedVersion(nextSkill?.versions[0]?.version ?? "");
+      setSelectedVersion(nextSkill?.versions.find((version) => version.templateId)?.version ?? "");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "加载 Skill 失败");
     } finally {
@@ -175,10 +175,10 @@ export function SkillCenter() {
     setCreating(false);
     setSelectedId(skill.id);
     setSkillDraft(toDraft(skill));
-    setSelectedVersion(skill.versions[0]?.version ?? "");
+    setSelectedVersion(skill.versions.find((version) => version.templateId)?.version ?? "");
     setVersionDraft({
       ...emptyVersion(),
-      imageDigest: profiles.find((profile) => profile.id === "skill-trusted")?.imageDigest ?? "",
+      templateId: profiles.find((profile) => profile.id === "skill-trusted")?.templateId ?? "",
     });
     setRun(null);
     setError(null);
@@ -314,7 +314,7 @@ export function SkillCenter() {
           runtime: versionDraft.runtime,
           entrypoint: splitCommand(versionDraft.entrypoint),
           profileId: versionDraft.profileId,
-          imageDigest: versionDraft.imageDigest,
+          templateId: versionDraft.templateId,
           inputSchema: versionDraft.inputSchema,
           outputSchema: versionDraft.outputSchema,
           bundleBase64: await fileToBase64(versionDraft.bundle),
@@ -325,7 +325,7 @@ export function SkillCenter() {
       await load(selectedSkill.id);
       setSelectedVersion(versionDraft.version);
       const defaultProfile = profiles.find((profile) => profile.id === "skill-trusted");
-      setVersionDraft({ ...emptyVersion(), imageDigest: defaultProfile?.imageDigest ?? "" });
+      setVersionDraft({ ...emptyVersion(), templateId: defaultProfile?.templateId ?? "" });
       setNotice(`版本 ${versionDraft.version} 已发布`);
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "发布 Skill 版本失败");
@@ -484,7 +484,7 @@ export function SkillCenter() {
               <div className="overflow-x-auto rounded-md border border-slate-800">
                 <table className="w-full min-w-[720px] text-left text-xs">
                   <thead className="bg-slate-900 text-slate-500"><tr><th className="px-3 py-2.5">版本</th><th className="px-3 py-2.5">运行时</th><th className="px-3 py-2.5">入口</th><th className="px-3 py-2.5">Sandbox</th><th className="px-3 py-2.5">Bundle SHA-256</th></tr></thead>
-                  <tbody className="divide-y divide-slate-800">{selectedSkill.versions.map((version) => <tr key={version.version} className="text-slate-300"><td className="px-3 py-3 font-mono">{version.version}</td><td className="px-3 py-3">{version.runtime}</td><td className="px-3 py-3 font-mono">{version.entrypoint.join(" ")}</td><td className="px-3 py-3"><span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />{version.profileId}</span></td><td className="max-w-48 truncate px-3 py-3 font-mono text-slate-500" title={version.bundleSha256}>{version.bundleSha256}</td></tr>)}</tbody>
+                  <tbody className="divide-y divide-slate-800">{selectedSkill.versions.map((version) => <tr key={version.version} className="text-slate-300"><td className="px-3 py-3 font-mono">{version.version}</td><td className="px-3 py-3">{version.runtime}</td><td className="px-3 py-3 font-mono">{version.entrypoint.join(" ")}</td><td className="px-3 py-3"><span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />{version.templateId ? version.profileId : "旧版（不可运行）"}</span></td><td className="max-w-48 truncate px-3 py-3 font-mono text-slate-500" title={version.bundleSha256}>{version.bundleSha256}</td></tr>)}</tbody>
                 </table>
               </div>
             </section>
@@ -496,23 +496,27 @@ export function SkillCenter() {
                   <Field label="版本"><input value={versionDraft.version} onChange={(event) => setVersionDraft({ ...versionDraft, version: event.target.value })} className={inputClass} /></Field>
                   <Field label="运行时"><select value={versionDraft.runtime} onChange={(event) => { const runtime = event.target.value as VersionDraft["runtime"]; setVersionDraft({ ...versionDraft, runtime, entrypoint: runtime === "node" ? "node scripts/run.mjs" : "python3 scripts/run.py" }); }} className={inputClass}><option value="node">Node.js</option><option value="python">Python</option></select></Field>
                   <Field label="入口"><input value={versionDraft.entrypoint} onChange={(event) => setVersionDraft({ ...versionDraft, entrypoint: event.target.value })} className={inputClass} /></Field>
-                  <Field label="Sandbox Profile"><select value={versionDraft.profileId} onChange={(event) => { const profileId = event.target.value as Profile["id"]; const profile = profiles.find((item) => item.id === profileId); setVersionDraft({ ...versionDraft, profileId, imageDigest: profile?.imageDigest ?? "" }); }} className={inputClass}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></Field>
+                  <Field label="Sandbox Profile"><select value={versionDraft.profileId} onChange={(event) => { const profileId = event.target.value as Profile["id"]; const profile = profiles.find((item) => item.id === profileId); setVersionDraft({ ...versionDraft, profileId, templateId: profile?.templateId ?? "" }); }} className={inputClass}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></Field>
                   <Field label="输入 Schema"><input value={versionDraft.inputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, inputSchema: event.target.value })} className={inputClass} /></Field>
                   <Field label="输出 Schema"><input value={versionDraft.outputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, outputSchema: event.target.value })} className={inputClass} /></Field>
-                  <Field label="镜像 Digest" wide><input value={versionDraft.imageDigest} onChange={(event) => setVersionDraft({ ...versionDraft, imageDigest: event.target.value })} className={`${inputClass} font-mono`} placeholder="registry/image@sha256:..." /></Field>
+                  <Field label="E2B 模板" wide><input value={versionDraft.templateId} readOnly className={`${inputClass} font-mono`} placeholder="请先配置 E2B_SKILL_TEMPLATE_ID" /></Field>
                   <Field label="Bundle" wide><label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-700 px-3 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-200"><FileArchive className="h-4 w-4" /><span className="truncate">{versionDraft.bundle?.name ?? "选择 .tar 文件"}</span><input type="file" accept=".tar,application/x-tar" className="sr-only" onChange={(event) => setVersionDraft({ ...versionDraft, bundle: event.target.files?.[0] ?? null })} /></label></Field>
                 </div>
-                {selectedProfile && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500"><span>CPU {selectedProfile.cpuQuotaMilli}m</span><span>内存 {selectedProfile.memoryLimitMb}MiB</span><span>PID {selectedProfile.pidLimit}</span><span>超时 {selectedProfile.timeoutSeconds}s</span><span>网络关闭</span></div>}
+                {selectedProfile && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500"><span>超时 {selectedProfile.timeoutSeconds}s</span><span>网络关闭</span></div>}
               </section>
             )}
 
             <section className="px-6 py-5">
               <div className="mb-4 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-100">运行测试</h2><button type="button" disabled={busy !== null || !selectedVersion || !selectedSkill.enabled} onClick={() => void startRun()} className="flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-sm text-white hover:bg-emerald-500 disabled:opacity-50">{busy === "run" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}运行</button></div>
               <div className="grid max-w-5xl grid-cols-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-                <Field label="版本"><select value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} className={inputClass}><option value="">选择版本</option>{selectedSkill.versions.map((version) => <option key={version.version} value={version.version}>{version.version}</option>)}</select></Field>
+                <Field label="版本"><select value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} className={inputClass}><option value="">选择版本</option>{selectedSkill.versions.map((version) => <option key={version.version} value={version.version} disabled={!version.templateId}>{version.version}{version.templateId ? "" : "（旧版）"}</option>)}</select></Field>
                 <Field label="输入 JSON"><textarea value={runInput} onChange={(event) => setRunInput(event.target.value)} className={`${inputClass} min-h-28 resize-y py-2 font-mono`} spellCheck={false} /></Field>
               </div>
               {run && <div className="mt-4 flex max-w-5xl flex-wrap items-center gap-3 rounded-md border border-slate-800 bg-slate-900 px-4 py-3 text-sm"><RunStatusIcon status={run.status} /><span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-400">{run.runId}</span><span className="text-slate-300">{run.status}</span>{!terminalStatuses.has(run.status) && <button type="button" onClick={() => void cancelRun()} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-rose-300" title="取消运行" aria-label="取消运行"><Square className="h-4 w-4" /></button>}<button type="button" onClick={() => void refreshRun()} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-white" title="刷新状态" aria-label="刷新状态"><RefreshCw className={`h-4 w-4 ${busy === "refresh" ? "animate-spin" : ""}`} /></button></div>}
+              {run?.message && <p className="mt-3 text-sm text-rose-300">{run.message}</p>}
+              {run?.result !== undefined && <pre className="mt-3 max-h-80 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-200">{JSON.stringify(run.result, null, 2)}</pre>}
+              {run?.stdout && <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-300">{run.stdout}</pre>}
+              {run?.stderr && <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-rose-200">{run.stderr}</pre>}
             </section>
           </>
         )}

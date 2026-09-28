@@ -1,7 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDeepSeekThinkingFetch, toAIMessage } from "./model-provider";
+import { createDeepSeekThinkingFetch, createStrategyDiagnosticFetch, toAIMessage } from "./model-provider";
 
 describe("DeepSeek thinking request adapter", () => {
+  it("logs strategy HTTP timing without request URLs or credentials", async () => {
+    const logged = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const baseFetch = vi.fn(async () => new Response("ok", { status: 200 }));
+      const observed = createStrategyDiagnosticFetch(baseFetch as typeof fetch, "request-1", "test-model");
+      await observed("https://provider.example/chat/completions?key=secret-key", {
+        headers: { Authorization: "Bearer secret-key" },
+      });
+      expect(logged).toHaveBeenCalledWith("[execution.strategy] HTTP headers received", expect.objectContaining({
+        requestId: "request-1", model: "test-model", httpStatus: 200,
+      }));
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("secret-key");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("maps an internal image block to the AI SDK image part", () => {
     const message = toAIMessage({
       role: "user",
