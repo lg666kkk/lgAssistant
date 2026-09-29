@@ -1,8 +1,8 @@
 # MCP 与 Skill 模块实现
 
-> 历史记录：本文的 Go Sandbox Broker / Worker 部分已被 E2B 接入替代。当前执行路径见 [E2B Skill Runtime](./e2b-skill-runtime.md)。
+> 历史记录：本文整体描述的是已移除的 Go Sandbox Broker / Worker 实现，不是当前运行路径。当前执行路径见 [E2B Skill Runtime](./e2b-skill-runtime.md)。
 
-本文描述当前仓库中的实现，覆盖从页面配置到 Agent 调用及执行结果的路径。MCP 的操作说明见 [MCP 接入](../mcp.md)，Sandbox Broker 的运行和 Bundle 约定见 [Skill management](../../apps/sandbox-broker/docs/skill-management.md)。这里的“已实现”指源码中存在相应路径，不代表目标环境的数据库、远端 MCP 服务或容器运行已验证。
+本文保留用于回顾旧实现。MCP 的当前操作说明见 [MCP 接入](../mcp.md)，Skill 的当前运行约定见 [E2B Skill Runtime](./e2b-skill-runtime.md)。
 
 ## 1. 总体关系
 

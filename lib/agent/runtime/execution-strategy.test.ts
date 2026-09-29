@@ -91,14 +91,14 @@ describe("structured execution strategy", () => {
       abortSignal?.addEventListener("abort", () => reject(abortSignal.reason), { once: true });
     }));
     const pending = selectExecutionStrategy(input("任务"), generate);
-    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(60000);
     expect(await pending).toMatchObject({ source: "fallback", fallbackReason: "timeout" });
     expect(generate.mock.calls[0][0].abortSignal?.aborted).toBe(true);
     expect(warned).toHaveBeenCalledWith("[execution.strategy] timeout reached", expect.objectContaining({
-      requestId: "request-strategy", model: "test-model", timeoutMs: 10_000, elapsedMs: 10_000,
+      requestId: "request-strategy", model: "test-model", timeoutMs: 60_000, elapsedMs: 60_000,
     }));
     expect(logged).toHaveBeenCalledWith("[execution.strategy] fallback", expect.objectContaining({
-      fallbackReason: "timeout", elapsedMs: 10_000,
+      fallbackReason: "timeout", elapsedMs: 60_000,
     }));
   });
 

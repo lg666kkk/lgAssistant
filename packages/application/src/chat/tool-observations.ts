@@ -90,6 +90,7 @@ export function createToolObservationProjector(trace: ExternalTracePort, request
             measuredDurationMs: step.durationMs,
             recordedAtMs: step.startedAt,
             projectedAfterExecution: true,
+            ...(step.metadata?.sandbox ? { sandbox: safeValue(step.metadata.sandbox) } : {}),
           },
           level: step.ok ? "DEFAULT" : status === "failed" ? "ERROR" : "WARNING",
         }, { asType: "tool" });

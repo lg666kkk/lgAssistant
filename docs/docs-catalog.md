@@ -27,8 +27,8 @@
 | 文档 | 用途 |
 |---|---|
 | [module-boundaries.md](./architecture/module-boundaries.md) | Web、Contracts、Application、Infrastructure 的依赖方向和自动门禁 |
-| [mcp-skill-implementation.md](./architecture/mcp-skill-implementation.md) | MCP 与 Skill 的配置、存储、Agent 调用、Broker 执行和验证边界 |
-| [mcp-skill-interview-guide.md](./architecture/mcp-skill-interview-guide.md) | MCP 与 Skill 的面试讲解、设计取舍、追问和演示路径 |
+| [mcp-skill-implementation.md](./architecture/mcp-skill-implementation.md) | 历史版 MCP 与 Go Broker/Worker 实现记录；当前 Skill 执行见 E2B 文档 |
+| [mcp-skill-interview-guide.md](./architecture/mcp-skill-interview-guide.md) | 历史版 MCP 与 Go Broker/Worker 面试讲解；当前 Skill 执行见 E2B 文档 |
 | [sandbox-options-comparison.md](./architecture/sandbox-options-comparison.md) | E2B、OpenSandbox、Modal、Daytona、自建容器和云厂商代码解释器的选型比较 |
 
 ## Agent 学习
@@ -38,7 +38,7 @@
 | [agent-learning-plan.md](./agent/learning/agent-learning-plan.md) | Agent 系统学习路线 |
 | [agent-tool-calling-learning-roadmap.md](./agent/learning/agent-tool-calling-learning-roadmap.md) | Tool Use、Registry、Router 与 Agent Loop 学习路线 |
 | [frontend-to-ai-infra-roadmap.md](./agent/learning/frontend-to-ai-infra-roadmap.md) | 前端转型 Agent Infra / AI Platform 的岗位地图与 24 周实践路线 |
-| [go-sandbox-zero-to-one-roadmap.md](./agent/learning/go-sandbox-zero-to-one-roadmap.md) | 历史 Go 学习路线；本地 Sandbox Broker 源码已移除 |
+| [go-sandbox-zero-to-one-roadmap.md](./agent/learning/go-sandbox-zero-to-one-roadmap.md) | 历史 Go Broker 学习路线；本地 Sandbox Broker 源码已移除 |
 | [E2B Skill Runtime](./architecture/e2b-skill-runtime.md) | E2B 接入、数据库迁移、运行与取消边界 |
 | [20260905-skill-list-detail.sql](./schemas/migrations/20260905-skill-list-detail.sql) | Skill 宫格列表、详情视图所需的软删除字段与管理员删除 RPC |
 

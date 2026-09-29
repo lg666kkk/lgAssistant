@@ -296,7 +296,11 @@ export function SkillCenter() {
   };
 
   const publishVersion = async () => {
-    if (!selectedSkill || !versionDraft.bundle) return;
+    if (!selectedSkill) return;
+    if (!versionDraft.bundle) {
+      setError("请先选择要发布的 .tar Bundle 文件");
+      return;
+    }
     if (versionDraft.bundle.size > 10 * 1024 * 1024) {
       setError("Skill Bundle 不能超过 10MiB");
       return;
@@ -491,7 +495,7 @@ export function SkillCenter() {
 
             {canEdit && (
               <section className="border-b border-slate-800 px-6 py-5">
-                <div className="mb-4 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-100">发布版本</h2><button type="button" disabled={busy !== null || !versionDraft.bundle} onClick={() => void publishVersion()} className="flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">{busy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}发布</button></div>
+                <div className="mb-4 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-100">发布版本</h2><button type="button" disabled={busy !== null} onClick={() => void publishVersion()} className="flex h-9 items-center gap-2 rounded-md border border-slate-700 px-3 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">{busy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}发布</button></div>
                 <div className="grid max-w-5xl grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   <Field label="版本"><input value={versionDraft.version} onChange={(event) => setVersionDraft({ ...versionDraft, version: event.target.value })} className={inputClass} /></Field>
                   <Field label="运行时"><select value={versionDraft.runtime} onChange={(event) => { const runtime = event.target.value as VersionDraft["runtime"]; setVersionDraft({ ...versionDraft, runtime, entrypoint: runtime === "node" ? "node scripts/run.mjs" : "python3 scripts/run.py" }); }} className={inputClass}><option value="node">Node.js</option><option value="python">Python</option></select></Field>
@@ -500,7 +504,7 @@ export function SkillCenter() {
                   <Field label="输入 Schema"><input value={versionDraft.inputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, inputSchema: event.target.value })} className={inputClass} /></Field>
                   <Field label="输出 Schema"><input value={versionDraft.outputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, outputSchema: event.target.value })} className={inputClass} /></Field>
                   <Field label="E2B 模板" wide><input value={versionDraft.templateId} readOnly className={`${inputClass} font-mono`} placeholder="请先配置 E2B_SKILL_TEMPLATE_ID" /></Field>
-                  <Field label="Bundle" wide><label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-700 px-3 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-200"><FileArchive className="h-4 w-4" /><span className="truncate">{versionDraft.bundle?.name ?? "选择 .tar 文件"}</span><input type="file" accept=".tar,application/x-tar" className="sr-only" onChange={(event) => setVersionDraft({ ...versionDraft, bundle: event.target.files?.[0] ?? null })} /></label></Field>
+                  <div className="md:col-span-2 lg:col-span-3"><span className="mb-1.5 block text-xs font-medium text-slate-500">Bundle</span><label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-700 px-3 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-200"><FileArchive className="h-4 w-4" /><span className="truncate">{versionDraft.bundle?.name ?? "选择 .tar 文件"}</span><input type="file" accept=".tar,application/x-tar" className="sr-only" onChange={(event) => { setVersionDraft({ ...versionDraft, bundle: event.target.files?.[0] ?? null }); setError(null); }} /></label></div>
                 </div>
                 {selectedProfile && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500"><span>超时 {selectedProfile.timeoutSeconds}s</span><span>网络关闭</span></div>}
               </section>

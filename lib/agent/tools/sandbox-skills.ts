@@ -172,6 +172,17 @@ export const runSkillTool: ToolDefinition = {
           result: resultText.length <= 8_000 ? run.result : undefined,
           resultTruncated: resultText.length > 8_000,
         },
+        metadata: {
+          status: run.status,
+          sandbox: {
+            runId: run.runId,
+            skillId: run.skillId,
+            skillVersion: run.skillVersion,
+            executionLog: run.executionLog ?? [],
+            stdoutChars: run.stdout?.length ?? 0,
+            stderrChars: run.stderr?.length ?? 0,
+          },
+        },
         error: isTerminal(run.status) && run.status !== "completed" ? run.message ?? run.status : undefined,
       };
     } catch (error) {

@@ -8,6 +8,14 @@ import { SANDBOX_PROFILES } from "./skills";
 const WORKSPACE = "/home/user/workspace";
 const MAX_LOG_LENGTH = 64_000;
 const TERMINAL = ["completed", "failed", "timed_out", "cancelled", "dead", "unavailable"];
+const MAX_EXECUTION_LOG_EVENTS = 64;
+
+export type SandboxExecutionLogEvent = {
+  phase: string;
+  at: string;
+  elapsedMs: number;
+  details?: Record<string, unknown>;
+};
 
 export type SandboxRun = {
   runId: string;
@@ -20,6 +28,7 @@ export type SandboxRun = {
   stdout?: string;
   stderr?: string;
   message?: string;
+  executionLog?: SandboxExecutionLogEvent[];
   createdAt: string;
   updatedAt: string;
 };
@@ -79,6 +88,7 @@ export async function createSkillRun(input: {
     timeout_seconds: profile.timeoutSeconds,
     max_attempts: 1,
     status: "queued",
+    execution_log: [{ phase: "queued", at: new Date().toISOString(), elapsedMs: 0 }],
   }).select("*").single();
   if (error) {
     if (error.code === "23505") {
@@ -140,10 +150,13 @@ async function executeSkillRun(runId: string): Promise<void> {
     status: "preparing", updated_at: new Date().toISOString(),
   }).eq("id", runId).eq("status", "queued").is("cancel_requested_at", null).select("*").maybeSingle();
   if (error || !run) return;
+  const startedAt = Date.now();
+  await appendExecutionLog(runId, startedAt, "preparing");
   let sandbox: Sandbox | undefined;
   let apiKey: string | undefined;
   try {
     apiKey = await getE2BApiKey(run.user_id);
+    await appendExecutionLog(runId, startedAt, "credentials_resolved");
     const version = await loadVersion(run.skill_id, run.skill_version);
     if (!version.e2b_template_id || version.bundle_sha256 !== run.skill_bundle_sha256) {
       throw new Error("Skill 发布版本与 Run 绑定不匹配");
@@ -159,6 +172,7 @@ async function executeSkillRun(runId: string): Promise<void> {
       timeoutMs: (run.timeout_seconds + 60) * 1000,
       metadata: { runId },
     });
+    await appendExecutionLog(runId, startedAt, "sandbox_created", { sandboxId: sandbox.sandboxId });
     const { data: active } = await database.from("sandbox_runs").update({
       e2b_sandbox_id: sandbox.sandboxId, status: "running", started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -168,10 +182,16 @@ async function executeSkillRun(runId: string): Promise<void> {
       await sandbox.files.write(`${WORKSPACE}/${path}`, Uint8Array.from(contents).buffer);
     }
     await sandbox.files.write(`${WORKSPACE}/input.json`, JSON.stringify(run.input));
+    await appendExecutionLog(runId, startedAt, "files_uploaded", { fileCount: files.size + 1 });
     const command = version.entrypoint.map(shellQuote).join(" ");
     const commandResult = await sandbox.commands.run(command, {
       cwd: WORKSPACE,
       timeoutMs: run.timeout_seconds * 1000,
+    });
+    await appendExecutionLog(runId, startedAt, "command_completed", {
+      exitCode: commandResult.exitCode,
+      stdoutChars: commandResult.stdout.length,
+      stderrChars: commandResult.stderr.length,
     });
     const { data: collecting } = await database.from("sandbox_runs").update({
       status: "collecting_artifacts", stdout: commandResult.stdout.slice(0, MAX_LOG_LENGTH),
@@ -180,17 +200,39 @@ async function executeSkillRun(runId: string): Promise<void> {
     }).eq("id", runId).eq("status", "running").is("cancel_requested_at", null).select("id").maybeSingle();
     if (!collecting) return;
     const outputText = await sandbox.files.read(`${WORKSPACE}/result.json`);
+    await appendExecutionLog(runId, startedAt, "result_read", { resultChars: outputText.length });
     if (Buffer.byteLength(outputText) > 1024 * 1024) throw new Error("Skill 结果超过 1MiB");
     const result = JSON.parse(outputText);
     validateSkillJSON(outputSchema, result);
     await database.from("sandbox_runs").update({
       status: "completed", result, completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", runId).eq("status", "collecting_artifacts").is("cancel_requested_at", null);
+    await appendExecutionLog(runId, startedAt, "completed");
   } catch (runError) {
+    await appendExecutionLog(runId, startedAt, "failed", {
+      message: runError instanceof Error ? runError.message.slice(0, 500) : "unknown",
+    });
     await failRun(runId, runError);
   } finally {
-    if (sandbox) await Sandbox.kill(sandbox.sandboxId, { apiKey }).catch(() => undefined);
+    if (sandbox) {
+      await Sandbox.kill(sandbox.sandboxId, { apiKey }).catch(() => undefined);
+      await appendExecutionLog(runId, startedAt, "sandbox_destroyed", { sandboxId: sandbox.sandboxId });
+    }
   }
+}
+
+async function appendExecutionLog(
+  runId: string,
+  startedAt: number,
+  phase: string,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  const database = getSupabase();
+  const { data } = await database.from("sandbox_runs").select("execution_log").eq("id", runId).maybeSingle();
+  const previous = Array.isArray(data?.execution_log) ? data.execution_log as SandboxExecutionLogEvent[] : [];
+  const next = [...previous, { phase, at: new Date().toISOString(), elapsedMs: Date.now() - startedAt, details }]
+    .slice(-MAX_EXECUTION_LOG_EVENTS);
+  await database.from("sandbox_runs").update({ execution_log: next, updated_at: new Date().toISOString() }).eq("id", runId);
 }
 
 async function failRun(runId: string, error: unknown): Promise<void> {
@@ -246,6 +288,7 @@ function toRun(row: Record<string, any>): SandboxRun {
     stdout: row.stdout ?? undefined,
     stderr: row.stderr ?? undefined,
     message: row.error_message ?? undefined,
+    executionLog: Array.isArray(row.execution_log) ? row.execution_log : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
