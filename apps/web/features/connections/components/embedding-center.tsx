@@ -17,6 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { Message } from "@web/components/ui/feedback";
 import type {
   EmbeddingProviderId,
   UserEmbeddingConfigView,
@@ -226,16 +227,7 @@ export function EmbeddingCenter() {
           </button>
         </div>
 
-        {(error || notice) && (
-          <div className={`mt-5 flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${
-            error
-              ? "border-rose-900/70 bg-rose-950/30 text-rose-300"
-              : "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
-          }`}>
-            {error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
-            <span>{error ?? notice}</span>
-          </div>
-        )}
+        {(error || notice) && <Message className="mt-5" tone={error ? "error" : "success"}>{error ?? notice}</Message>}
 
         {loading ? (
           <div className="flex h-64 items-center justify-center text-slate-500">

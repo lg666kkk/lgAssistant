@@ -20,9 +20,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { ConfirmDialog, Message } from "@web/components/ui/feedback";
 
 type Profile = {
-  id: "skill-trusted" | "coding-untrusted";
+  id: "skill-trusted";
   label: string;
   timeoutSeconds: number;
   network: "disabled";
@@ -108,6 +109,10 @@ export function SkillCenter() {
   const importInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [installPackage, setInstallPackage] = useState("");
+  const [activeListTab, setActiveListTab] = useState<"list" | "upload" | "terminal">("list");
+  const [deleteTarget, setDeleteTarget] = useState<ConfiguredSkill | null>(null);
+  const [installProgress, setInstallProgress] = useState<{ stage: number; startedAt: number; status: "running" | "success" | "error"; message?: string } | null>(null);
 
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === selectedId) ?? null,
@@ -253,6 +258,26 @@ export function SkillCenter() {
     }
   };
 
+  const installFromRegistry = async () => {
+    const packageName = installPackage.trim();
+    if (!packageName) { setError("请输入 owner/repo 或 owner/repo@skill"); return; }
+    const startedAt = Date.now();
+    setInstallProgress({ stage: 0, startedAt, status: "running" });
+    setBusy("import"); setError(null); setNotice(null);
+    const timer = window.setInterval(() => setInstallProgress((current) => current && current.status === "running" ? { ...current, stage: Math.min(current.stage + 1, 3) } : current), 900);
+    try {
+      const response = await authFetch("/api/skills/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package: packageName }) });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "安装 Skill 失败");
+      setInstallProgress({ stage: 4, startedAt, status: "success" });
+      await load(null); setActiveListTab("list"); setInstallPackage(""); setNotice("已安装 " + (data.skills?.length ?? 0) + " 个 Skill");
+    } catch (installError) {
+      const message = installError instanceof Error ? installError.message : "安装 Skill 失败";
+      setInstallProgress((current) => ({ stage: current?.stage ?? 0, startedAt, status: "error", message }));
+      setError(message);
+    } finally { window.clearInterval(timer); setBusy(null); }
+  };
+
   const importSkill = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
@@ -276,7 +301,6 @@ export function SkillCenter() {
   };
 
   const deleteSkill = async (skill: ConfiguredSkill) => {
-    if (!window.confirm(`删除 Skill“${skill.name}”？历史版本和 Run 将保留用于审计。`)) return;
     setBusy("delete");
     setError(null);
     try {
@@ -288,6 +312,7 @@ export function SkillCenter() {
       await load(null);
       updateSkillURL(null);
       setNotice("Skill 已删除");
+      setDeleteTarget(null);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除 Skill 失败");
     } finally {
@@ -402,24 +427,35 @@ export function SkillCenter() {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-950 px-4 py-5 sm:px-6">
         <div className="mx-auto max-w-6xl">
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-slate-100">Skill 列表</h2>
-              <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill` : "登录后查看 Skill"}</p>
+          <div className="mb-5">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-100">Skills</h2>
+                <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill` : "登录后查看 Skill"}</p>
+              </div>
+              <div role="tablist" aria-label="Skill 管理方式" className="flex w-full flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-900/70 p-1 sm:w-auto">
+                {([["list", "Skill 列表"], ["upload", "本地上传"], ["terminal", "终端安装"]] as const).map(([tab, label]) => (
+                  <button key={tab} type="button" role="tab" aria-selected={activeListTab === tab} onClick={() => setActiveListTab(tab)} className={`min-h-10 rounded-md px-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500/70 ${activeListTab === tab ? "bg-slate-700 text-slate-100 shadow-sm" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>{label}</button>
+                ))}
+              </div>
             </div>
-            <button type="button" onClick={() => importInput.current?.click()} disabled={busy !== null} className="flex h-9 items-center gap-2 rounded-md bg-cyan-600 px-3 text-sm text-white hover:bg-cyan-500 disabled:opacity-50">
-              <Upload className="h-4 w-4" />上传 Skill
-            </button>
+            {activeListTab === "upload" && <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-sm font-semibold text-slate-100">从本地导入 Skill</h3><p className="mt-1 text-sm text-slate-500">选择包含根目录 SKILL.md 的文件夹。</p></div><button type="button" onClick={() => importInput.current?.click()} disabled={busy !== null} className="flex h-10 items-center gap-2 rounded-md bg-cyan-600 px-4 text-sm text-white hover:bg-cyan-500 disabled:opacity-50"><Upload className="h-4 w-4" />选择文件夹</button></div></div>}
+            {activeListTab === "terminal" && (
+              <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                <div className="mb-4"><h3 className="text-sm font-semibold text-slate-100">通过终端安装 Skill</h3><p className="mt-1 text-sm text-slate-500">输入 GitHub 仓库或具体 Skill，例如 vercel-labs/skills@find-skills。</p><p className="mt-1 text-xs text-slate-500">安装会导入 SKILL.md 供助手阅读，不会赋予助手执行文档中终端命令的能力。</p></div>
+                <div className="flex flex-col gap-2 sm:flex-row"><input value={installPackage} onChange={(event) => setInstallPackage(event.target.value)} placeholder="owner/repo 或 owner/repo@skill" className="h-10 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-200 outline-none focus:border-violet-500" disabled={busy !== null} /><button type="button" onClick={() => void installFromRegistry()} disabled={busy !== null || !installPackage.trim()} className="flex h-10 items-center justify-center gap-2 rounded-md bg-violet-600 px-4 text-sm text-white hover:bg-violet-500 disabled:opacity-50"><ShieldCheck className="h-4 w-4" />安装 Skill</button></div>
+                {installProgress && <InstallProgress progress={installProgress} />}
+              </div>
+            )}
             <input ref={importInput} type="file" multiple className="sr-only" onChange={(event) => void importSkill(event)} {...({ webkitdirectory: "" } as InputHTMLAttributes<HTMLInputElement>)} />
           </div>
 
-          {skills.length > 0 ? (
+          {activeListTab === "list" ? (skills.length > 0 ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {skills.map((skill) => (
                 <article key={skill.id} className="flex min-h-44 flex-col rounded-md border border-slate-800 bg-slate-900/70 transition-colors hover:border-slate-700">
                   <button type="button" onClick={() => selectSkill(skill)} className="min-w-0 flex-1 px-4 py-4 text-left">
                     <div className="flex items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-cyan-500/10 text-cyan-300"><Box className="h-4 w-4" /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-slate-100">{skill.name}</span>
                         <span className="mt-0.5 block truncate font-mono text-xs text-slate-600">{skill.id}</span>
@@ -436,7 +472,7 @@ export function SkillCenter() {
                           <input type="checkbox" checked={skill.enabled} disabled={busy !== null} onChange={(event) => void toggleSkill(skill, event.target.checked)} className="h-4 w-4 accent-cyan-500" />
                           {skill.enabled ? "启用" : "停用"}
                         </label>
-                        <button type="button" disabled={busy !== null} onClick={() => void deleteSkill(skill)} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-rose-300 disabled:opacity-50" title="删除 Skill" aria-label={`删除 ${skill.name}`}>
+                        <button type="button" disabled={busy !== null} onClick={() => setDeleteTarget(skill)} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-rose-300 disabled:opacity-50" title="删除 Skill" aria-label={`删除 ${skill.name}`}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </>
@@ -445,20 +481,30 @@ export function SkillCenter() {
                 </article>
               ))}
             </div>
-          ) : (
+          ) : activeListTab === "list" ? (
             <div className="flex min-h-64 flex-col items-center justify-center border border-dashed border-slate-800 text-center">
               <Box className="mb-3 h-6 w-6 text-slate-600" />
               <p className="text-sm text-slate-400">{user ? "暂无 Skill" : "登录后查看和管理 Skill"}</p>
             </div>
-          )}
+          ) : null) : null}
         </div>
         <Feedback error={error} notice={notice} />
+        <ConfirmDialog
+          open={Boolean(deleteTarget)}
+          title="删除 Skill"
+          description={deleteTarget ? `删除“${deleteTarget.name}”？历史版本和 Run 将保留用于审计。` : undefined}
+          confirmLabel="删除"
+          destructive
+          busy={busy === "delete"}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => deleteTarget ? deleteSkill(deleteTarget) : undefined}
+        />
       </div>
     );
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-950">
+    <div className="h-full min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-950">
       <div className="mx-auto max-w-6xl">
         <div className="flex h-14 items-center gap-3 border-b border-slate-800 px-4 sm:px-6">
           <button type="button" onClick={openList} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-white" title="返回 Skill 列表" aria-label="返回 Skill 列表"><ArrowLeft className="h-4 w-4" /></button>
@@ -500,11 +546,11 @@ export function SkillCenter() {
                   <Field label="版本"><input value={versionDraft.version} onChange={(event) => setVersionDraft({ ...versionDraft, version: event.target.value })} className={inputClass} /></Field>
                   <Field label="运行时"><select value={versionDraft.runtime} onChange={(event) => { const runtime = event.target.value as VersionDraft["runtime"]; setVersionDraft({ ...versionDraft, runtime, entrypoint: runtime === "node" ? "node scripts/run.mjs" : "python3 scripts/run.py" }); }} className={inputClass}><option value="node">Node.js</option><option value="python">Python</option></select></Field>
                   <Field label="入口"><input value={versionDraft.entrypoint} onChange={(event) => setVersionDraft({ ...versionDraft, entrypoint: event.target.value })} className={inputClass} /></Field>
-                  <Field label="Sandbox Profile"><select value={versionDraft.profileId} onChange={(event) => { const profileId = event.target.value as Profile["id"]; const profile = profiles.find((item) => item.id === profileId); setVersionDraft({ ...versionDraft, profileId, templateId: profile?.templateId ?? "" }); }} className={inputClass}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></Field>
+                  <Field label="Sandbox Profile"><input value="受信任 Skill" readOnly className={inputClass} /><input type="hidden" value="skill-trusted" /></Field>
                   <Field label="输入 Schema"><input value={versionDraft.inputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, inputSchema: event.target.value })} className={inputClass} /></Field>
                   <Field label="输出 Schema"><input value={versionDraft.outputSchema} onChange={(event) => setVersionDraft({ ...versionDraft, outputSchema: event.target.value })} className={inputClass} /></Field>
                   <Field label="E2B 模板" wide><input value={versionDraft.templateId} readOnly className={`${inputClass} font-mono`} placeholder="请先配置 E2B_SKILL_TEMPLATE_ID" /></Field>
-                  <div className="md:col-span-2 lg:col-span-3"><span className="mb-1.5 block text-xs font-medium text-slate-500">Bundle</span><label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-700 px-3 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-200"><FileArchive className="h-4 w-4" /><span className="truncate">{versionDraft.bundle?.name ?? "选择 .tar 文件"}</span><input type="file" accept=".tar,application/x-tar" className="sr-only" onChange={(event) => { setVersionDraft({ ...versionDraft, bundle: event.target.files?.[0] ?? null }); setError(null); }} /></label></div>
+                  <div className="md:col-span-2 lg:col-span-3"><span className="mb-1.5 block text-xs font-medium text-slate-500">Bundle</span><label className="relative flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-700 px-3 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-200"><FileArchive className="h-4 w-4" /><span className="truncate">{versionDraft.bundle?.name ?? "选择 .tar 文件"}</span><input type="file" accept=".tar,application/x-tar" className="absolute inset-0 cursor-pointer opacity-0" onChange={(event) => { setVersionDraft({ ...versionDraft, bundle: event.target.files?.[0] ?? null }); setError(null); }} /></label></div>
                 </div>
                 {selectedProfile && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500"><span>超时 {selectedProfile.timeoutSeconds}s</span><span>网络关闭</span></div>}
               </section>
@@ -526,6 +572,16 @@ export function SkillCenter() {
         )}
 
         <Feedback error={error} notice={notice} />
+        <ConfirmDialog
+          open={Boolean(deleteTarget)}
+          title="删除 Skill"
+          description={deleteTarget ? `删除“${deleteTarget.name}”？历史版本和 Run 将保留用于审计。` : undefined}
+          confirmLabel="删除"
+          destructive
+          busy={busy === "delete"}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => deleteTarget ? deleteSkill(deleteTarget) : undefined}
+        />
       </div>
     </div>
   );
@@ -533,6 +589,18 @@ export function SkillCenter() {
 
 function Field({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
   return <label className={`block ${wide ? "md:col-span-2 lg:col-span-3" : ""}`}><span className="mb-1.5 block text-xs font-medium text-slate-500">{label}</span>{children}</label>;
+}
+
+function InstallProgress({ progress }: { progress: { stage: number; status: "running" | "success" | "error"; message?: string } }) {
+  const stages = ["校验安装来源", "准备临时目录", "下载并安装 Skill", "扫描并导入 SKILL.md"];
+  const complete = progress.status === "success";
+  return <div className="mt-5 rounded-md border border-slate-800 bg-slate-950/70 p-4" aria-live="polite">
+    <div className="mb-3 flex items-center justify-between gap-3"><span className="text-xs font-medium text-slate-300">安装进度</span><span className={progress.status === "error" ? "text-xs text-rose-300" : complete ? "text-xs text-emerald-300" : "text-xs text-violet-300"}>{progress.status === "error" ? "安装失败" : complete ? "安装完成" : "进行中"}</span></div>
+    <ol className="grid gap-2 sm:grid-cols-4">
+      {stages.map((label, index) => { const done = complete || progress.stage > index; const current = progress.status === "running" && progress.stage === index; return <li key={label} className="flex items-center gap-2 text-xs"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${done ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : current ? "border-violet-400 bg-violet-500/15 text-violet-200" : "border-slate-700 text-slate-500"}`}>{done ? "✓" : index + 1}</span><span className={done ? "text-slate-200" : current ? "text-violet-200" : "text-slate-500"}>{label}</span></li>; })}
+    </ol>
+    {progress.status === "error" && progress.message && <p className="mt-3 break-words text-xs text-rose-300">{progress.message}</p>}
+  </div>;
 }
 
 function RunStatusIcon({ status }: { status: string }) {
@@ -543,7 +611,7 @@ function RunStatusIcon({ status }: { status: string }) {
 
 function Feedback({ error, notice }: { error: string | null; notice: string | null }) {
   if (!error && !notice) return null;
-  return <div className={`fixed bottom-5 right-5 z-50 max-w-[calc(100vw-2rem)] rounded-md border px-4 py-3 text-sm shadow-xl ${error ? "border-rose-800 bg-rose-950 text-rose-200" : "border-emerald-800 bg-emerald-950 text-emerald-200"}`}>{error ?? notice}</div>;
+  return <div className="fixed bottom-5 right-5 z-50 max-w-[calc(100vw-2rem)]"><Message tone={error ? "error" : "success"}>{error ?? notice}</Message></div>;
 }
 
 function toDraft(skill: ConfiguredSkill): SkillDraft {

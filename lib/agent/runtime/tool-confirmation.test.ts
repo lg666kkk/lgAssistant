@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
+import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { defaultToolRuntimePolicy } from "@/lib/agent/tools/types";
 import { callModel, runAgentLoop } from "./index";
 
 describe("工具确认暂停", () => {
+  it("聊天请求终端命令时先暂停等待用户确认", async () => {
+    const registry = createBuiltinToolRegistry();
+    const model = vi.fn().mockResolvedValue({
+      content: [{ type: "tool_use", id: "terminal-1", name: "run_terminal_command", input: { command: "npx skills find finance" } }],
+      stop_reason: "tool_use",
+    });
+    const result = await runAgentLoop(
+      [{ role: "user", content: "用终端查找 finance skill" }],
+      registry.listForModel(), registry, 4, [], () => true,
+      "request-terminal", "session-terminal",
+      { callModel: model as unknown as typeof callModel },
+    );
+    expect(result.stopReason).toBe("awaiting_tool_confirmation");
+    expect(model).toHaveBeenCalledTimes(1);
+  });
+
   it("待确认写工具出现后立即停止，不再让模型发起 ask_user", async () => {
     const execute = vi.fn(async () => ({ ok: true, content: "created" }));
     const registry = new ToolRegistry();

@@ -45,6 +45,18 @@ export interface Message {
   plan?: ExecutionPlanData;
 }
 
+export interface PendingChatRequest {
+  id: string;
+  content: string;
+  attachments: ChatImageAttachment[];
+  options: {
+    webSearchEnabled?: boolean;
+    model?: ChatModelId;
+    approvedPlan?: ExecutionPlanData;
+    planExecution?: PlanExecutionControlData;
+  };
+}
+
 export class ChatSession {
   private static readonly MESSAGE_PAGE_SIZE = 50;
 
@@ -65,6 +77,7 @@ export class ChatSession {
   private sessionManager: SessionManager;
   private isNewSession: boolean;
   private historyLoadPromise: Promise<void> | null = null;
+  pendingRequests: PendingChatRequest[] = [];
 
   constructor(id?: string, userId?: string, sessionManager?: SessionManager) {
     this.id = id ?? createUuid();
@@ -154,7 +167,37 @@ export class ChatSession {
     } = {},
   ) {
     const attachments = options.attachments ?? [];
-    if ((!input.trim() && attachments.length === 0) || this.loading) return;
+    if ((!input.trim() && attachments.length === 0)) return;
+    if (this.isRunning) {
+      this.pendingRequests.push({
+        id: createUuid(),
+        content: input,
+        attachments,
+        options: {
+          webSearchEnabled: options.webSearchEnabled,
+          model: options.model,
+          approvedPlan: options.approvedPlan,
+          planExecution: options.planExecution,
+        },
+      });
+      onUpdate();
+      return;
+    }
+    return this.sendNow(input, onUpdate, options);
+  }
+
+  private async sendNow(
+    input: string,
+    onUpdate: () => void,
+    options: {
+      webSearchEnabled?: boolean;
+      model?: ChatModelId;
+      attachments?: ChatImageAttachment[];
+      approvedPlan?: ExecutionPlanData;
+      planExecution?: PlanExecutionControlData;
+    } = {},
+  ) {
+    const attachments = options.attachments ?? [];
 
     this.loading = true;
     this.currentModel = options.model ?? null;
@@ -362,7 +405,30 @@ export class ChatSession {
       this.streaming = false;
       this.abortController = null;
       onUpdate();
+      const next = this.pendingRequests.shift();
+      if (next) {
+        onUpdate();
+        void this.sendNow(next.content, onUpdate, {
+          ...next.options,
+          attachments: next.attachments,
+        });
+      }
     }
+  }
+
+  removePendingRequest(id: string, onUpdate: () => void = () => {}) {
+    const index = this.pendingRequests.findIndex((request) => request.id === id);
+    if (index < 0) return;
+    this.pendingRequests.splice(index, 1);
+    onUpdate();
+  }
+
+  prioritizePendingRequest(id: string, onUpdate: () => void = () => {}) {
+    const index = this.pendingRequests.findIndex((request) => request.id === id);
+    if (index <= 0) return;
+    const [request] = this.pendingRequests.splice(index, 1);
+    this.pendingRequests.unshift(request);
+    onUpdate();
   }
 
   abort() {

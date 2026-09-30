@@ -18,13 +18,13 @@ export async function POST(req: Request) {
     (body.runtime !== "node" && body.runtime !== "python") ||
     !Array.isArray(body.entrypoint) ||
     !body.entrypoint.every((item) => typeof item === "string") ||
-    (body.profileId !== "skill-trusted" && body.profileId !== "coding-untrusted") ||
+    body.profileId !== "skill-trusted" ||
     typeof body.templateId !== "string" ||
     typeof body.bundleBase64 !== "string" ||
     typeof body.inputSchema !== "string" ||
     typeof body.outputSchema !== "string"
   ) {
-    return Response.json({ ok: false, error: "Skill 版本配置格式错误" }, { status: 400 });
+    return Response.json({ ok: false, error: "Skill 版本只能使用受信任 Skill 配置" }, { status: 400 });
   }
   try {
     const published = await publishSkillVersion({

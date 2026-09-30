@@ -54,8 +54,8 @@ const connectionTabGroups: Array<{
   {
     label: "API 密钥",
     items: [
-      { id: "language-model", label: "大语言模型", icon: Bot },
-      { id: "jev", label: "Jev 决策模型", icon: Blocks },
+      { id: "language-model", label: "语言模型", icon: Bot },
+      { id: "jev", label: "决策模型", icon: Blocks },
       { id: "embedding", label: "向量嵌入", icon: Database },
       { id: "search-engine", label: "搜索引擎", icon: Search },
       { id: "sandbox", label: "沙盒环境", icon: Box },

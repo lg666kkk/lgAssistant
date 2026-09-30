@@ -41,6 +41,7 @@ export async function importStandardSkill(input: { files: File[]; actorId: strin
   const { data, error } = await getSupabase().from("sandbox_skills").upsert({
     id, name: name || id, description, enabled: false, skill_md: skillMd,
     support_files: supportFiles, updated_by: input.actorId, created_by: input.actorId,
+    deleted_at: null, deleted_by: null,
   }, { onConflict: "id" }).select("id,name,description,enabled,skill_md,support_files,created_at,updated_at").single();
   if (error) throw new Error(`保存 Skill 失败：${error.message}`);
   return data;

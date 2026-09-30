@@ -479,7 +479,7 @@ export function McpCenter() {
             </button>
           </div>
         ) : (
-          <div className="mt-6 grid max-w-3xl gap-4">
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {servers.map((server) => (
               <article
                 key={server.id}

@@ -26,6 +26,30 @@ function managerForImageSaveFailure(input: {
 }
 
 describe("ChatSession history loading", () => {
+  it("queues messages while a response is running and removes them by id", async () => {
+    const session = new ChatSession("session-1", "user-1", {} as SessionManager);
+    session.loading = true;
+
+    await session.send("第二个问题", vi.fn(), {
+      model: "deepseek-v4-pro",
+      webSearchEnabled: false,
+    });
+
+    expect(session.pendingRequests).toHaveLength(1);
+    expect(session.pendingRequests[0]).toMatchObject({
+      content: "第二个问题",
+      options: { model: "deepseek-v4-pro", webSearchEnabled: false },
+    });
+    await session.send("第三个问题", vi.fn());
+    session.prioritizePendingRequest(session.pendingRequests[1].id);
+    expect(session.pendingRequests.map((request) => request.content)).toEqual([
+      "第三个问题",
+      "第二个问题",
+    ]);
+    session.removePendingRequest(session.pendingRequests[0].id);
+    expect(session.pendingRequests.map((request) => request.content)).toEqual(["第二个问题"]);
+  });
+
   it("loads only the newest page for an existing session", async () => {
     const page = Array.from({ length: 50 }, (_, index) => databaseMessage(index));
     const getMessages = vi.fn(async () => page);

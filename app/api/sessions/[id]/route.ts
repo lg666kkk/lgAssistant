@@ -1,4 +1,5 @@
 import { deleteToolArtifactsForScope } from "@/lib/agent/runtime/artifact-store";
+import { deleteChatTerminalSession } from "@/lib/sandbox/chat-terminal";
 import { clearContextSnapshotCache } from "@/lib/agent/context/snapshot-store";
 import { RedisSessionStore } from "@/lib/agent/memory/session-store";
 import { requireUser } from "@/lib/auth/server";
@@ -74,6 +75,9 @@ export async function DELETE(
   // Redis 只承担短期会话缓存，不应影响正式会话和 artifact 的删除。
   await sessionStore.clear(user.id, sessionId).catch((error) =>
     console.error("[session] 清理 Redis 会话缓存失败:", error),
+  );
+  await deleteChatTerminalSession({ userId: user.id, scopeId: sessionId }).catch((error) =>
+    console.error("[session] 清理终端沙盒失败:", error),
   );
 
   const { data, error } = await supabase

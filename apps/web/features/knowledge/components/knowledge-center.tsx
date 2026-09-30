@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { ConfirmDialog, Message } from "@web/components/ui/feedback";
 import { NotionConnectionPanel } from "./notion-connection-panel";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
@@ -191,6 +192,7 @@ export function KnowledgeCenter() {
   const [resetIncludeCompiledWiki, setResetIncludeCompiledWiki] = useState(true);
   const [resetPreview, setResetPreview] = useState<KnowledgeResetResult | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
   const loadPages = useCallback(() => {
     if (!user) { setLoading(false); return; }
@@ -411,11 +413,6 @@ export function KnowledgeCenter() {
   async function runReset(confirm: boolean) {
     if (resetting || (!resetIncludeRag && !resetIncludeCompiledWiki)) return;
 
-    if (confirm) {
-      const ok = window.confirm("确认清空选中的知识库数据？这个操作不可撤销。");
-      if (!ok) return;
-    }
-
     setResetting(true);
     setResetError(null);
 
@@ -437,6 +434,7 @@ export function KnowledgeCenter() {
 
       setResetPreview(data as KnowledgeResetResult);
       if (confirm) {
+        setResetConfirmOpen(false);
         loadPages();
         loadKnowledgeProfile();
       }
@@ -878,7 +876,7 @@ export function KnowledgeCenter() {
               </button>
               <button
                 type="button"
-                onClick={() => runReset(true)}
+                onClick={() => setResetConfirmOpen(true)}
                 disabled={Boolean(user) && (resetting || syncing || compiling || (!resetIncludeRag && !resetIncludeCompiledWiki))}
                 className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
@@ -1129,6 +1127,16 @@ export function KnowledgeCenter() {
           </div>
           </div>
         )}
+        <ConfirmDialog
+          open={resetConfirmOpen}
+          title="确认清空知识库"
+          description="确认清空选中的知识库数据？这个操作不可撤销。"
+          confirmLabel="确认清空"
+          destructive
+          busy={resetting}
+          onClose={() => setResetConfirmOpen(false)}
+          onConfirm={() => runReset(true)}
+        />
       </div>
     </div>
     </div>

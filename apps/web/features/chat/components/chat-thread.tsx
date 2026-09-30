@@ -224,6 +224,9 @@ export function ChatThread({
                           ? "bg-amber-300"
                           : succeeded ? "bg-emerald-300" : "bg-rose-300";
                         const toolKey = `${messageIndex}:${toolIndex}`;
+                        const terminalInput = toolCall.input ?? (toolCall.metadata?.toolCall as { input?: unknown } | undefined)?.input;
+                        const terminalCommand = typeof (terminalInput as { command?: unknown } | undefined)?.command === "string"
+                          ? (terminalInput as { command: string }).command : "";
 
                         return (
                           <div key={toolKey} className="py-1 text-xs text-slate-300">
@@ -233,6 +236,12 @@ export function ChatThread({
                               <span className={`shrink-0 text-[10px] ${statusClass}`}>{statusLabel}</span>
                             </div>
                             <McpToolCallDetails tool={toolCall} />
+                            {toolCall.name === "run_terminal_command" && toolStatus === "pending_confirmation" && (
+                              <div className="ml-3.5 mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
+                                <p className="mb-1 text-[11px] text-amber-200">将在联网沙盒中执行，文件在本聊天中暂存约 30 分钟</p>
+                                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-slate-200">{terminalCommand || "未保存命令参数"}</pre>
+                              </div>
+                            )}
                             {toolCall.name === "view_skill" && toolCall.ok && (
                               <StandardSkillCard content={toolCall.content} />
                             )}
@@ -246,7 +255,7 @@ export function ChatThread({
                               <div className="ml-3.5 mt-1.5 flex gap-2">
                                 <button
                                   type="button"
-                                  disabled={Boolean(confirmingToolKey) || Boolean(loading)}
+                                  disabled={Boolean(confirmingToolKey) || Boolean(loading) || (toolCall.name === "run_terminal_command" && !terminalCommand)}
                                   className="rounded-md bg-slate-700/70 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-600 disabled:cursor-not-allowed disabled:text-slate-500"
                                   onClick={async () => {
                                     setConfirmingToolKey(toolKey);

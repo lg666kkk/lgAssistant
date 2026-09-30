@@ -5,8 +5,9 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import Image from "next/image";
 import { type ChatModelId } from "@/lib/agent/models";
 import type { ComposerImageAttachment } from "@/lib/chat/image-storage";
-import { AlertCircle, ImagePlus, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { AlertCircle, ArrowDownToLine, ImagePlus, LoaderCircle, MoreHorizontal, RefreshCw, Trash2, X } from "lucide-react";
 import type { ContextUsageEventData } from "@repo/contracts";
+import type { PendingChatRequest } from "../model/chat-session";
 import { ImagePreviewDialog, type PreviewImage } from "./image-preview-dialog";
 import { ModelPicker } from "./model-picker";
 import type { UserLlmModel } from "@/lib/llm/types";
@@ -32,6 +33,9 @@ type ChatInputProps = {
   onBeforeImageSelect?: () => boolean;
   onSend: () => void;
   onStop: () => void;
+  pendingRequests?: PendingChatRequest[];
+  onRemovePendingRequest?: (id: string) => void;
+  onPrioritizePendingRequest?: (id: string) => void;
 };
 
 function setForwardedRef<T>(ref: ForwardedRef<T>, value: T) {
@@ -95,6 +99,9 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       onBeforeImageSelect,
       onSend,
       onStop,
+      pendingRequests = [],
+      onRemovePendingRequest,
+      onPrioritizePendingRequest,
     },
     ref,
   ) {
@@ -144,6 +151,45 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
     return (
       <div className="border-t border-slate-800 bg-slate-950 px-4 py-5">
         <div className="mx-auto max-w-4xl">
+          {pendingRequests.length > 0 && (
+            <div className="overflow-hidden rounded-t-2xl border border-b-0 border-slate-700/80 bg-slate-900/95 shadow-2xl shadow-black/30">
+              {pendingRequests.map((request, index) => (
+                <div key={request.id} className="flex min-h-12 items-center gap-3 border-b border-slate-800 px-4 py-2.5 last:border-b-0">
+                  <ArrowDownToLine className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-200" title={request.content}>
+                    {request.content || "图片问题"}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-slate-500">{index + 1}</span>
+                  <button
+                    type="button"
+                    onClick={() => onPrioritizePendingRequest?.(request.id)}
+                    disabled={index === 0}
+                    className="shrink-0 text-sm text-slate-400 transition hover:text-cyan-300 disabled:cursor-default disabled:text-slate-600"
+                    title="引导为下一条执行"
+                  >
+                    引导
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemovePendingRequest?.(request.id)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
+                    title="移除排队问题"
+                    aria-label="移除排队问题"
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+                    title="更多操作"
+                    aria-label="更多操作"
+                  >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="rounded-[28px] border border-slate-700/80 bg-slate-900 px-5 py-4 shadow-2xl shadow-black/30 transition-colors focus-within:border-cyan-500/70">
             {attachments.length > 0 && (
               <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
@@ -395,40 +441,41 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                     <ImagePlus className="h-[18px] w-[18px] sm:h-[22px] sm:w-[22px]" aria-hidden="true" />
                   )}
                 </button>
-                {isRunning ? (
+                {isRunning && (
                   <button
                     type="button"
                     onClick={onStop}
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400 sm:h-11 sm:w-11"
-                    title="停止"
+                    title="停止当前回答"
+                    aria-label="停止当前回答"
                   >
                     <span className="h-3 w-3 rounded-sm bg-white sm:h-3.5 sm:w-3.5" />
                   </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={onSend}
-                    disabled={disabled}
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500 text-white transition-colors hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 sm:h-11 sm:w-11"
-                    title="发送"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      width="23"
-                      height="23"
-                      className="h-[19px] w-[19px] sm:h-[23px] sm:w-[23px]"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M12 19V5" />
-                      <path d="m5 12 7-7 7 7" />
-                    </svg>
-                  </button>
                 )}
+                <button
+                  type="button"
+                  onClick={onSend}
+                  disabled={disabled}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500 text-white transition-colors hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 sm:h-11 sm:w-11"
+                  title={isRunning ? "提交，但不中断模型运行" : "发送"}
+                  aria-label={isRunning ? "提交，但不中断模型运行" : "发送"}
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="23"
+                    height="23"
+                    className="h-[19px] w-[19px] sm:h-[23px] sm:w-[23px]"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
+                </button>
               </div>
             </div>
             {attachmentError && (

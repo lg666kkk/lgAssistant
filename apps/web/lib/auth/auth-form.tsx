@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { getBrowserSupabase } from "@web/lib/auth/client";
+import { Message } from "@web/components/ui/feedback";
 
 function isValidEmail(value: string) {
   const email = value.trim();
@@ -248,11 +249,8 @@ export function AuthForm({ onSuccess }: { onSuccess: () => void }) {
               </div>
 
               {error && (
-                <div role="alert" className="mt-4 rounded-md border border-rose-900/80 bg-rose-950/40 px-3.5 py-3 text-sm text-rose-300">
-                  <div className="flex items-start gap-2.5">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span>{error}</span>
-                  </div>
+                <div className="mt-4">
+                  <Message tone="error" duration={0}>{error}</Message>
                   {error.includes("邮箱还没有确认") && (
                     <button
                       type="button"
@@ -267,10 +265,7 @@ export function AuthForm({ onSuccess }: { onSuccess: () => void }) {
               )}
 
               {message && (
-                <div role="status" className="mt-4 flex items-start gap-2.5 rounded-md border border-emerald-900/80 bg-emerald-950/40 px-3.5 py-3 text-sm text-emerald-300">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span>{message}</span>
-                </div>
+                <Message className="mt-4" tone="success" duration={0}>{message}</Message>
               )}
 
               <button

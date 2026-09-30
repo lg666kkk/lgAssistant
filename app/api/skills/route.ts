@@ -18,7 +18,7 @@ export async function GET(req: Request) {
     return Response.json({
       ok: true,
       canEdit: true,
-      profiles: SANDBOX_PROFILES,
+      profiles: SANDBOX_PROFILES.filter((profile) => profile.id === "skill-trusted"),
       skills,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

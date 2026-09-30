@@ -9,6 +9,7 @@ const WORKSPACE = "/home/user/workspace";
 const MAX_LOG_LENGTH = 64_000;
 const TERMINAL = ["completed", "failed", "timed_out", "cancelled", "dead", "unavailable"];
 const MAX_EXECUTION_LOG_EVENTS = 64;
+const LEGACY_DESCRIPTION_RUNNER = "import { readFile } from 'node:fs/promises'; const skillMd = await readFile('SKILL.md', 'utf8'); console.log(JSON.stringify({ kind: 'description', skillMd, files: ['SKILL.md'] }));";
 
 export type SandboxExecutionLogEvent = {
   phase: string;
@@ -55,7 +56,6 @@ export async function createSkillRun(input: {
   skillVersion: string;
   skillInput: unknown;
 }): Promise<SandboxRun> {
-  await getE2BApiKey(input.userId);
   if (!input.idempotencyKey || input.idempotencyKey.length > 256) throw new Error("幂等键格式错误");
   const version = await loadVersion(input.skillId, input.skillVersion);
   if (!version.e2b_template_id) throw new Error("旧版 Skill 使用本地镜像，请发布新的 E2B 版本");
@@ -64,9 +64,14 @@ export async function createSkillRun(input: {
     throw new Error("Skill 的 E2B 模板与当前 Profile 不匹配");
   }
   const files = await readSkillBundle(decodeBundle(version.bundle), version.bundle_sha256);
+  if (version.entrypoint[1] === "scripts/run.mjs"
+    && files.get("scripts/run.mjs")?.toString("utf8") === LEGACY_DESCRIPTION_RUNNER) {
+    throw new Error("这是仅供阅读的 SKILL.md，自动生成的旧版本不会执行其中的命令；请使用 view_skill，或另行发布真正可执行的 Bundle");
+  }
   const schema = files.get(version.input_schema_path);
   if (!schema) throw new Error("Skill 输入 Schema 不存在");
   validateSkillJSON(schema, input.skillInput);
+  await getE2BApiKey(input.userId);
 
   const database = getSupabase();
   const inputHash = createHash("sha256").update(JSON.stringify(input.skillInput)).digest("hex");

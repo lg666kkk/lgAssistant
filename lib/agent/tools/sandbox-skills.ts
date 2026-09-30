@@ -12,7 +12,7 @@ export const listSkillsTool: ToolDefinition = {
   name: "list_skills",
   capabilities: ["sandbox.skill.list"],
   outputPolicy: { grounding: "authoritative_result", citationRequired: false },
-  description: "发现当前已启用的标准 SKILL.md 和可执行沙盒 Skill。需要使用标准 Skill 时，再调用 view_skill 加载完整说明。",
+  description: "发现当前已启用的标准 SKILL.md 和可执行沙盒 Skill。标准 Skill 是操作说明，先调用 view_skill 阅读；其中的终端命令不会由 run_skill 自动执行。",
   runtime: {
     ...defaultToolRuntimePolicy,
     requiresAuth: true,
@@ -98,7 +98,7 @@ export const runSkillTool: ToolDefinition = {
   name: "run_skill",
   capabilities: ["sandbox.skill.run"],
   outputPolicy: { grounding: "action_receipt", citationRequired: false },
-  description: "按已发布的不可变版本在隔离沙盒中运行 Skill。只能提交 skillId、skillVersion 和符合该版本输入 Schema 的 input；实际命令、镜像、网络和资源限制由 Skill 配置决定。",
+  description: "仅运行已发布且含真实入口程序的不可变 Bundle。不能执行 SKILL.md 中写出的任意终端命令。只能提交 skillId、skillVersion 和符合输入 Schema 的 input；实际命令、镜像、网络和资源限制由版本配置决定。",
   runtime: {
     ...defaultToolRuntimePolicy,
     requiresAuth: true,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBuiltinToolRegistry } from "./builtin";
+import { executeToolCall } from "./tool-router";
 import { requiresCitedEvidence } from "./grounding-policy";
 
 describe("tool grounding policy", () => {
@@ -29,5 +30,15 @@ describe("tool grounding policy", () => {
       .toContain("time.current");
     expect(registry.groundingModesFor(["get_current_time", "web_search"]))
       .toEqual(new Set(["authoritative_result", "cited_evidence"]));
+  });
+
+  it("requires confirmation before a chat terminal command", async () => {
+    const registry = createBuiltinToolRegistry();
+    const result = await executeToolCall(registry, {
+      name: "run_terminal_command",
+      input: { command: "npx skills find finance" },
+    }, { userId: "user-1", scopeId: "chat-1" });
+    expect(result.metadata?.status).toBe("pending_confirmation");
+    expect(registry.get("run_terminal_command")?.runtime.sandboxed).toBe(true);
   });
 });

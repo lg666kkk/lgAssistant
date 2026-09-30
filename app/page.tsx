@@ -201,7 +201,6 @@ export default function Home() {
     if (!requireLogin()) return;
     if (
       (!input.trim() && attachments.length === 0)
-      || loading
       || historyLoading
       || attachmentsUploading
       || !activeSession
@@ -629,6 +628,9 @@ export default function Home() {
               onRetryAttachment={(id) => void handleRetryAttachment(id)}
               onSend={handleSend}
               onStop={handleStop}
+              pendingRequests={activeSession?.pendingRequests}
+              onRemovePendingRequest={(id) => activeSession?.removePendingRequest(id, rerender)}
+              onPrioritizePendingRequest={(id) => activeSession?.prioritizePendingRequest(id, rerender)}
               isRunning={Boolean(isAgentRunning || historyLoading)}
               disabled={
                 attachmentsUploading

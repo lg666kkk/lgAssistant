@@ -21,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { ConfirmDialog, Message } from "@web/components/ui/feedback";
 import { RecurrenceFields } from "./recurrence-fields";
 import { defaultRecurrence, describeCron, recurrenceFromCron, recurrenceToCron, type Recurrence } from "../model/recurrence";
 
@@ -272,6 +273,7 @@ export function ScheduleCenter() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ScheduledJob | null>(null);
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === editingId) ?? null,
@@ -554,7 +556,6 @@ export function ScheduleCenter() {
   };
 
   const deleteTask = async (job: ScheduledJob) => {
-    if (!window.confirm(`删除任务“${jobName(job)}”？`)) return;
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -565,6 +566,7 @@ export function ScheduleCenter() {
       setJobs((current) => current.filter((item) => item.id !== job.id));
       if (editingId === job.id) backToTasks();
       setNotice("任务已删除");
+      setDeleteTarget(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "删除任务失败");
     } finally {
@@ -739,8 +741,8 @@ export function ScheduleCenter() {
               </button>
             </header>
             {tabBar}
-            {error && <div role="alert" className="mt-4 border-l-2 border-rose-700 px-3 py-2 text-sm text-rose-300">{error}</div>}
-            {notice && <div className="mt-4 border-l-2 border-emerald-700 px-3 py-2 text-sm text-emerald-300">{notice}</div>}
+            {error && <Message className="mt-4" tone="error">{error}</Message>}
+            {notice && <Message className="mt-4" tone="success">{notice}</Message>}
             {activeTab === "tasks" ? (
               <TaskList
                 jobs={jobs}
@@ -748,7 +750,7 @@ export function ScheduleCenter() {
                 saving={saving}
                 onCreate={startCreate}
                 onOpen={openTask}
-                onDelete={deleteTask}
+                onDelete={setDeleteTarget}
                 onToggle={toggleTask}
                 onRun={runTaskNow}
                 onViewRuns={openRunHistory}
@@ -767,6 +769,16 @@ export function ScheduleCenter() {
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="删除定时任务"
+        description={deleteTarget ? `删除任务“${jobName(deleteTarget)}”？` : undefined}
+        confirmLabel="删除"
+        destructive
+        busy={saving}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget ? deleteTask(deleteTarget) : undefined}
+      />
     </div>
   );
 }

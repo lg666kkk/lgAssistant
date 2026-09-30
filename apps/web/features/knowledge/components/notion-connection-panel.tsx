@@ -12,6 +12,7 @@ import {
   TestTubeDiagonal,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { Message } from "@web/components/ui/feedback";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
 const inputClass = "h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-700 disabled:opacity-50";
@@ -137,12 +138,7 @@ export function NotionConnectionPanel({
         </div>
       ) : (
         <div className="space-y-4 p-4">
-          {(error || notice) && (
-            <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${error ? "border-rose-900 bg-rose-950/30 text-rose-300" : "border-emerald-900 bg-emerald-950/20 text-emerald-300"}`}>
-              {error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
-              <span>{error ?? notice}</span>
-            </div>
-          )}
+          {(error || notice) && <Message tone={error ? "error" : "success"}>{error ?? notice}</Message>}
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px]">
             <label className="block">

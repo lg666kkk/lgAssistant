@@ -20,6 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { ConfirmDialog, Message } from "@web/components/ui/feedback";
 import type {
   LlmReasoningMode,
   UserLlmCatalog,
@@ -135,6 +136,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [preferences, setPreferences] = useState<UserLlmPreferences>({
     defaultModelId: null,
@@ -317,7 +319,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
   };
 
   const deleteProvider = async () => {
-    if (!draft?.id || !window.confirm(`确定删除 Provider“${draft.name}”及其全部模型吗？`)) return;
+    if (!draft?.id) return;
     setDeleting(true);
     setNotice(null);
     try {
@@ -326,6 +328,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
       if (!response.ok) throw new Error(data.error || "删除失败");
       setDraft(null);
       setSelectedId(null);
+      setDeleteConfirmOpen(false);
       await onRefresh();
       setNotice({ tone: "ok", text: "Provider 已删除" });
     } catch (deleteError) {
@@ -425,18 +428,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
           </div>
         </section>
 
-        {(error || notice) && (
-          <div className={`mt-5 flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${
-            error || notice?.tone === "error"
-              ? "border-rose-900/70 bg-rose-950/30 text-rose-300"
-              : "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
-          }`}>
-            {error || notice?.tone === "error"
-              ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
-            <span>{error ?? notice?.text}</span>
-          </div>
-        )}
+        {(error || notice) && <Message className="mt-5" tone={error || notice?.tone === "error" ? "error" : "success"}>{error ?? notice?.text}</Message>}
 
         {loading && !catalog ? (
           <div className="flex h-64 items-center justify-center text-slate-500">
@@ -624,7 +616,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                   </button>
                 )}
                 {draft.id && (
-                  <button type="button" onClick={() => void deleteProvider()} disabled={Boolean(user) && (deleting || saving)} className="inline-flex h-9 items-center gap-2 rounded-md border border-rose-900/60 px-3 text-sm text-rose-300 hover:bg-rose-950/30 disabled:opacity-50">
+                  <button type="button" onClick={() => setDeleteConfirmOpen(true)} disabled={Boolean(user) && (deleting || saving)} className="inline-flex h-9 items-center gap-2 rounded-md border border-rose-900/60 px-3 text-sm text-rose-300 hover:bg-rose-950/30 disabled:opacity-50">
                     <Trash2 className="h-4 w-4" />删除
                   </button>
                 )}
@@ -670,6 +662,16 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
             ))}
           </div>
         </section>
+        <ConfirmDialog
+          open={deleteConfirmOpen}
+          title="删除 Provider"
+          description={draft ? `确定删除 Provider“${draft.name}”及其全部模型吗？` : undefined}
+          confirmLabel="删除"
+          destructive
+          busy={deleting}
+          onClose={() => setDeleteConfirmOpen(false)}
+          onConfirm={deleteProvider}
+        />
       </div>
     </div>
   );

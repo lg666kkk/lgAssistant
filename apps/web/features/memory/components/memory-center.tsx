@@ -19,6 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
+import { ConfirmDialog, Message } from "@web/components/ui/feedback";
 import type { UserMemoryConfigView } from "@/lib/memory-config/types";
 
 type MemoryRow = {
@@ -121,6 +122,7 @@ export function MemoryCenter() {
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MemoryRow | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<"settings" | "data">("settings");
   const [view, setView] = useState<"current" | "history">("current");
@@ -206,10 +208,6 @@ export function MemoryCenter() {
   };
 
   const deleteMemory = async (row: MemoryRow) => {
-    const confirmed = window.confirm(
-      `确定永久删除记忆“${row.key}”吗？\n\n当前记忆、语义向量和全部历史版本都会被删除，且无法恢复。`,
-    );
-    if (!confirmed) return;
     setDeletingId(row.id);
     setError(null);
     setNotice(null);
@@ -220,6 +218,7 @@ export function MemoryCenter() {
       await load();
       setExpandedId(null);
       setNotice(`记忆 ${row.key} 已永久删除，不会再被当前召回或历史工具检索。`);
+      setDeleteTarget(null);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除记忆失败");
     } finally {
@@ -254,10 +253,7 @@ export function MemoryCenter() {
         </div>
 
         {(error || notice) && (
-          <div className={`mt-5 flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${error ? "border-rose-900/70 bg-rose-950/30 text-rose-300" : "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"}`}>
-            {error ? <AlertCircle className="mt-0.5 h-4 w-4" /> : <Check className="mt-0.5 h-4 w-4" />}
-            <span>{error ?? notice}</span>
-          </div>
+          <Message className="mt-5" tone={error ? "error" : "success"}>{error ?? notice}</Message>
         )}
 
         {loading ? (
@@ -377,7 +373,7 @@ export function MemoryCenter() {
                         {view === "current" && (
                           <button
                             type="button"
-                            onClick={() => void deleteMemory(row as MemoryRow)}
+                            onClick={() => setDeleteTarget(row as MemoryRow)}
                             disabled={Boolean(user) && (deletingId === String(row.id))}
                             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-600 hover:bg-rose-950/40 hover:text-rose-300 disabled:opacity-40"
                             title="永久删除记忆"
@@ -408,6 +404,16 @@ export function MemoryCenter() {
           </>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="永久删除记忆"
+        description={deleteTarget ? `确定永久删除记忆“${deleteTarget.key}”吗？\n\n当前记忆、语义向量和全部历史版本都会被删除，且无法恢复。` : undefined}
+        confirmLabel="永久删除"
+        destructive
+        busy={Boolean(deleteTarget && deletingId === deleteTarget.id)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget ? deleteMemory(deleteTarget) : undefined}
+      />
     </div>
   );
 }
