@@ -19,6 +19,10 @@ describe("prompt hard budget", () => {
     const prompt = buildPromptPipe({ memory: "memory ".repeat(500), maxTokens: 500 });
     expect(prompt.systemPrompt).toContain("后台沉淀尚未返回成功回执时");
     expect(prompt.systemPrompt).toContain("仅当缺少完成用户当前请求所必需的关键输入");
+    expect(prompt.systemPrompt).toContain("此规则同时适用于自然语言回复和 ask_user");
+    expect(prompt.systemPrompt).toContain("必要澄清及安全确认不受影响");
+    expect(prompt.systemPrompt).toContain("不主动提议安装或试运行");
+    expect(prompt.systemPrompt).toContain("后者不等于加入应用 Skill 列表、启用能力或验证可用");
     expect(prompt.decisions.filter((decision) => ["identity", "safety"].includes(decision.kind)).every((decision) => decision.decision === "kept")).toBe(true);
     expect(() => buildPromptPipe({ maxTokens: 100 })).toThrow("Prompt 预算不足");
   });

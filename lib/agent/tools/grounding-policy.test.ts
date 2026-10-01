@@ -33,11 +33,13 @@ describe("tool grounding policy", () => {
       .toEqual(new Set(["authoritative_result", "cited_evidence"]));
   });
 
-  it("requires classification for terminal queries without model context", async () => {
+  it("allows known Skill lookups without model classification", async () => {
     const registry = createBuiltinToolRegistry();
-    expect(await terminalCommandRequiresConfirmation({ command: "npx skills find finance" })).toBe(true);
-    expect(await terminalCommandRequiresConfirmation({ command: 'npx -y skills find "image generation" 2>&1 | tail -40' })).toBe(true);
+    expect(await terminalCommandRequiresConfirmation({ command: "npx skills find finance" })).toBe(false);
+    expect(await terminalCommandRequiresConfirmation({ command: 'npx -y skills find "image generation" 2>&1 | tail -40' })).toBe(false);
     expect(registry.get("run_terminal_command")?.runtime.sandboxed).toBe(true);
+    expect(registry.get("web_search")?.riskLevel).toBe("safe");
+    expect(registry.get("web_search")?.runtime.requiresConfirmation).toBe(false);
   });
 
   it.each([
@@ -46,7 +48,6 @@ describe("tool grounding policy", () => {
     "pwd && cat /etc/passwd",
     "git status > /tmp/status",
     "npx skills add owner/repo",
-    'npx -y skills find "image generation" 2>&1 | head -40',
     'npx -y skills find "image generation" 2>&1 | tail -40; pwd',
   ])("keeps confirmation for unsafe terminal command: %s", async (command) => {
     expect(await terminalCommandRequiresConfirmation({ command })).toBe(true);

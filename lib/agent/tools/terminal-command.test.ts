@@ -83,18 +83,25 @@ describe("terminal confirmation classifier", () => {
   });
 
   it.each([
+    'npx -y skills find "poster cover design" 2>&1 | tail -30',
+    "skills find 财务分析",
+    "npx --yes skills find design | head -n 20",
     "npx -y skills find image generation 2>&1 | tail -60",
     'npx -y skills find "image generation" 2>&1 | tail -60',
     "npx -y skills find image generation 2>&1 | head -60",
-    "pwd; ls | head -10",
-  ])("executes read-only pipelines when the classifier allows them: %s", async (command) => {
-    vi.mocked(generateTextWithProvider).mockResolvedValue('{"decision":"allow_without_confirmation","reason":"Read-only query pipeline"}');
+  ])("executes Skill lookups even when the classifier is unavailable: %s", async (command) => {
+    vi.mocked(generateTextWithProvider).mockRejectedValue(new Error("unavailable"));
     expect(await run(command)).toMatchObject({ ok: true });
-    expect(generateTextWithProvider).toHaveBeenCalledWith(expect.objectContaining({ prompt: JSON.stringify({ command }) }));
+    expect(generateTextWithProvider).not.toHaveBeenCalled();
     expect(runChatTerminalCommand).toHaveBeenCalledWith(expect.objectContaining({ command }));
   });
 
   it.each([
+    "npx skills add owner/repo",
+    "npx skills find design; touch /tmp/result",
+    "npx skills find design\ntouch /tmp/result",
+    "npx skills find --config /tmp/custom",
+    "npx skills find design | tee /tmp/result",
     "npx -y skills find image generation 2>&1 | tail -60 > /tmp/result",
     "npx -y skills find $(touch /tmp/result) 2>&1 | tail -60",
   ])("keeps pipelines pending when the classifier cannot allow them: %s", async (command) => {

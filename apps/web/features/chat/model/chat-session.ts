@@ -43,6 +43,8 @@ export interface Message {
   reasoning?: ReasoningEventData[];
   planSteps?: PlanProgressEventData[];
   plan?: ExecutionPlanData;
+  /** End-to-end time from submitting this query until the assistant finishes. */
+  durationMs?: number;
 }
 
 export interface PendingChatRequest {
@@ -78,6 +80,8 @@ export class ChatSession {
   private isNewSession: boolean;
   private historyLoadPromise: Promise<void> | null = null;
   pendingRequests: PendingChatRequest[] = [];
+  /** Wall-clock start of the currently active query, used by the chat UI timer. */
+  requestStartedAt: number | null = null;
 
   constructor(id?: string, userId?: string, sessionManager?: SessionManager) {
     this.id = id ?? createUuid();
@@ -99,6 +103,7 @@ export class ChatSession {
       reasoning: msg.metadata?.reasoning,
       planSteps: msg.metadata?.planSteps,
       plan: msg.metadata?.plan,
+      durationMs: typeof msg.metadata?.durationMs === "number" ? msg.metadata.durationMs : undefined,
     };
   }
 
@@ -200,6 +205,7 @@ export class ChatSession {
     const attachments = options.attachments ?? [];
 
     this.loading = true;
+    this.requestStartedAt = Date.now();
     this.currentModel = options.model ?? null;
     this.manuallyAborted = false;
     this.error = null;
@@ -387,9 +393,18 @@ export class ChatSession {
         },
       });
 
+      const completedAt = Date.now();
+      const completedMessage = this.messages[this.messages.length - 1];
+      if (completedMessage?.role === "assistant" && this.requestStartedAt !== null) {
+        completedMessage.durationMs = Math.max(0, completedAt - this.requestStartedAt);
+      }
       assistantMessageSaved = await this.saveCurrentAssistantMessage();
     } catch (err) {
       if ((err as Error).name === "AbortError") {
+        const interruptedMessage = this.messages[this.messages.length - 1];
+        if (interruptedMessage?.role === "assistant" && this.requestStartedAt !== null) {
+          interruptedMessage.durationMs = Math.max(0, Date.now() - this.requestStartedAt);
+        }
         if (!assistantMessageSaved) {
           await this.saveCurrentAssistantMessage({ interrupted: true });
         }
@@ -401,8 +416,14 @@ export class ChatSession {
         this.messages.pop();
       }
     } finally {
+      const completedAt = Date.now();
+      const activeMessage = this.messages[this.messages.length - 1];
+      if (activeMessage?.role === "assistant" && this.requestStartedAt !== null) {
+        activeMessage.durationMs = Math.max(0, completedAt - this.requestStartedAt);
+      }
       this.loading = false;
       this.streaming = false;
+      this.requestStartedAt = null;
       this.abortController = null;
       onUpdate();
       const next = this.pendingRequests.shift();
@@ -468,6 +489,7 @@ export class ChatSession {
             reasoning: lastMessage.reasoning,
             planSteps: lastMessage.planSteps,
             plan: lastMessage.plan,
+            durationMs: lastMessage.durationMs,
           },
         },
       );
@@ -491,6 +513,7 @@ export class ChatSession {
       onUpdate(); return;
     }
     this.loading = true; this.streaming = true; this.error = null;
+    this.requestStartedAt = Date.now();
     this.abortController = new AbortController();
     onUpdate();
     this.streamingMessage = message;
@@ -555,7 +578,8 @@ export class ChatSession {
       this.error = error instanceof Error && error.name !== "AbortError" ? error.message : "确认请求已中止，远端操作可能已执行。再次确认将查询已有结果，不会重复执行。";
     } finally {
       try {
-        const metadata = { toolCalls: message.toolCalls, modelUsages: message.modelUsages, reasoning: message.reasoning, plan: message.plan, planSteps: message.planSteps };
+        if (this.requestStartedAt !== null) message.durationMs = Math.max(0, Date.now() - this.requestStartedAt);
+        const metadata = { toolCalls: message.toolCalls, modelUsages: message.modelUsages, reasoning: message.reasoning, plan: message.plan, planSteps: message.planSteps, durationMs: this.requestStartedAt === null ? undefined : Math.max(0, Date.now() - this.requestStartedAt) };
         if (message.id) {
           await this.sessionManager.updateAssistantMessage(message.id, message.content, { sources: message.sources, metadata });
         } else {
@@ -563,7 +587,8 @@ export class ChatSession {
           message.id = saved.id; message.createdAt = saved.created_at;
         }
       } catch { this.error = this.error || "执行结果已返回，但消息保存失败，请稍后刷新核实。"; }
-      this.loading = false; this.streaming = false; this.streamingMessage = null; this.abortController = null; onUpdate();
+      if (this.requestStartedAt !== null) message.durationMs = Math.max(0, Date.now() - this.requestStartedAt);
+      this.loading = false; this.streaming = false; this.streamingMessage = null; this.requestStartedAt = null; this.abortController = null; onUpdate();
     }
   }
   async cancelToolCall(messageIndex: number, toolCallIndex: number, onUpdate: () => void = () => {}) {

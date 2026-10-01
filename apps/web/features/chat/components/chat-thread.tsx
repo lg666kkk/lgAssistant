@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import Image from "next/image";
 import { BookOpen, Image as ImageIcon, Wrench } from "lucide-react";
 import type {
@@ -10,6 +10,8 @@ import type {
 } from "@repo/contracts";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
 import { AskUserCard, readUserQuestions } from "./ask-user-card";
+import { ThinkingIndicator } from "./thinking-indicator";
+import { ScheduledJobCard } from "./scheduled-job-card";
 import { summarizeToolCalls } from "@web/features/chat/model/tool-call-summary";
 import { getMcpCallPresentation, McpToolCallDetails } from "./mcp-tool-call";
 import { getChatImagePreviewUrl } from "@/lib/chat/image-storage";
@@ -49,6 +51,16 @@ export function ChatThread({
   onSessionUpdate,
 }: ChatThreadProps) {
   const [confirmingToolKey, setConfirmingToolKey] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const requestStartedAt = session?.requestStartedAt ?? null;
+
+  // Keep the active request duration live without adding a timer to every message.
+  useEffect(() => {
+    if (requestStartedAt === null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [requestStartedAt]);
   const messages = session?.messages;
   const loading = session?.loading;
   const streaming = session?.streaming;
@@ -86,6 +98,13 @@ export function ChatThread({
             && (session?.streamingMessage ? message === session.streamingMessage : messageIndex === messages.length - 1),
           );
           const toolCallSummary = summarizeToolCalls(message.toolCalls ?? []);
+          const isThinkingOnly = isStreaming
+            && !message.content
+            && !message.reasoning?.length
+            && !message.toolCalls?.length
+            && !message.attachments?.length
+            && !message.sources?.length
+            && !message.plan;
           return (
             <div
               key={message.id ?? `${message.role}-${message.createdAt ?? messageIndex}`}
@@ -95,7 +114,9 @@ export function ChatThread({
                 className={
                   message.role === "user"
                     ? "flex max-w-[78%] flex-col items-end gap-2"
-                    : `w-full rounded-2xl bg-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 ${isStreaming ? "streaming-msg" : ""}`
+                    : isThinkingOnly
+                      ? "w-fit px-3 py-2"
+                      : `w-full rounded-2xl bg-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 ${isStreaming ? "streaming-msg" : ""}`
                 }
               >
                 {message.role === "assistant" && (
@@ -149,10 +170,10 @@ export function ChatThread({
                     <div className="max-w-full rounded-2xl rounded-tr-md bg-cyan-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm shadow-black/10">
                       <MessageMarkdown content={message.content} />
                     </div>
+                  ) : !message.content && isStreaming && !message.reasoning?.length ? (
+                    <ThinkingIndicator />
                   ) : (
-                    <MessageMarkdown
-                      content={message.content || (isStreaming && !message.reasoning?.length ? "思考中..." : "")}
-                    />
+                    <MessageMarkdown content={message.content || ""} />
                   )
                 )}
                 {message.role === "assistant" && message.plan && !message.planSteps?.length && (
@@ -236,6 +257,9 @@ export function ChatThread({
                               <span className={`shrink-0 text-[10px] ${statusClass}`}>{statusLabel}</span>
                             </div>
                             <McpToolCallDetails tool={toolCall} />
+                            {toolCall.name === "create_scheduled_job" && toolStatus === "pending_confirmation" && (
+                              <ScheduledJobCard input={terminalInput} />
+                            )}
                             {toolCall.name === "run_terminal_command" && toolStatus === "pending_confirmation" && (
                               <div className="ml-3.5 mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
                                 <p className="mb-1 text-[11px] text-amber-200">将在联网沙盒中执行，文件在本聊天中暂存约 30 分钟</p>
@@ -267,7 +291,7 @@ export function ChatThread({
                                     }
                                   }}
                                 >
-                                  {confirmingToolKey === toolKey ? "执行中..." : "确认执行"}
+                                  {confirmingToolKey === toolKey ? "执行中..." : toolCall.name === "create_scheduled_job" ? "确认创建" : "确认执行"}
                                 </button>
                                 <button
                                   type="button"
@@ -310,7 +334,18 @@ export function ChatThread({
                     </div>
                   </div>
                 )}
-                {message.role === "assistant" && <MessageUsageBar usages={message.modelUsages} />}
+                {message.role === "assistant" && (
+                  <MessageUsageBar usages={message.modelUsages}>
+                    {!isStreaming && message.durationMs !== undefined && (
+                      <span className="whitespace-nowrap">已处理 {formatElapsed(message.durationMs)}</span>
+                    )}
+                  </MessageUsageBar>
+                )}
+                {message.role === "assistant" && isStreaming && (
+                  <div className="mt-2 border-t border-slate-700/70 pt-2 text-xs text-slate-500">
+                    {isStreaming ? "处理中" : "已处理"} {formatElapsed(message.durationMs ?? Math.max(0, now - (requestStartedAt ?? now)))}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -352,4 +387,15 @@ function StandardSkillCard({ content }: { content: string }) {
       </div>
     </details>
   );
+}
+
+
+function formatElapsed(durationMs: number) {
+  const totalSeconds = Math.floor(Math.max(0, durationMs) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}小时 ${minutes}分 ${seconds}秒`;
+  if (minutes > 0) return `${minutes}分 ${seconds}秒`;
+  return `${seconds} 秒`;
 }

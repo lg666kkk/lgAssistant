@@ -898,7 +898,7 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
 
             {/* 时间线 */}
             <div className="mt-6 space-y-3">
-              {arrangeTraceSteps(trace.steps).map(({ step, nested }) => (
+              {arrangeTraceSteps(trace.steps).map(({ step, nested, confirmationSteps }) => (
                 <div
                   key={step.index}
                   className={`rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3 ${nested ? "ml-8 border-l-2 border-l-cyan-500/40 bg-slate-950/40" : ""}`}
@@ -914,10 +914,11 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                     ) : step.type === "tool" ? (
                       <span
                         className={`font-medium ${
-                          step.ok ? "text-emerald-400" : "text-rose-400"
+                          step.metadata?.status === "pending_confirmation" ? "text-amber-300" : step.ok ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
                         🔧 {nested ? "工具执行 · " : ""}{getMcpCallPresentation(step)?.label ?? step.name} {step.ok ? "" : step.metadata?.status === "pending_confirmation" ? "(待确认)" : "(失败)"}
+                        {confirmationSteps?.length ? <span className="ml-2 text-xs font-normal text-slate-400">已确认</span> : null}
                       </span>
                     ) : step.type === "context_compaction" ? (
                       <span className="font-medium text-amber-300">
@@ -1038,6 +1039,13 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                     </div>
                   ) : step.type === "tool" ? (
                     <div className="mt-2">
+                      {confirmationSteps?.length ? (
+                        <Collapsible
+                          label="确认记录"
+                          body={toText(confirmationSteps)}
+                          meta={`（步骤 ${confirmationSteps.map((checkpoint) => `#${checkpoint.index}`).join("、")} 待确认 → #${step.index} 执行）`}
+                        />
+                      ) : null}
                       <Collapsible label="入参" body={toText(step.input)} />
                       <Collapsible
                         label="压缩后结果（给模型）"
@@ -1062,7 +1070,7 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                       {step.metadata && (
                         <RagMetadataView metadata={step.metadata} />
                       )}
-                      {step.error && (
+                      {step.error && step.metadata?.status !== "pending_confirmation" && (
                         <div className="mt-2 rounded-lg bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
                           {step.error}
                         </div>

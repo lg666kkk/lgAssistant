@@ -1,7 +1,6 @@
 import { requireUser } from "@/lib/auth/server";
 import { resolveUpdatedNextRunAt, validateSchedule } from "@/lib/scheduler/cron";
 import {
-  createScheduledJob,
   deleteScheduledJob,
   listScheduledJobs,
   loadScheduledJob,
@@ -10,8 +9,7 @@ import {
 import type { ScheduledJobType } from "@/lib/scheduler/types";
 import { listRecentDeliveries } from "@/lib/scheduler/deliveries";
 import { normalizeScheduledJobPayload } from "@/lib/scheduler/validation";
-import { resolveUserLlmModel } from "@/lib/llm/config-service";
-import type { ScheduledJobPayload } from "@/lib/scheduler/types";
+import { createValidatedScheduledJob, validateTaskModel } from "@/lib/scheduler/create";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,22 +31,6 @@ function toRunAt(value: unknown): number | null {
 
 function hasOwn(object: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(object, key);
-}
-
-async function validateTaskModel(
-  userId: string,
-  type: ScheduledJobType,
-  payload: ScheduledJobPayload,
-) {
-  if (type !== "agent-task") return;
-  const modelId = typeof payload.modelId === "string" && payload.modelId.trim()
-    ? payload.modelId.trim()
-    : null;
-  const model = await resolveUserLlmModel(userId, modelId);
-  if (!model.supportsTools) {
-    throw new Error("定时 Agent 任务只能使用支持工具调用的模型");
-  }
-  payload.modelId = model.id;
 }
 
 export async function GET(req: Request) {
@@ -94,18 +76,8 @@ export async function POST(req: Request) {
   const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
 
   try {
-    const nextRunAt = validateSchedule({ cron, runAt, timezone });
-    const payload = normalizeScheduledJobPayload(type, body.payload ?? {});
-    if (enabled) await validateTaskModel(user.id, type, payload);
-    const job = await createScheduledJob({
-      userId: user.id,
-      type,
-      cron,
-      runAt: cron ? null : runAt,
-      nextRunAt,
-      timezone,
-      payload,
-      enabled,
+    const job = await createValidatedScheduledJob({
+      userId: user.id, type, cron, runAt, timezone, payload: body.payload, enabled,
     });
 
     return Response.json({ ok: true, job });

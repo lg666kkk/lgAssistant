@@ -9,7 +9,8 @@ export const CHAT_IMAGE_SIGNED_URL_TTL_SECONDS = 60 * 60;
 export const CHAT_IMAGE_OPERATION_TIMEOUT_MS = 30_000;
 
 export type ComposerImageAttachment = ChatImageAttachment & {
-  file: File;
+  // Already-uploaded images restored from the queue do not need the original File.
+  file?: File;
   uploadStatus: "uploading" | "ready" | "error";
   uploadError?: string;
 };

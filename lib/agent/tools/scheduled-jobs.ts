@@ -1,5 +1,4 @@
-import { validateSchedule } from "@/lib/scheduler/cron";
-import { createScheduledJob } from "@/lib/scheduler/store";
+import { createValidatedScheduledJob } from "@/lib/scheduler/create";
 import type { ScheduledJobPayload, ScheduledJobType } from "@/lib/scheduler/types";
 import { normalizeScheduledJobPayload } from "@/lib/scheduler/validation";
 import {
@@ -29,6 +28,7 @@ function parseRunAt(value: unknown): number | null {
   }
 
   if (typeof value === "string" && value.trim()) {
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) throw new Error("runAt 必须包含明确时区偏移或 Z");
     const parsed = Date.parse(value);
     if (!Number.isNaN(parsed)) return parsed;
   }
@@ -86,10 +86,10 @@ function describeSchedule(input: {
   nextRunAt: number;
 }) {
   if (input.cron) {
-    return `cron=${input.cron}，时区=${input.timezone}，下次执行=${new Date(input.nextRunAt).toISOString()}`;
+    return `cron=${input.cron}，时区=${input.timezone}，下次执行=${new Date(input.nextRunAt).toLocaleString("zh-CN", { timeZone: input.timezone })}`;
   }
 
-  return `执行时间=${new Date(input.runAt ?? input.nextRunAt).toISOString()}，时区=${input.timezone}`;
+  return `执行时间=${new Date(input.runAt ?? input.nextRunAt).toLocaleString("zh-CN", { timeZone: input.timezone })}，时区=${input.timezone}`;
 }
 
 export const createScheduledJobTool: ToolDefinition = {
@@ -97,7 +97,7 @@ export const createScheduledJobTool: ToolDefinition = {
   capabilities: ["schedule.create"],
   outputPolicy: { grounding: "action_receipt", citationRequired: false },
   description:
-    "创建一个定时任务。适合用户要求定时提醒、每天/每周周期执行、定时生成 LeetCode 练习、或让 Agent 在指定时间执行一段 prompt 时使用。相对时间要先结合当前时间换算成 ISO 时间；周期任务使用 5 段 cron 表达式，并通过 timezone 表示用户时区。",
+    "创建一个定时任务。适合用户要求定时提醒、每天/每周周期执行、定时生成 LeetCode 练习、或让 Agent 在指定时间执行一段 prompt 时使用。用户明确要求定时执行时直接调用此工具，不要只让用户去表单填写。涉及今天、明天、十分钟后等相对时间时，先调用 get_current_time 获取可信当前时间，再换算成含时区偏移的 ISO 时间；周期任务使用 5 段 cron 表达式，默认时区 Asia/Shanghai。只在缺少必要执行时间或任务内容时用 ask_user 澄清，不追问可选字段。payload.prompt 必须独立完整，不能只写“按刚才的内容”；输出默认站内，不代表主动通知。调用后由系统展示确认卡，用户确认才创建；成功回执前不得声称已创建。",
   runtime: {
     ...defaultToolRuntimePolicy,
     requiresAuth: true,
@@ -167,18 +167,12 @@ export const createScheduledJobTool: ToolDefinition = {
       const parsed = parseInput(input);
       const runAt = parseRunAt(parsed.runAt);
       const cron = parsed.cron ?? null;
-      const nextRunAt = validateSchedule({
-        cron,
-        runAt,
-        timezone: parsed.timezone,
-      });
-      const job = await createScheduledJob({
+      const job = await createValidatedScheduledJob({
         userId: context.userId,
         type: parsed.type,
         cron,
-        runAt: cron ? null : runAt,
-        nextRunAt,
-        timezone: parsed.timezone ?? "Asia/Shanghai",
+        runAt,
+        timezone: parsed.timezone,
         payload: parsed.payload,
       });
 
@@ -201,7 +195,7 @@ export const createScheduledJobTool: ToolDefinition = {
       return {
         ok: false,
         content:
-          "创建定时任务失败，请确认 scheduled_jobs / scheduled_job_runs 表已创建，并检查时间参数。",
+          `创建定时任务失败：${error instanceof Error ? error.message : "未知错误"}`,
         error: error instanceof Error ? error.message : "Create scheduled job failed",
       };
     }

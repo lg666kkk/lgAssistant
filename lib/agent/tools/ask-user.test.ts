@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { askUserTool } from "./ask-user";
+import { ToolRegistry } from "./registry";
+import { executeToolCall } from "./tool-router";
 
 describe("ask_user tool", () => {
+  it("shows the question without requiring execution approval", async () => {
+    const registry = new ToolRegistry();
+    registry.register(askUserTool);
+
+    const result = await executeToolCall(registry, {
+      id: "ask-city",
+      name: "ask_user",
+      input: { question: "你在哪个城市？" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.metadata).toMatchObject({
+      status: "awaiting_user_input",
+      question: "你在哪个城市？",
+      questions: [{ question: "你在哪个城市？", mode: "free_text" }],
+    });
+  });
+
   it("returns an awaiting-user-input result", async () => {
     const result = await askUserTool.execute({
       question: "你偏好哪种风险等级？",

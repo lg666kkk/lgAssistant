@@ -72,7 +72,7 @@ export const askUserTool: ToolDefinition = {
   runtime: {
     ...defaultToolRuntimePolicy,
     sideEffect: "none",
-    requiresConfirmation: true,
+    requiresConfirmation: false,
     concurrencyGroup: "user-input",
     maxConcurrency: 1,
   },

@@ -6,6 +6,7 @@ import { useContextPreview } from "@web/features/chat/hooks/use-context-preview"
 import { useLlmCatalog } from "@web/features/connections/hooks/use-llm-catalog";
 import { ChatInput } from "@web/features/chat/components/chat-input";
 import { ChatThread } from "@web/features/chat/components/chat-thread";
+import { SiteFooter } from "@web/layout/site-footer";
 import { ImagePreviewDialog, type PreviewImage } from "@web/features/chat/components/image-preview-dialog";
 import { SessionDialog, type SessionDialogState } from "@web/features/chat/components/session-dialog";
 import {
@@ -103,6 +104,7 @@ export default function Home() {
   const [activeCapability, setActiveCapability] = useState<PrimaryCapability>("chat");
   const [activeConnectionTab, setActiveConnectionTab] =
     useState<ConnectionTabId>("language-model");
+  const [activeLogTab, setActiveLogTab] = useState<ConnectionTabId>("usage");
   const [activeCustomAgentTab, setActiveCustomAgentTab] =
     useState<CustomAgentTabId>("english");
   const [requestedTraceId, setRequestedTraceId] = useState<string | null>(null);
@@ -166,12 +168,16 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const panel = params.get("panel");
     if (panel !== "knowledge" && panel !== "traces" && panel !== "search-engine" && panel !== "sandbox" && panel !== "embedding" && panel !== "usage" && panel !== "skills" && panel !== "schedule" && panel !== "langfuse" && panel !== "user-profile" && panel !== "jev") return;
-    setActiveCapability("connections");
-    setActiveConnectionTab(panel);
+    const isLogPanel = panel === "usage" || panel === "traces" || panel === "langfuse";
+    setActiveCapability(isLogPanel ? "logs" : "connections");
+    if (isLogPanel) setActiveLogTab(panel);
+    else setActiveConnectionTab(panel);
     setRequestedTraceId(panel === "traces" ? params.get("traceId") : null);
   }, []);
   const mainTitle = activeCapability === "chat"
     ? activeSession?.title ?? "新对话"
+    : activeCapability === "logs"
+      ? getConnectionTabLabel(activeLogTab)
     : activeCapability === "connections"
       ? getConnectionTabLabel(activeConnectionTab)
       : activeCapability === "account"
@@ -236,7 +242,7 @@ export default function Home() {
   };
 
   const uploadComposerAttachment = async (attachment: ComposerImageAttachment) => {
-    if (!user || !activeSession) return;
+    if (!user || !activeSession || !attachment.file) return;
     setAttachments((current) => current.map((candidate) =>
       candidate.id === attachment.id
         ? { ...candidate, uploadStatus: "uploading", uploadError: undefined }
@@ -431,6 +437,29 @@ export default function Home() {
     activeSession?.abort();
   };
 
+  const handleEditPendingRequest = (id: string) => {
+    if (!activeSession || attachmentsUploading) return;
+    const request = activeSession.pendingRequests.find((candidate) => candidate.id === id);
+    if (!request) return;
+    // Remove synchronously so finishing the active answer cannot dispatch this draft.
+    activeSession.removePendingRequest(id, rerender);
+    const retainedPaths = new Set(request.attachments.map((attachment) => attachment.storagePath));
+    const replacedPaths = attachments.flatMap((attachment) =>
+      attachment.storagePath && !retainedPaths.has(attachment.storagePath) ? [attachment.storagePath] : []);
+    setInput(request.content);
+    setAttachments(request.attachments.map((attachment) => ({ ...attachment, uploadStatus: "ready" })));
+    setAttachmentError(null);
+    if (request.options.model && configuredModels.some((model) => model.id === request.options.model)) {
+      setSelectedModel(request.options.model);
+    }
+    if (request.options.webSearchEnabled !== undefined) setWebSearchEnabled(request.options.webSearchEnabled);
+    requestAnimationFrame(() => inputRef.current?.focus());
+    if (replacedPaths.length > 0) {
+      void deleteChatImages(supabase, replacedPaths).catch((error) =>
+        console.error("清理被排队消息替换的草稿图片失败:", error));
+    }
+  };
+
   const clearPendingAttachments = async () => {
     const storagePaths = attachments.flatMap((attachment) =>
       attachment.storagePath ? [attachment.storagePath] : []);
@@ -530,7 +559,7 @@ export default function Home() {
       <AppSidebar
         open={sidebarOpen}
         activeCapability={activeCapability}
-        activeConnectionTab={activeConnectionTab}
+        activeConnectionTab={activeCapability === "logs" ? activeLogTab : activeConnectionTab}
         activeCustomAgentTab={activeCustomAgentTab}
         sessions={user ? sessions : []}
         activeSessionId={activeId}
@@ -538,7 +567,7 @@ export default function Home() {
         userDisplayName={typeof user?.user_metadata?.display_name === "string" ? user.user_metadata.display_name : undefined}
         onSignIn={requestLogin}
         onCapabilityChange={setActiveCapability}
-        onConnectionTabChange={setActiveConnectionTab}
+        onConnectionTabChange={activeCapability === "logs" ? setActiveLogTab : setActiveConnectionTab}
         onCustomAgentTabChange={setActiveCustomAgentTab}
         onCreateSession={() => void handleCreateSession()}
         onSwitchSession={(id) => void handleSwitchSession(id)}
@@ -631,6 +660,7 @@ export default function Home() {
               pendingRequests={activeSession?.pendingRequests}
               onRemovePendingRequest={(id) => activeSession?.removePendingRequest(id, rerender)}
               onPrioritizePendingRequest={(id) => activeSession?.prioritizePendingRequest(id, rerender)}
+              onEditPendingRequest={handleEditPendingRequest}
               isRunning={Boolean(isAgentRunning || historyLoading)}
               disabled={
                 attachmentsUploading
@@ -665,7 +695,7 @@ export default function Home() {
           <McpCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "embedding" ? (
           <EmbeddingCenter />
-        ) : activeCapability === "connections" && activeConnectionTab === "usage" ? (
+        ) : activeCapability === "logs" && activeLogTab === "usage" ? (
           <UsageCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "knowledge" ? (
           <KnowledgeCenter />
@@ -673,9 +703,9 @@ export default function Home() {
           <SkillCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "schedule" ? (
           <ScheduleCenter />
-        ) : activeCapability === "connections" && activeConnectionTab === "traces" ? (
+        ) : activeCapability === "logs" && activeLogTab === "traces" ? (
           <TraceCenter initialTraceId={requestedTraceId} />
-        ) : activeCapability === "connections" && activeConnectionTab === "langfuse" ? (
+        ) : activeCapability === "logs" && activeLogTab === "langfuse" ? (
           <LangfuseCenter />
         ) : activeCapability === "connections" && activeConnectionTab === "memory-list" ? (
           <MemoryCenter />
@@ -688,6 +718,7 @@ export default function Home() {
         )}
           </PrivatePageBoundary>
         )}
+        {activeCapability !== "chat" && <SiteFooter />}
       </main>
       {user && sessionDialog && (
         <SessionDialog

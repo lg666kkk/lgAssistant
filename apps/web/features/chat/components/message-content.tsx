@@ -83,12 +83,13 @@ function summarizeUsages(usages?: ModelUsageEventData[]) {
   };
 }
 
-export function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) {
+export function MessageUsageBar({ usages, children }: { usages?: ModelUsageEventData[]; children?: ReactNode }) {
   const usage = summarizeUsages(usages);
-  if (!usage) return null;
+  if (!usage && !children) return null;
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-700/70 pt-2 text-[11px] text-slate-500">
+      {usage && <>
       <span title="真实总 tokens">token {formatCompactNumber(usage.totalTokens)}</span>
       <span title="输入 tokens">输入 {formatCompactNumber(usage.inputTokens)}</span>
       <span title="输出 tokens">输出 {formatCompactNumber(usage.outputTokens)}</span>
@@ -107,6 +108,8 @@ export function MessageUsageBar({ usages }: { usages?: ModelUsageEventData[] }) 
       ) : (
         <span title="请在大语言模型配置中填写费用单价" className="text-amber-500">费用未配置</span>
       )}
+      </>}
+      {children}
     </div>
   );
 }

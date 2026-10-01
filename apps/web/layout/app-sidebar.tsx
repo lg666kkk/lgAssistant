@@ -15,6 +15,7 @@ import {
   Grid3x3,
   Languages,
   ListChecks,
+  ScrollText,
   LogOut,
   MessageCircle,
   Pencil,
@@ -29,7 +30,7 @@ import {
 } from "lucide-react";
 import type { ChatSession } from "@web/features/chat/model/chat-session";
 
-export type PrimaryCapability = "chat" | "connections" | "custom-agents" | "account";
+export type PrimaryCapability = "chat" | "connections" | "logs" | "custom-agents" | "account";
 export type ConnectionTabId =
   | "language-model"
   | "jev"
@@ -59,7 +60,6 @@ const connectionTabGroups: Array<{
       { id: "embedding", label: "向量嵌入", icon: Database },
       { id: "search-engine", label: "搜索引擎", icon: Search },
       { id: "sandbox", label: "沙盒环境", icon: Box },
-      { id: "usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
     ],
   },
   {
@@ -73,9 +73,13 @@ const connectionTabGroups: Array<{
       { id: "memory-list", label: "记忆清单", icon: ListChecks },
     ],
   },
+];
+
+const logTabGroups: typeof connectionTabGroups = [
   {
     label: "日志",
     items: [
+      { id: "usage", label: "用量统计", icon: ChartNoAxesColumnIncreasing },
       { id: "traces", label: "Trace", icon: Activity },
       { id: "langfuse", label: "Langfuse", icon: ChartNoAxesColumnIncreasing },
     ],
@@ -92,7 +96,7 @@ const customAgentTabs: Array<{
 ];
 
 export function getConnectionTabLabel(tabId: ConnectionTabId) {
-  return connectionTabGroups
+  return [...connectionTabGroups, ...logTabGroups]
     .flatMap((group) => group.items)
     .find((item) => item.id === tabId)?.label ?? "连接";
 }
@@ -189,7 +193,7 @@ export function AppSidebar({
           {([
             { id: "chat", label: "对话", icon: MessageCircle },
             { id: "connections", label: "连接", icon: Plug },
-            { id: "custom-agents", label: "定制化", icon: Blocks },
+            { id: "logs", label: "日志", icon: ScrollText },
           ] as const).map((item) => {
             const Icon = item.icon;
             const selected = activeCapability === item.id;
@@ -286,9 +290,9 @@ export function AppSidebar({
             ))}
           </nav>
         </>
-      ) : activeCapability === "connections" ? (
-        <nav aria-label="连接设置" className="flex-1 overflow-y-auto px-2 py-4">
-          {connectionTabGroups.map((group, groupIndex) => (
+      ) : activeCapability === "connections" || activeCapability === "logs" ? (
+        <nav aria-label={activeCapability === "logs" ? "日志" : "连接设置"} className="flex-1 overflow-y-auto px-2 py-4">
+          {(activeCapability === "logs" ? logTabGroups : connectionTabGroups).map((group, groupIndex) => (
             <section key={group.label} aria-labelledby={`connection-group-${groupIndex}`} className={groupIndex === 0 ? "" : "mt-6"}>
               <h2 id={`connection-group-${groupIndex}`} className="mb-2 px-3 text-xs font-medium text-slate-500">
                 {group.label}
@@ -346,7 +350,7 @@ export function AppSidebar({
         </div>
       )}
 
-      <div ref={accountMenuRef} className="relative border-t border-slate-800 p-3">
+      <div ref={accountMenuRef} className="relative shrink-0 border-t border-slate-800 p-3">
         {userEmail && accountMenuOpen && (
           <div className="absolute bottom-full left-3 mb-2 w-[232px] rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-2xl shadow-black/40 backdrop-blur">
             <button
