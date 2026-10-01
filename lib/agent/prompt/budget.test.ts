@@ -15,6 +15,15 @@ function segment(content: string, tokenBudget: number): PromptSegment {
 }
 
 describe("prompt hard budget", () => {
+  it("preserves mandatory rules and refuses an insufficient system budget", () => {
+    const prompt = buildPromptPipe({ memory: "memory ".repeat(500), maxTokens: 500 });
+    expect(prompt.systemPrompt).toContain("后台沉淀尚未返回成功回执时");
+    expect(prompt.systemPrompt).toContain("仅当缺少完成用户当前请求所必需的关键输入");
+    expect(prompt.decisions.filter((decision) => ["identity", "safety"].includes(decision.kind)).every((decision) => decision.decision === "kept")).toBe(true);
+    expect(() => buildPromptPipe({ maxTokens: 100 })).toThrow("Prompt 预算不足");
+  });
+
+
   it("enforces each segment budget before the global budget", () => {
     const result = applyPromptBudget([
       segment("中文上下文".repeat(200), 32),
@@ -30,9 +39,9 @@ describe("prompt hard budget", () => {
   it("counts rendered separators in the global budget", () => {
     const prompt = buildPromptPipe({
       memory: "memory ".repeat(500),
-      maxTokens: 120,
+      maxTokens: 600,
     });
-    expect(countTokensFromText(prompt.systemPrompt)).toBeLessThanOrEqual(120);
+    expect(countTokensFromText(prompt.systemPrompt)).toBeLessThanOrEqual(600);
     expect(prompt.estimatedTokens).toBe(countTokensFromText(prompt.systemPrompt));
   });
 
@@ -114,6 +123,7 @@ describe("prompt hard budget", () => {
     expect(prompt.systemPrompt).not.toContain("search_notes 是用户个人知识库检索工具");
     expect(prompt.segments.map((segment) => segment.kind)).toEqual([
       "identity",
+      "safety",
       "evidence-policy",
       "retrieval-plan",
     ]);

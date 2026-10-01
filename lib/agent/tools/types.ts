@@ -93,6 +93,8 @@ export interface ToolDefinition {
   orchestration?: ToolOrchestrationPolicy; // 条件生效时必须先满足的能力依赖
   input_schema: ToolInputSchema; // 工具参数
   riskLevel: ToolRiskLevel; // 工具风险等级
+  /** Optional input-level confirmation policy for tools with mixed-risk inputs. */
+  requiresConfirmationFor?(input: unknown, context?: { model?: string; userId?: string; requestId?: string; signal?: AbortSignal }): boolean | Promise<boolean>;
   execute(params: unknown, context?: ToolExecutionContext): Promise<ToolResult>; // 执行工具的函数
   runtime: ToolRuntimePolicy;
 }
@@ -116,6 +118,7 @@ export type ExecuteToolCallOptions = {
   userId?: string;
   requestId?: string;
   conversationContext?: string[];
+  model?: string;
 };
 
 export type ToolExecutionContext = {

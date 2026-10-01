@@ -526,6 +526,7 @@ export async function executeTools(
     Awaited<ReturnType<typeof executeToolCall>>
   > = new Map(),
   signal?: AbortSignal,
+  model?: ChatModelId,
 ) {
   const toolResultBlocks: Array<ToolResultBlock> = [];
   const toolSources: Array<ToolSourceType> = [];
@@ -587,6 +588,7 @@ export async function executeTools(
       requestId,
       conversationContext,
       signal,
+      model,
     )),
     ...duplicateExecutionResults,
   ].sort(
@@ -821,6 +823,7 @@ async function executeToolUsesWithScheduler(
   requestId?: string,
   conversationContext?: string[],
   signal?: AbortSignal,
+  model?: ChatModelId,
 ) {
   type ScheduledToolUse = {
     index: number;
@@ -888,6 +891,7 @@ async function executeToolUsesWithScheduler(
               requestId,
               conversationContext,
               signal,
+              model,
             ),
           })),
         )),
@@ -907,6 +911,7 @@ async function executeToolUsesWithScheduler(
         requestId,
         conversationContext,
         signal,
+        model,
       ),
     });
   }
@@ -922,6 +927,7 @@ function executeSingleToolUse(
   requestId?: string,
   conversationContext?: string[],
   signal?: AbortSignal,
+  model?: ChatModelId,
 ) {
   return executeToolCall(
     toolRegistry,
@@ -930,7 +936,7 @@ function executeSingleToolUse(
       input: toolUse.input,
       id: toolUse.id,
     },
-    { scopeId, userId, requestId, conversationContext, signal },
+    { scopeId, userId, requestId, conversationContext, signal, model },
   );
 }
 
@@ -1567,6 +1573,7 @@ export async function runAgentLoop(
       buildToolConversationContext(loopMessages),
       precomputedResults,
       signal,
+      model,
     );
     if (shouldStop()) {
       return {

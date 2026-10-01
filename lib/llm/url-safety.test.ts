@@ -27,3 +27,16 @@ describe("LLM provider URL safety", () => {
   });
 });
 
+
+// Literal mapped addresses must use the IPv4 policy after normalization.
+describe("mapped IPv6 addresses", () => {
+  it.each([
+    "http://[::ffff:127.0.0.1]/v1", "http://[::ffff:7f00:1]/v1",
+    "http://[::ffff:10.0.0.1]/v1", "http://[::ffff:169.254.169.254]/v1",
+  ])("blocks %s", async (url) => {
+    await expect(assertPublicProviderUrl(url)).rejects.toThrow("内网");
+  });
+  it("allows a public IPv6 literal without passing brackets to DNS", async () => {
+    await expect(assertPublicProviderUrl("https://[2606:4700:4700::1111]/v1")).resolves.toBe("https://[2606:4700:4700::1111]/v1");
+  });
+});

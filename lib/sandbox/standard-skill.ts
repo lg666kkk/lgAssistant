@@ -12,9 +12,9 @@ function metadata(markdown: string, key: string) {
 }
 
 function relativePath(file: File) {
-  const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-  const marker = path.indexOf("/");
-  return marker >= 0 ? path.slice(marker + 1) : path;
+  const directoryPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  // Browser folder uploads include their selected root; CLI imports already use relative names.
+  return directoryPath ? directoryPath.slice(directoryPath.indexOf("/") + 1) : file.name;
 }
 
 export async function importStandardSkill(input: { files: File[]; actorId: string }) {
@@ -23,12 +23,13 @@ export async function importStandardSkill(input: { files: File[]; actorId: strin
   const contents = new Map<string, string>();
   for (const file of input.files) {
     const path = relativePath(file);
-    if (!path || path.startsWith("/") || path.includes("..") || path === ".git" || path.startsWith(".git/")) {
+    if (!path || path.includes("\\") || path.startsWith("/") || path.includes("..") || path === ".git" || path.startsWith(".git/")) {
       throw new Error("技能文件包含不安全路径");
     }
     if (file.size > MAX_FILE_BYTES) throw new Error(`文件 ${path} 超过 2MiB`);
     total += file.size;
     if (total > MAX_TOTAL_BYTES) throw new Error("技能目录不能超过 10MiB");
+    if (contents.has(path)) throw new Error(`技能目录包含重复路径：${path}`);
     contents.set(path, await file.text());
   }
   const skillMd = contents.get("SKILL.md");

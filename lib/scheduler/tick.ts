@@ -2,6 +2,7 @@ import { nextRunTime } from "@/lib/scheduler/cron";
 import { runScheduledJobHandler } from "@/lib/scheduler/handlers";
 import {
   claimDueJobs,
+  renewJobLease,
   finalizeJobRun,
   markJobFailure,
   releaseJobLease,
@@ -35,22 +36,15 @@ function isRecurringMisfire(job: { cron: string | null; nextRunAt: number }, now
 }
 
 export async function tick(now = Date.now(), workerId = `scheduler-${crypto.randomUUID()}`): Promise<SchedulerTickResult> {
-  const jobs = await claimDueJobs({ now, workerId });
   const result: SchedulerTickResult = {
-    now,
-    due: jobs.length,
-    executed: 0,
-    failed: 0,
-    skipped: 0,
+    now, due: 0, executed: 0, failed: 0, skipped: 0,
     deliveries: { due: 0, delivered: 0, failed: 0, dead: 0 },
   };
-
-  for (const job of jobs) {
-    if (!job.enabled) {
-      result.skipped += 1;
-      continue;
-    }
-
+  // Do not reserve jobs whose lease would expire while waiting behind a slow agent.
+  for (let index = 0; index < 10; index++) {
+    const [job] = await claimDueJobs({ now: index === 0 ? now : Date.now(), workerId, limit: 1 });
+    if (!job) break;
+    result.due += 1;
     const status = await executeClaimedScheduledJob({ job, workerId, now, trigger: "schedule" });
     result[status === "success" ? "executed" : status === "failed" ? "failed" : "skipped"] += 1;
   }
@@ -107,8 +101,29 @@ export async function executeClaimedScheduledJob(input: {
     return "skipped";
   }
 
+  let leaseLost = false;
   try {
-    const handlerResult = await runScheduledJobHandler(job);
+    const controller = new AbortController();
+    const renew = async () => {
+      try {
+        if (!await renewJobLease({ job, workerId })) throw new Error("定时任务租约已失效");
+      } catch (error) { leaseLost = true; controller.abort(error); }
+    };
+    await renew();
+    controller.signal.throwIfAborted();
+    let renewing = false;
+    const heartbeat = setInterval(() => {
+      if (renewing) return;
+      renewing = true;
+      void renew().finally(() => { renewing = false; });
+    }, 30_000);
+    let handlerResult: Awaited<ReturnType<typeof runScheduledJobHandler>>;
+    try {
+      handlerResult = await runScheduledJobHandler(job, controller.signal);
+      controller.signal.throwIfAborted();
+      await renew();
+      controller.signal.throwIfAborted();
+    } finally { clearInterval(heartbeat); }
     let nextRunAt: number | null = job.nextRunAt;
     let disable = trigger === "manual" && !job.cron && job.nextRunAt <= now;
     if (trigger === "schedule") {
@@ -134,6 +149,7 @@ export async function executeClaimedScheduledJob(input: {
     });
     return "success";
   } catch (error) {
+    if (leaseLost) return "failed"; // A new owner must be allowed to finish; never finalize its lease.
     const message = error instanceof Error ? error.message : String(error);
     await finalizeJobRun({
       runId,

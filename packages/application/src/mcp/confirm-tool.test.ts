@@ -10,8 +10,20 @@ import { ToolRegistry } from "@/lib/agent/tools/registry";
 import { askUserTool } from "@/lib/agent/tools/ask-user";
 import { adaptMcpTool } from "@/lib/agent/tools/mcp-adapter";
 import { createTrace } from "@/lib/agent/runtime/trace";
+import type { ContextSnapshot } from "@/lib/agent/context/types";
+import type { ChatSessionPort } from "../chat/ports";
 import type { ChatApplicationDependencies } from "../chat/ports";
 import type { AgentLoopResult } from "@/lib/agent/runtime";
+
+function snapshotFixture(input: Parameters<ChatSessionPort["createSnapshot"]>[0]): ContextSnapshot {
+  return {
+    id: "snapshot", userId: input.userId, sessionId: input.sessionId,
+    version: (input.previous?.version ?? 0) + 1, model: input.model,
+    policyVersion: "test", summary: "", messages: input.messages,
+    artifactRefs: [], unresolvedItems: [], sourceMessageCount: input.messages.length,
+    contentHash: "test", createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z",
+  };
+}
 
 function setup() {
   const call = vi.fn(async () => ({
@@ -98,6 +110,7 @@ function setup() {
     },
     userContext: { resolveModel: vi.fn(async () => ({})) },
     sessions: {
+      loadSnapshot: vi.fn(async () => null),
       createSnapshot: vi.fn(() => ({})),
       saveSnapshot: vi.fn(async () => {}),
       persistTurn: vi.fn(async () => {}),
@@ -154,6 +167,28 @@ function setup() {
 }
 
 describe("confirmation continuation", () => {
+  it("increments the existing snapshot version for both receipt and final answer", async () => {
+    const f = setup();
+    const previous = snapshotFixture({ userId: "alice", sessionId: "session", model: "model-1", messages: f.state.messages });
+    previous.version = 5;
+    f.state.contextSnapshotVersion = 5;
+    vi.mocked(f.deps.sessions.loadSnapshot).mockResolvedValue(previous);
+    vi.mocked(f.deps.sessions.createSnapshot).mockImplementation(snapshotFixture);
+    await confirmTool(f.input, f.runtime);
+    expect(vi.mocked(f.deps.sessions.saveSnapshot).mock.calls.map(([snapshot]) => snapshot.version)).toEqual([6, 7]);
+  });
+
+  it("rejects a stale continuation before executing a write", async () => {
+    const f = setup();
+    f.state.contextSnapshotVersion = 1;
+    const current = snapshotFixture({ userId: "alice", sessionId: "session", model: "model-1", messages: f.state.messages });
+    current.version = 2;
+    vi.mocked(f.deps.sessions.loadSnapshot).mockResolvedValue(current);
+    await expect(confirmTool(f.input, f.runtime)).rejects.toThrow("会话已更新");
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.deps.sessions.saveSnapshot).not.toHaveBeenCalled();
+  });
+
   it("creates a restorable checkpoint for questions rather than treating them as completed calls", () => {
     const f = setup();
     const registry = new ToolRegistry(); registry.register(askUserTool);

@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/server";
+import { requireUser, requireConfigAdmin } from "@/lib/auth/server";
 import {
   listConfiguredSkills,
   deleteSkillDefinition,
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     const skills = await listConfiguredSkills();
     return Response.json({
       ok: true,
-      canEdit: true,
+      canEdit: await requireConfigAdmin(req, user),
       profiles: SANDBOX_PROFILES.filter((profile) => profile.id === "skill-trusted"),
       skills,
     }, { headers: { "Cache-Control": "no-store" } });
@@ -32,9 +32,18 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
+  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   try {
     const form = await req.formData();
-    const files = form.getAll("files").filter((value): value is File => value instanceof File);
+    let files = form.getAll("files").filter((value): value is File => value instanceof File);
+    const paths = form.get("paths");
+    if (typeof paths === "string") {
+      const parsed: unknown = JSON.parse(paths);
+      if (!Array.isArray(parsed) || parsed.length !== files.length || !parsed.every((path) => typeof path === "string")) {
+        throw new Error("Skill 文件路径清单无效");
+      }
+      files = files.map((file, index) => new File([file], parsed[index]));
+    }
     const imported = await importStandardSkill({ files, actorId: user.id });
     return Response.json({ ok: true, skill: imported }, { status: 201 });
   } catch (error) {
@@ -45,6 +54,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
+  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   const id = new URL(req.url).searchParams.get("id") ?? "";
   try {
     await deleteSkillDefinition({ id, actorId: user.id });
@@ -60,6 +70,7 @@ export async function DELETE(req: Request) {
 export async function PATCH(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
+  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   let body: Record<string, unknown>;
   try {
     body = await req.json();

@@ -47,7 +47,7 @@ function extractLastAssistantText(messages: any[]): string {
   }, "");
 }
 
-const agentTask: ScheduledJobHandler = async (job) => {
+const agentTask: ScheduledJobHandler = async (job, signal) => {
   if (typeof job.payload.prompt !== "string" || !job.payload.prompt.trim()) {
     throw new Error("agent-task 需要 payload.prompt");
   }
@@ -72,10 +72,11 @@ const agentTask: ScheduledJobHandler = async (job) => {
     `scheduled:${job.id}`,
     undefined,
     `你正在执行一个定时任务。当前时间：${new Date().toISOString()}。`,
-    () => false,
+    () => signal?.aborted ?? false,
     scheduledModel.id,
     undefined,
     job.userId,
+    undefined, [], undefined, [], undefined, new Map(), signal,
   );
 
   const text = extractLastAssistantText(result.loopMessages).trim();
@@ -100,11 +101,13 @@ export const scheduledJobHandlers: Record<ScheduledJobType, ScheduledJobHandler>
 
 export async function runScheduledJobHandler(
   job: ScheduledJob,
+  signal?: AbortSignal,
 ): Promise<ScheduledJobHandlerResult> {
   const handler = scheduledJobHandlers[job.type];
   if (!handler) {
     throw new Error(`未知定时任务类型: ${job.type}`);
   }
 
-  return (await handler(job)) ?? {};
+  signal?.throwIfAborted();
+  return (await handler(job, signal)) ?? {};
 }

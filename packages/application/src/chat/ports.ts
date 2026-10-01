@@ -28,6 +28,7 @@ export interface ChatUserContextPort {
 }
 
 export interface ChatSessionPort {
+  loadSnapshot(input: { userId: string; sessionId: string }): Promise<ContextSnapshot | null>;
   resolveLoopMessages(input: {
     userId: string;
     sessionId?: string;

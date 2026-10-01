@@ -1,5 +1,7 @@
 "use client";
 
+import { arrangeTraceSteps } from "../model/trace-steps";
+
 import { getMcpCallPresentation } from "@web/features/chat/components/mcp-tool-call";
 
 import { useEffect, useState } from "react";
@@ -896,10 +898,10 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
 
             {/* 时间线 */}
             <div className="mt-6 space-y-3">
-              {trace.steps.map((step) => (
+              {arrangeTraceSteps(trace.steps).map(({ step, nested }) => (
                 <div
                   key={step.index}
-                  className="rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3"
+                  className={`rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3 ${nested ? "ml-8 border-l-2 border-l-cyan-500/40 bg-slate-950/40" : ""}`}
                 >
                   <div className="flex items-center gap-2 text-sm">
                     <span className="rounded-md bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
@@ -915,7 +917,7 @@ export function TraceDetail({ id, onBack }: { id: string; onBack: () => void }) 
                           step.ok ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
-                        🔧 {getMcpCallPresentation(step)?.label ?? step.name} {step.ok ? "" : step.metadata?.status === "pending_confirmation" ? "(待确认)" : "(失败)"}
+                        🔧 {nested ? "工具执行 · " : ""}{getMcpCallPresentation(step)?.label ?? step.name} {step.ok ? "" : step.metadata?.status === "pending_confirmation" ? "(待确认)" : "(失败)"}
                       </span>
                     ) : step.type === "context_compaction" ? (
                       <span className="font-medium text-amber-300">

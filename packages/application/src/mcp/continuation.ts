@@ -14,6 +14,7 @@ import type { RetrievalPlan } from "@/lib/agent/rag/types";
 export type Continuation = {
   requestId: string;
   sessionId?: string;
+  contextSnapshotVersion?: number;
   model: string;
   system?: string;
   messages: Anthropic.MessageParam[];

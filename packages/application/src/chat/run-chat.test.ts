@@ -12,6 +12,7 @@ function fakeDependencies(): ChatApplicationDependencies {
       readKnowledgeProfile: vi.fn(),
     },
     sessions: {
+      loadSnapshot: vi.fn(async () => null),
       resolveLoopMessages: vi.fn(),
       persistTurn: vi.fn(),
       createSnapshot: vi.fn(),

@@ -8,7 +8,7 @@ describe("工具确认暂停", () => {
   it("聊天请求终端命令时先暂停等待用户确认", async () => {
     const registry = createBuiltinToolRegistry();
     const model = vi.fn().mockResolvedValue({
-      content: [{ type: "tool_use", id: "terminal-1", name: "run_terminal_command", input: { command: "npx skills find finance" } }],
+      content: [{ type: "tool_use", id: "terminal-1", name: "run_terminal_command", input: { command: "npm install finance-tool" } }],
       stop_reason: "tool_use",
     });
     const result = await runAgentLoop(

@@ -89,7 +89,10 @@ async function executeToolCallInternal(
       error: `Unknown tool: ${toolCall.name}`,
     };
   }
-  if (tool.riskLevel === "confirm" && !options.approved) {
+  const requiresConfirmation = !options.approved && (tool.requiresConfirmationFor
+    ? await tool.requiresConfirmationFor(toolCall.input, { model: options.model, userId: options.userId, requestId: options.requestId, signal: options.signal })
+    : tool.riskLevel === "confirm" || tool.runtime.requiresConfirmation);
+  if (requiresConfirmation && !options.approved) {
     return {
       ok: false,
       toolName: tool.name,

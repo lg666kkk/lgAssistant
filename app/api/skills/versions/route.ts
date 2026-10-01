@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/server";
+import { requireUser, requireConfigAdmin } from "@/lib/auth/server";
 import { publishSkillVersion } from "@/lib/sandbox/skills";
 
 export const runtime = "nodejs";
@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
+  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   let body: Record<string, unknown>;
   try {
     body = await req.json();

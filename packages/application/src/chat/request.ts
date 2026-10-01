@@ -53,6 +53,9 @@ export async function parseChatRequest(
     return { ok: false, response: jsonError("请求体格式错误，需要有效的 JSON") };
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, response: jsonError("请求体必须是 JSON 对象") };
+  }
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
     return { ok: false, response: jsonError("messages 字段必须是非空数组") };

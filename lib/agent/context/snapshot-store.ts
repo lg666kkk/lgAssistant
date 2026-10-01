@@ -14,7 +14,7 @@ export type ContextSnapshotStoreDependencies = {
   cache: ContextSnapshotCache;
   getSupabase: typeof getSupabase;
   hasSupabaseConfig: typeof hasSupabaseConfig;
-  onCacheError: (operation: "load" | "backfill" | "save", error: unknown) => void;
+  onCacheError: (operation: "load" | "backfill" | "save" | "clear", error: unknown) => void;
 };
 
 const defaultDependencies: ContextSnapshotStoreDependencies = {
@@ -133,7 +133,7 @@ export async function saveContextSnapshot(
 ): Promise<void> {
   const hasPersistentStore = dependencies.hasSupabaseConfig();
   if (hasPersistentStore) {
-    const { error } = await dependencies.getSupabase().from(TABLE).upsert({
+    const payload = {
       id: snapshot.id,
       user_id: snapshot.userId,
       session_id: snapshot.sessionId,
@@ -147,8 +147,20 @@ export async function saveContextSnapshot(
       source_message_count: snapshot.sourceMessageCount,
       content_hash: snapshot.contentHash,
       updated_at: snapshot.updatedAt,
-    }, { onConflict: "user_id,session_id" });
-    if (error) throw new Error(`[ContextSnapshot.save] ${error.message}`);
+    };
+    const table = dependencies.getSupabase().from(TABLE);
+    // Updating the expected previous version is atomic; a stale writer cannot overwrite a newer turn.
+    const result = snapshot.version === 1
+      ? await table.insert(payload).select("id").maybeSingle()
+      : await table.update(payload).eq("user_id", snapshot.userId).eq("session_id", snapshot.sessionId)
+        .eq("version", snapshot.version - 1).select("id").maybeSingle();
+    if (result.error || !result.data) {
+      await dependencies.cache.clear(snapshot).catch((error) => dependencies.onCacheError("clear", error));
+      if (result.error?.code === "23505" || (!result.error && !result.data)) {
+        throw new Error("[ContextSnapshot.save] 会话快照版本冲突，请重试当前请求");
+      }
+      throw new Error(`[ContextSnapshot.save] ${result.error.message}`);
+    }
   }
 
   try {

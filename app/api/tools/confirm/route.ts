@@ -1,3 +1,4 @@
+import { withChatSessionLease } from "@/lib/chat/session-lease";
 import { confirmTool } from "@repo/application/mcp/confirm-tool";
 import { createProductionChatDependencies } from "@repo/infrastructure/chat";
 import { requireUser } from "@/lib/auth/server";
@@ -5,6 +6,10 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
+  return withChatSessionLease(req, user.id, (leasedRequest) => handleConfirmation(leasedRequest, user.id));
+}
+
+async function handleConfirmation(req: Request, userId: string) {
   let body;
   try {
     body = await req.json();
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
       }, 15_000);
       try {
         const response = await confirmTool({
-          userId: user.id,
+          userId,
           sessionId:
             typeof body.sessionId === "string" ? body.sessionId : undefined,
           token: body.token,

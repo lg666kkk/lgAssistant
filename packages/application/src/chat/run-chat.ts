@@ -788,6 +788,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           if (!deps.confirmations) throw new Error("确认状态存储不可用，本次工具尚未执行");
           const state = checkpoint({
             requestId, sessionId, model: selectedModel, system: systemPrompt,
+            contextSnapshotVersion: hydratedContext.snapshot?.version ?? 0,
             tools: executionRoute.tools.map(tool => tool.name), retrievalPlan, sources: allToolSources,
             remainingIterations: Math.max(0, maxToolIterations - agentLoopResult.metrics.modelCallCount),
             plan: executionRoute.plan ?? undefined, planStep: agentLoopResult.pausedPlanStep, planControl: planExecution,

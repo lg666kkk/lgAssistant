@@ -37,6 +37,7 @@ export function truncatePromptContent(content: string, maxTokens: number) {
 
 export function rankSegments(segments: PromptSegment[]) {
   return [...segments].sort((a, b) => {
+    if (Boolean(a.required) !== Boolean(b.required)) return a.required ? -1 : 1;
     if (b.priority !== a.priority) return b.priority - a.priority;
     return a.kind.localeCompare(b.kind);
   });
@@ -59,6 +60,9 @@ export function applyPromptBudget(
     const ownBudgetedTokens = estimatePromptTokens(ownBudgetedContent);
     const separatorCost = kept.length > 0 ? separatorTokens : 0;
     const remaining = Math.max(0, options.maxTokens - used - separatorCost);
+    if (segment.required && (ownLimit < originalTokens || remaining < originalTokens)) {
+      throw new Error(`Prompt 预算不足，无法完整保留系统规则：${segment.title}`);
+    }
     const globalBudgetedContent = truncatePromptContent(ownBudgetedContent, remaining);
     const keptTokens = estimatePromptTokens(globalBudgetedContent);
 

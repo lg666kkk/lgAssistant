@@ -78,7 +78,7 @@ app（页面与 Route）
 ### 1. 环境要求
 
 - Node.js 20+
-- npm（项目使用 `package-lock.json`）
+- npm（项目统一使用 npm 和 `package-lock.json`，使用 `npm ci` 安装锁定版本）
 - Docker 与 Docker Compose（用于本地 Redis）
 - 一个 Supabase 项目，并启用 Email/Password 登录
 - E2B API Key（可在“连接 → 沙盒环境”按用户配置）
@@ -86,7 +86,7 @@ app（页面与 Route）
 ### 2. 安装依赖
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 3. 初始化 Supabase
@@ -118,7 +118,7 @@ UPSTASH_REDIS_REST_TOKEN=
 # 值必须是 32 字节内容的 Base64 编码，可用 `openssl rand -base64 32` 生成
 CONFIG_ENCRYPTION_KEY=your_base64_key
 
-# 可选：允许编辑服务端运行时配置的登录邮箱，多个邮箱用逗号分隔
+# 可选：允许编辑服务端运行时配置和共享 Skill 的登录邮箱，多个邮箱用逗号分隔
 CONFIG_ADMIN_EMAILS=you@example.com
 
 # 可选：启用定时任务 tick 时配置

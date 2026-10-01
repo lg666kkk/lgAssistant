@@ -287,7 +287,10 @@ export function SkillCenter() {
     setNotice(null);
     try {
       const form = new FormData();
+      const paths = files.map((file) => file.webkitRelativePath
+        ? file.webkitRelativePath.slice(file.webkitRelativePath.indexOf("/") + 1) : file.name);
       files.forEach((file) => form.append("files", file));
+      form.append("paths", JSON.stringify(paths));
       const response = await authFetch("/api/skills", { method: "POST", body: form });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "导入 Skill 失败");
@@ -434,13 +437,13 @@ export function SkillCenter() {
                 <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill` : "登录后查看 Skill"}</p>
               </div>
               <div role="tablist" aria-label="Skill 管理方式" className="flex w-full flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-900/70 p-1 sm:w-auto">
-                {([["list", "Skill 列表"], ["upload", "本地上传"], ["terminal", "终端安装"]] as const).map(([tab, label]) => (
+                {([["list", "Skill 列表"], ["upload", "本地上传"], ["terminal", "终端安装"]] as const).filter(([tab]) => canEdit || tab === "list").map(([tab, label]) => (
                   <button key={tab} type="button" role="tab" aria-selected={activeListTab === tab} onClick={() => setActiveListTab(tab)} className={`min-h-10 rounded-md px-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500/70 ${activeListTab === tab ? "bg-slate-700 text-slate-100 shadow-sm" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>{label}</button>
                 ))}
               </div>
             </div>
-            {activeListTab === "upload" && <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-sm font-semibold text-slate-100">从本地导入 Skill</h3><p className="mt-1 text-sm text-slate-500">选择包含根目录 SKILL.md 的文件夹。</p></div><button type="button" onClick={() => importInput.current?.click()} disabled={busy !== null} className="flex h-10 items-center gap-2 rounded-md bg-cyan-600 px-4 text-sm text-white hover:bg-cyan-500 disabled:opacity-50"><Upload className="h-4 w-4" />选择文件夹</button></div></div>}
-            {activeListTab === "terminal" && (
+            {canEdit && activeListTab === "upload" && <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-sm font-semibold text-slate-100">从本地导入 Skill</h3><p className="mt-1 text-sm text-slate-500">选择包含根目录 SKILL.md 的文件夹。</p></div><button type="button" onClick={() => importInput.current?.click()} disabled={busy !== null} className="flex h-10 items-center gap-2 rounded-md bg-cyan-600 px-4 text-sm text-white hover:bg-cyan-500 disabled:opacity-50"><Upload className="h-4 w-4" />选择文件夹</button></div></div>}
+            {canEdit && activeListTab === "terminal" && (
               <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                 <div className="mb-4"><h3 className="text-sm font-semibold text-slate-100">通过终端安装 Skill</h3><p className="mt-1 text-sm text-slate-500">输入 GitHub 仓库或具体 Skill，例如 vercel-labs/skills@find-skills。</p><p className="mt-1 text-xs text-slate-500">安装会导入 SKILL.md 供助手阅读，不会赋予助手执行文档中终端命令的能力。</p></div>
                 <div className="flex flex-col gap-2 sm:flex-row"><input value={installPackage} onChange={(event) => setInstallPackage(event.target.value)} placeholder="owner/repo 或 owner/repo@skill" className="h-10 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-200 outline-none focus:border-violet-500" disabled={busy !== null} /><button type="button" onClick={() => void installFromRegistry()} disabled={busy !== null || !installPackage.trim()} className="flex h-10 items-center justify-center gap-2 rounded-md bg-violet-600 px-4 text-sm text-white hover:bg-violet-500 disabled:opacity-50"><ShieldCheck className="h-4 w-4" />安装 Skill</button></div>

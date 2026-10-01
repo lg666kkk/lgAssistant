@@ -1,4 +1,5 @@
-import { isIP } from "node:net";
+import { Agent } from "undici";
+import { isIP, type LookupFunction } from "node:net";
 import { lookup } from "node:dns/promises";
 
 const blockedHostnames = new Set([
@@ -23,7 +24,13 @@ function isBlockedIpv4(address: string) {
 }
 
 function isBlockedIpv6(address: string) {
-  const normalized = address.toLowerCase();
+  const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1).toLowerCase();
+  // WHATWG normalizes dotted mapped addresses to two hexadecimal IPv4 groups.
+  const mapped = /^::ffff:([a-f0-9]+):([a-f0-9]+)$/.exec(normalized);
+  if (mapped) {
+    const high = parseInt(mapped[1], 16), low = parseInt(mapped[2], 16);
+    return isBlockedIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+  }
   return normalized === "::"
     || normalized === "::1"
     || normalized.startsWith("fe8")
@@ -51,21 +58,37 @@ export function normalizeProviderBaseUrl(value: string) {
 export async function assertPublicProviderUrl(value: string) {
   const normalized = normalizeProviderBaseUrl(value);
   const url = new URL(normalized);
-  const literalVersion = isIP(url.hostname);
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const literalVersion = isIP(hostname);
   const addresses = literalVersion
-    ? [{ address: url.hostname, family: literalVersion }]
-    : await lookup(url.hostname, { all: true, verbatim: true });
+    ? [{ address: hostname, family: literalVersion }]
+    : await lookup(hostname, { all: true, verbatim: true });
   if (addresses.length === 0) throw new Error("Base URL 无法解析");
-  for (const entry of addresses) {
-    if (
-      (entry.family === 4 && isBlockedIpv4(entry.address))
-      || (entry.family === 6 && isBlockedIpv6(entry.address))
-    ) {
-      throw new Error("Base URL 解析到了本机、内网或保留地址");
-    }
-  }
+  assertPublicAddresses(addresses);
   return normalized;
 }
+
+function assertPublicAddresses(addresses: Array<{ address: string; family: number }>) {
+  if (!addresses.length || addresses.some((entry) =>
+    entry.family === 4 ? isBlockedIpv4(entry.address)
+      : entry.family === 6 ? isBlockedIpv6(entry.address) : true,
+  )) throw new Error("Base URL 解析到了本机、内网或保留地址");
+}
+
+/** The socket receives exactly the DNS result that was validated, preventing DNS rebinding. */
+export const lookupPublicAddress: LookupFunction = (hostname, options, callback) => {
+  void lookup(hostname, { all: true, verbatim: true }).then((addresses) => {
+    assertPublicAddresses(addresses);
+    const family = typeof options.family === "number" ? options.family : 0;
+    const candidates = family ? addresses.filter((entry) => entry.family === family) : addresses;
+    if (!candidates.length) throw new Error("Base URL 无法解析到所需地址族");
+    if (options.all) callback(null, candidates);
+    else callback(null, candidates[0].address, candidates[0].family);
+  }).catch((error: Error) => callback(error, []));
+};
+
+// One bounded connection pool shared across requests; DNS is revalidated for each new socket.
+const publicDispatcher = new Agent({ connect: { lookup: lookupPublicAddress }, connections: 3 });
 
 export function createSafeProviderFetch(baseUrl: string, timeoutMs = 60_000): typeof fetch {
   const origin = new URL(baseUrl).origin;
@@ -76,14 +99,16 @@ export function createSafeProviderFetch(baseUrl: string, timeoutMs = 60_000): ty
     if (requestUrl.origin !== origin) throw new Error("Provider 请求不能跳转到其他来源");
     await assertPublicProviderUrl(requestUrl.toString());
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const signal = init?.signal
-      ? AbortSignal.any([init.signal, timeoutSignal])
-      : timeoutSignal;
-    const response = await fetch(input, { ...init, signal, redirect: "manual" });
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+    const options: RequestInit & { dispatcher: Agent } = {
+      ...init, signal, redirect: "manual", dispatcher: publicDispatcher,
+    };
+    const response = await fetch(input, options);
     if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
       throw new Error("Provider 返回了不允许的重定向");
     }
     return response;
   };
 }
-

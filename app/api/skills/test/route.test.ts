@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DELETE, GET, PATCH } from "@/app/api/skills/route";
+import { DELETE, GET, PATCH, POST as IMPORT } from "@/app/api/skills/route";
 import { POST } from "@/app/api/skills/versions/route";
+import { POST as INSTALL } from "@/app/api/skills/install/route";
 
 const mocks = vi.hoisted(() => ({
   requireUser: vi.fn(),
+  importStandardSkill: vi.fn(),
   requireConfigAdmin: vi.fn(),
   listConfiguredSkills: vi.fn(),
   upsertSkillDefinition: vi.fn(),
@@ -23,6 +25,8 @@ vi.mock("@/lib/sandbox/skills", () => ({
   deleteSkillDefinition: mocks.deleteSkillDefinition,
   publishSkillVersion: mocks.publishSkillVersion,
 }));
+
+vi.mock("@/lib/sandbox/standard-skill", () => ({ importStandardSkill: mocks.importStandardSkill }));
 
 const skillDraft = {
   id: "markdown-check",
@@ -51,17 +55,17 @@ function jsonRequest(method: string, body: unknown) {
   });
 }
 
-describe("skill routes require login without administrator privileges", () => {
+describe("shared skill routes require administrator privileges for writes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.requireUser.mockResolvedValue({ id: "user-1" });
-    mocks.requireConfigAdmin.mockResolvedValue(false);
+    mocks.requireConfigAdmin.mockResolvedValue(true);
     mocks.listConfiguredSkills.mockResolvedValue([skillDraft]);
     mocks.upsertSkillDefinition.mockResolvedValue(skillDraft);
     mocks.publishSkillVersion.mockResolvedValue({ skillId: "markdown-check", version: "1.0.0" });
   });
 
-  it("exposes editing and disabled skills to any signed-in user", async () => {
+  it("exposes editing to administrators", async () => {
     const skills = [skillDraft, { ...skillDraft, id: "enabled-skill", enabled: true }];
     mocks.listConfiguredSkills.mockResolvedValue(skills);
 
@@ -69,7 +73,30 @@ describe("skill routes require login without administrator privileges", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, canEdit: true, skills });
-    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
+  });
+
+  it("keeps the shared catalog readable without granting edit permission", async () => {
+    mocks.requireConfigAdmin.mockResolvedValue(false);
+    expect(await (await GET(new Request("http://localhost/api/skills"))).json()).toMatchObject({ canEdit: false });
+  });
+
+  it.each([PATCH, DELETE, POST, IMPORT, INSTALL])("rejects a non-admin write before storage or installation", async (handler) => {
+    mocks.requireConfigAdmin.mockResolvedValue(false);
+    expect((await handler(jsonRequest("POST", skillDraft))).status).toBe(403);
+    expect(mocks.upsertSkillDefinition).not.toHaveBeenCalled();
+    expect(mocks.deleteSkillDefinition).not.toHaveBeenCalled();
+    expect(mocks.publishSkillVersion).not.toHaveBeenCalled();
+  });
+
+  it("preserves browser folder paths across multipart serialization", async () => {
+    const form = new FormData();
+    form.append("files", new File(["---\nname: test\n---\n"], "SKILL.md"));
+    form.append("files", new File(["pass"], "main.py"));
+    form.append("paths", JSON.stringify(["SKILL.md", "scripts/main.py"]));
+    mocks.importStandardSkill.mockResolvedValue({ id: "test" });
+    expect((await IMPORT(new Request("http://localhost/api/skills", { method: "POST", body: form }))).status).toBe(201);
+    expect(mocks.importStandardSkill.mock.calls[0][0].files.map((file: File) => file.name)).toEqual(["SKILL.md", "scripts/main.py"]);
   });
 
   it.each([true, false])("saves skill metadata and enabled=%s using the logged-in actor", async (enabled) => {
@@ -85,7 +112,7 @@ describe("skill routes require login without administrator privileges", () => {
       enabled,
       actorId: "user-1",
     });
-    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
   });
 
   it("deletes a skill using the logged-in actor", async () => {
@@ -93,7 +120,7 @@ describe("skill routes require login without administrator privileges", () => {
 
     expect(response.status).toBe(204);
     expect(mocks.deleteSkillDefinition).toHaveBeenCalledWith({ id: "markdown-check", actorId: "user-1" });
-    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
   });
 
   it("publishes a version using the logged-in actor", async () => {
@@ -101,7 +128,7 @@ describe("skill routes require login without administrator privileges", () => {
 
     expect(response.status).toBe(201);
     expect(mocks.publishSkillVersion).toHaveBeenCalledWith({ ...versionDraft, actorId: "user-1" });
-    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
   });
 
   it.each([

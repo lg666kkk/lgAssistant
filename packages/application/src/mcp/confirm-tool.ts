@@ -82,6 +82,12 @@ export async function confirmTool(
     }
     // Resolve the original model before executing a write. Client cannot replace it.
     await deps.userContext.resolveModel(input.userId, state.model);
+    let previousSnapshot = state.sessionId
+      ? await deps.sessions.loadSnapshot({ userId: input.userId, sessionId: state.sessionId }) ?? undefined
+      : undefined;
+    if (state.contextSnapshotVersion !== undefined && state.contextSnapshotVersion !== (previousSnapshot?.version ?? 0)) {
+      throw new Error("会话已更新，请重新发起请求后确认，避免覆盖后续对话");
+    }
     const requestId = randomUUID();
     return await deps.telemetry.withTrace(
       {
@@ -147,12 +153,15 @@ export async function confirmTool(
         const persistContext = async () => {
           if (!state.sessionId) return;
           const snapshot = deps.sessions.createSnapshot({
+            previous: previousSnapshot,
             userId: input.userId,
             sessionId: state.sessionId,
             model: state.model,
             messages: stripInlineImagesForPersistence(state.messages),
           });
           await deps.sessions.saveSnapshot(snapshot);
+          previousSnapshot = snapshot;
+          state.contextSnapshotVersion = snapshot.version;
         };
         // Preserve the actual receipt for subsequent ordinary chat even if generation fails.
         await persistContext().catch(() =>
@@ -336,13 +345,7 @@ export async function confirmTool(
               if (content && !events.some((event) => event.type === "text"))
                 publish({ type: "text", content });
               if (state.sessionId) {
-                const snapshot = deps.sessions.createSnapshot({
-                  userId: input.userId,
-                  sessionId: state.sessionId,
-                  model: state.model,
-                  messages: stripInlineImagesForPersistence(state.messages),
-                });
-                await deps.sessions.saveSnapshot(snapshot);
+                await persistContext();
                 await deps.sessions.persistTurn({
                   userId: input.userId,
                   sessionId: state.sessionId,

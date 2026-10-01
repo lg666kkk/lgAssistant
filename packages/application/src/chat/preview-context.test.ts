@@ -38,6 +38,7 @@ function fakeDependencies(): PreviewChatContextInput["dependencies"] {
       }),
     },
     sessions: {
+      loadSnapshot: vi.fn(async () => null),
       resolveLoopMessages: vi.fn().mockResolvedValue({
         messages: [
           { role: "user", content: "上一个问题" },

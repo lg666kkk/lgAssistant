@@ -13,7 +13,8 @@ const { runAgentLoopMock } = vi.hoisted(() => ({
   runAgentLoopMock: vi.fn(),
 }));
 
-vi.mock("@/lib/agent/runtime", () => ({
+vi.mock("@/lib/agent/runtime", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./index")>(),
   runAgentLoop: runAgentLoopMock,
 }));
 

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { promisify } from "node:util";
-import { requireUser } from "@/lib/auth/server";
+import { requireUser, requireConfigAdmin } from "@/lib/auth/server";
 import { importStandardSkill } from "@/lib/sandbox/standard-skill";
 
 export const runtime = "nodejs";
@@ -36,6 +36,7 @@ async function collect(root: string) {
 
 export async function POST(req: Request) {
   const user = await requireUser(req); if (user instanceof Response) return user;
+  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   let source: string;
   try { source = safeSource((await req.json()).package); } catch (e) { return Response.json({ok:false,error:e instanceof Error?e.message:"安装参数错误"},{status:400}); }
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pa-skill-install-"));

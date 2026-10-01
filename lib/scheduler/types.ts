@@ -96,4 +96,5 @@ export type ScheduledJobHandlerResult = {
 
 export type ScheduledJobHandler = (
   job: ScheduledJob,
+  signal?: AbortSignal,
 ) => Promise<ScheduledJobHandlerResult | void>;

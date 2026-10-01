@@ -81,48 +81,44 @@ function SessionBlock({ group, onSelect }: { group: SessionGroup; onSelect: (id:
           {group.title}
         </span>
         <span className="shrink-0 rounded-md bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
-          {group.traces.length} 条
+          {group.traces.length} 次执行
         </span>
       </button>
 
       {open && (
-        <div className="space-y-1.5 px-3 pb-3">
-          {group.traces.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => onSelect(t.id)}
-              className="block w-full rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2.5 text-left transition-colors hover:border-slate-700 hover:bg-slate-900"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <span
-                    className={`text-sm font-medium ${stopReasonClass(
-                      t.stop_reason,
-                      t.completed,
-                    )}`}
-                  >
-                    {t.stop_reason}
-                  </span>
-                  <span className="ml-2 text-xs text-slate-600">
-                    {new Date(t.created_at).toLocaleString("zh-CN")}
-                  </span>
-                </div>
-                <div className="flex shrink-0 gap-3 text-xs text-slate-400">
-                  <span title="模型调用次数">🧠 {t.metrics?.modelCallCount ?? 0}</span>
-                  <span title="工具调用次数">🔧 {t.metrics?.toolCallCount ?? 0}</span>
-                  <span title="真实 token">
-                    tok {t.metrics?.actualTotalTokens ?? 0}
-                  </span>
-                  <span title="估算模型费用">
-                    ¥{(t.metrics?.estimatedModelCostCny ?? 0).toFixed(4)}
-                  </span>
-                  <span title="估算 token">~{t.metrics?.estimatedTokensSpent ?? 0}</span>
-                  <span title="总耗时">{t.total_duration_ms ?? "?"}ms</span>
-                </div>
-              </div>
-            </button>
-          ))}
+        <div className="px-3 pb-3">
+          <div className="rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
+              <span className="text-slate-600">会话</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-slate-200">{group.title}</span>
+            </div>
+            <div className="space-y-1.5 border-l border-slate-800 pl-3">
+              {group.traces.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => onSelect(t.id)}
+                  className="block w-full rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2.5 text-left transition-colors hover:border-slate-700 hover:bg-slate-900"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <span className="mr-2 text-xs text-slate-600">执行</span>
+                      <span className={`text-sm font-medium ${stopReasonClass(t.stop_reason, t.completed)}`}>
+                        {t.stop_reason}
+                      </span>
+                      <span className="ml-2 text-xs text-slate-600">
+                        {new Date(t.created_at).toLocaleString("zh-CN")}
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 gap-3 text-xs text-slate-400">
+                      <span title="模型调用次数">🧠 {t.metrics?.modelCallCount ?? 0}</span>
+                      <span title="工具调用次数">🔧 {t.metrics?.toolCallCount ?? 0}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -164,7 +160,7 @@ export function TraceCenter({ initialTraceId = null }: { initialTraceId?: string
               Agent Trace 观测
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              按会话分组，每条是一次 runAgentLoop 的执行轨迹，点击查看逐步明细
+              按会话分组，点击执行记录查看该请求及确认续跑的轨迹
             </p>
           </div>
         </div>

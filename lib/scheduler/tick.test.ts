@@ -3,6 +3,8 @@ import type { ScheduledJob } from "./types";
 
 const mocks = vi.hoisted(() => ({
   claimDueJobs: vi.fn(),
+  renewJobLease: vi.fn(),
+  releaseJobLease: vi.fn(),
   startJobRun: vi.fn(),
   finalizeJobRun: vi.fn(),
   markJobFailure: vi.fn(),
@@ -13,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./store", () => ({
   claimDueJobs: mocks.claimDueJobs,
+  renewJobLease: mocks.renewJobLease,
+  releaseJobLease: mocks.releaseJobLease,
   startJobRun: mocks.startJobRun,
   finalizeJobRun: mocks.finalizeJobRun,
   markJobFailure: mocks.markJobFailure,
@@ -41,8 +45,9 @@ const job: ScheduledJob = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mocks.claimDueJobs.mockResolvedValue([job]);
+  vi.resetAllMocks();
+  mocks.claimDueJobs.mockResolvedValue([]).mockResolvedValueOnce([job]);
+  mocks.renewJobLease.mockResolvedValue(true);
   mocks.startJobRun.mockResolvedValue(7);
   mocks.finalizeJobRun.mockResolvedValue(undefined);
   mocks.markJobFailure.mockResolvedValue(undefined);
@@ -54,7 +59,7 @@ beforeEach(() => {
 describe("scheduler tick", () => {
   it("claims, runs, records and delivers a recurring job", async () => {
     const result = await tick(1_000, "worker-1");
-    expect(mocks.claimDueJobs).toHaveBeenCalledWith({ now: 1_000, workerId: "worker-1" });
+    expect(mocks.claimDueJobs).toHaveBeenCalledWith({ now: 1_000, workerId: "worker-1", limit: 1 });
     expect(mocks.finalizeJobRun).toHaveBeenCalledWith({
       runId: 7,
       job,
@@ -157,5 +162,38 @@ describe("scheduler tick", () => {
       nextRunAt: 1_000,
       disable: true,
     }));
+  });
+});
+
+describe("scheduler lease ownership", () => {
+  it("claims the next job only after the current job finishes", async () => {
+    const order: string[] = [];
+    mocks.claimDueJobs.mockReset().mockImplementationOnce(async () => { order.push("claim-1"); return [job]; })
+      .mockImplementationOnce(async () => { order.push("claim-2"); return []; });
+    mocks.runScheduledJobHandler.mockImplementation(async () => { order.push("execute"); return { text: "ok" }; });
+    await tick(1_000, "worker-1");
+    expect(order).toEqual(["claim-1", "execute", "claim-2"]);
+  });
+  it("does not execute or finalize a job after losing its lease", async () => {
+    mocks.renewJobLease.mockResolvedValue(false);
+    expect((await tick(1_000, "worker-1")).failed).toBe(1);
+    expect(mocks.runScheduledJobHandler).not.toHaveBeenCalled();
+    expect(mocks.finalizeJobRun).not.toHaveBeenCalled();
+  });
+  it("renews long agent tasks and forwards cancellation on lease loss", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    mocks.renewJobLease.mockResolvedValueOnce(true).mockResolvedValue(false);
+    mocks.runScheduledJobHandler.mockImplementation(async (_job, inputSignal: AbortSignal) => {
+      signal = inputSignal;
+      return new Promise((_resolve, reject) => inputSignal.addEventListener("abort", () => reject(inputSignal.reason), { once: true }));
+    });
+    try {
+      const result = tick(1_000, "worker-1");
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await result).failed).toBe(1);
+      expect(signal?.aborted).toBe(true);
+      expect(mocks.finalizeJobRun).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

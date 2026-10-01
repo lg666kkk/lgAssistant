@@ -78,6 +78,12 @@ function dependencies(input: {
   };
 }
 
+function writeSupabase(commit: () => Promise<{ data: unknown; error: unknown }>) {
+  const query = { update: vi.fn(), insert: vi.fn(), eq: vi.fn(), select: vi.fn(), maybeSingle: commit };
+  for (const name of ["update", "insert", "eq", "select"] as const) query[name].mockReturnValue(query);
+  return { from: vi.fn(() => query), query };
+}
+
 describe("context snapshot storage", () => {
   it("returns a Redis hit without querying Supabase", async () => {
     const value = snapshot();
@@ -122,13 +128,13 @@ describe("context snapshot storage", () => {
     const snapshotCache = cache({
       save: vi.fn(async () => { order.push("redis"); }),
     });
-    const upsert = vi.fn(async () => {
+    const commit = vi.fn(async () => {
       order.push("supabase");
-      return { error: null };
+      return { data: { id: "snapshot-1" }, error: null };
     });
     const deps = dependencies({
       cache: snapshotCache,
-      supabase: { from: vi.fn(() => ({ upsert })) },
+      supabase: writeSupabase(commit),
     });
 
     await saveContextSnapshot(snapshot(), deps);
@@ -153,11 +159,29 @@ describe("context snapshot storage", () => {
     const onCacheError = vi.fn();
     const deps = dependencies({
       cache: snapshotCache,
-      supabase: { from: vi.fn(() => ({ upsert: vi.fn(async () => ({ error: null })) })) },
+      supabase: writeSupabase(vi.fn(async () => ({ data: { id: "snapshot-1" }, error: null }))),
       onCacheError,
     });
 
     await expect(saveContextSnapshot(snapshot(), deps)).resolves.toBeUndefined();
     expect(onCacheError).toHaveBeenCalledWith("save", cacheError);
   });
+  it("rejects a stale version and invalidates its cached snapshot", async () => {
+    const snapshotCache = cache();
+    const supabase = writeSupabase(vi.fn(async () => ({ data: null, error: null })));
+    const deps = dependencies({ cache: snapshotCache, supabase });
+    await expect(saveContextSnapshot(snapshot(), deps)).rejects.toThrow("版本冲突");
+    expect(supabase.query.eq).toHaveBeenCalledWith("version", 1);
+    expect(snapshotCache.save).not.toHaveBeenCalled();
+    expect(snapshotCache.clear).toHaveBeenCalled();
+  });
+
+  it("does not upsert over an existing first snapshot", async () => {
+    const snapshotCache = cache();
+    const supabase = writeSupabase(vi.fn(async () => ({ data: null, error: { code: "23505" } })));
+    await expect(saveContextSnapshot({ ...snapshot(), version: 1 }, dependencies({ cache: snapshotCache, supabase }))).rejects.toThrow("版本冲突");
+    expect(supabase.query.insert).toHaveBeenCalled();
+    expect(supabase.query.update).not.toHaveBeenCalled();
+  });
+
 });

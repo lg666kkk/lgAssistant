@@ -172,6 +172,7 @@ async function updateSystemPrompt(input: {
 
 export function createChatSessionAdapter(): ChatSessionPort {
   return {
+    loadSnapshot: loadContextSnapshot,
     resolveLoopMessages,
     persistTurn: persistSessionTurn,
     createSnapshot: createContextSnapshot,

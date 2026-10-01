@@ -315,6 +315,16 @@ export async function markJobFailure(input: {
   if (!data) throw new Error("记录定时任务失败状态失败: 任务租约已失效");
 }
 
+export async function renewJobLease(input: { job: ScheduledJob; workerId: string }): Promise<boolean> {
+  const now = Date.now();
+  const { data, error } = await getSupabase().from("scheduled_jobs")
+    .update({ lease_until: now + 5 * 60_000 })
+    .eq("id", input.job.id).eq("lease_owner", input.workerId)
+    .gt("lease_until", now).select("id").maybeSingle();
+  if (error) throw new Error(`续租定时任务失败: ${error.message}`);
+  return Boolean(data);
+}
+
 export async function releaseJobLease(input: {
   job: ScheduledJob;
   workerId: string;

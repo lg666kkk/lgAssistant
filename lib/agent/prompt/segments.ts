@@ -1,5 +1,6 @@
 import {
   IDENTITY_CONTENT,
+  SAFETY_CONTENT,
   EVIDENCE_CITATION_POLICY,
 } from "./policies";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
@@ -11,6 +12,7 @@ export type PromptSegment = {
   title: string; // 给人看的段名，trace 详情页分块标题用
   content: string; // 段正文；空内容的段不会被构造出来
   priority: number;       // 越高越重要
+  required?: boolean; // 不可截断的系统规则；预算不足时显式失败
   tokenBudget?: number;   // 这个段最多允许多少 token
   source?: string;        // memory / system / runtime / user
   trust?: "trusted" | "user" | "external";
@@ -48,11 +50,16 @@ export function buildSegments(input: BuildSegmentsInput): PromptSegment[] {
       title: "身份",
       content: IDENTITY_CONTENT,
       priority: 100,
-      tokenBudget: 200,
+      required: true,
       source: "system",
       dynamic: false,
     });
   }
+
+  segments.push({
+    kind: "safety", title: "记忆与交互规则", content: SAFETY_CONTENT,
+    priority: 110, required: true, source: "system", trust: "trusted", dynamic: false,
+  });
 
   const userProfile = input.userProfile?.trim();
   if (userProfile) {

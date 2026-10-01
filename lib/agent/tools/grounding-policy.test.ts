@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBuiltinToolRegistry } from "./builtin";
+import { runTerminalCommandTool, terminalCommandIsForbidden, terminalCommandRequiresConfirmation } from "./terminal-command";
 import { executeToolCall } from "./tool-router";
 import { requiresCitedEvidence } from "./grounding-policy";
 
@@ -32,13 +33,32 @@ describe("tool grounding policy", () => {
       .toEqual(new Set(["authoritative_result", "cited_evidence"]));
   });
 
-  it("requires confirmation before a chat terminal command", async () => {
+  it("requires classification for terminal queries without model context", async () => {
     const registry = createBuiltinToolRegistry();
-    const result = await executeToolCall(registry, {
-      name: "run_terminal_command",
-      input: { command: "npx skills find finance" },
-    }, { userId: "user-1", scopeId: "chat-1" });
-    expect(result.metadata?.status).toBe("pending_confirmation");
+    expect(await terminalCommandRequiresConfirmation({ command: "npx skills find finance" })).toBe(true);
+    expect(await terminalCommandRequiresConfirmation({ command: 'npx -y skills find "image generation" 2>&1 | tail -40' })).toBe(true);
     expect(registry.get("run_terminal_command")?.runtime.sandboxed).toBe(true);
   });
+
+  it.each([
+    "npm install",
+    "cat package.json",
+    "pwd && cat /etc/passwd",
+    "git status > /tmp/status",
+    "npx skills add owner/repo",
+    'npx -y skills find "image generation" 2>&1 | head -40',
+    'npx -y skills find "image generation" 2>&1 | tail -40; pwd',
+  ])("keeps confirmation for unsafe terminal command: %s", async (command) => {
+    expect(await terminalCommandRequiresConfirmation({ command })).toBe(true);
+  });
+
+  it.each(["rm -rf /tmp/test", "rmdir /tmp/test", "sudo apt install x", "dd if=/dev/zero of=/tmp/x"])(
+    "blocks forbidden terminal command without confirmation: %s",
+    async (command) => {
+      expect(terminalCommandIsForbidden({ command })).toBe(true);
+      expect(await terminalCommandRequiresConfirmation({ command })).toBe(false);
+      const result = await runTerminalCommandTool.execute({ command }, { userId: "user-1", scopeId: "chat-1" });
+      expect(result.metadata).toMatchObject({ status: "blocked", reason: "forbidden_command" });
+    },
+  );
 });
