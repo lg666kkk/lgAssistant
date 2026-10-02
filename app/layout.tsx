@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ToastProvider } from '@web/components/ui/toast';
 import { AuthProvider } from '@web/lib/auth/use-auth';
 
 export const metadata: Metadata = {
@@ -16,9 +17,11 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body>
         <AuthProvider>
-          <div className="h-[100dvh] overflow-hidden bg-slate-950">
-            {children}
-          </div>
+          <ToastProvider>
+            <div className="h-[100dvh] overflow-hidden bg-slate-950">
+              {children}
+            </div>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

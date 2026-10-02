@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDeepSeekThinkingFetch, createStrategyDiagnosticFetch, toAIMessage } from "./model-provider";
+import { createDeepSeekThinkingFetch, createReasoningFetch, createStrategyDiagnosticFetch, toAIMessage } from "./model-provider";
+import type { LlmReasoningMode } from "@/lib/llm/types";
 
 describe("DeepSeek thinking request adapter", () => {
   it("logs strategy HTTP timing without request URLs or credentials", async () => {
@@ -119,5 +120,81 @@ describe("DeepSeek thinking request adapter", () => {
     await response.text();
 
     expect(reasoning).toEqual(["先分析", "再回答"]);
+  });
+});
+
+describe("multi-model thinking protocols", () => {
+  it.each([
+    ["auto-on", "qwen3.8-max", "enable_thinking", true],
+    ["auto-off", "qwen3.8-max", "enable_thinking", false],
+    ["auto-off", "deepseek-v4-flash", "thinking", { type: "disabled" }],
+  ] as const)("adapts %s to %s request parameters", async (mode, model, key, value) => {
+    const baseFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("ok"));
+    const adapted = createReasoningFetch(mode, baseFetch as typeof fetch);
+    await adapted("https://provider.example/chat/completions", { body: JSON.stringify({ model, messages: [] }) });
+    const body = JSON.parse(String(baseFetch.mock.calls[0][1]?.body));
+    expect(body[key]).toEqual(value);
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it.each([
+    ["qwen", { enable_thinking: true }],
+    ["qwen-off", { enable_thinking: false }],
+    ["thinking", { thinking: { type: "enabled" } }],
+    ["thinking-off", { thinking: { type: "disabled" } }],
+  ] as const)("sends only the selected %s protocol", async (mode, parameters) => {
+    const baseFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("ok"));
+    const adapted = createReasoningFetch(mode, baseFetch as typeof fetch);
+    await adapted("https://provider.example/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: "example", temperature: 0.7, messages: [] }),
+    });
+    const body = JSON.parse(String(baseFetch.mock.calls[0][1]?.body));
+    expect(body).toEqual({ model: "example", messages: [], ...parameters });
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.extra_body).toBeUndefined();
+  });
+
+  it("keeps the default request unchanged without forcing thinking off", async () => {
+    const baseFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("ok"));
+    const adapted = createReasoningFetch("none", baseFetch as typeof fetch);
+    const body = '{ "model": "default", "temperature": 0.7, "messages": [] }';
+    await adapted("https://provider.example/chat/completions", { method: "POST", body });
+    expect(baseFetch.mock.calls[0][1]?.body).toBe(body);
+  });
+
+  it.each(["none", "qwen", "thinking"] as LlmReasoningMode[])("preserves assistant reasoning for %s tool continuations", async (mode) => {
+    const baseFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("ok"));
+    const adapted = createReasoningFetch(mode, baseFetch as typeof fetch, [
+      { role: "assistant", content: "", reasoning_content: "先查资料" } as never,
+      { role: "user", content: "工具结果" },
+      { role: "assistant", content: "", reasoning_content: "再确认日期" } as never,
+    ]);
+    await adapted("https://provider.example/chat/completions", {
+      body: JSON.stringify({ messages: [
+        { role: "assistant", content: null, tool_calls: [{ id: "tool-1" }] },
+        { role: "tool", content: "工具结果" },
+        { role: "assistant", content: null, tool_calls: [{ id: "tool-2" }] },
+      ] }),
+    });
+    const body = JSON.parse(String(baseFetch.mock.calls[0][1]?.body));
+    expect(body.messages[0].reasoning_content).toBe("先查资料");
+    expect(body.messages[1].reasoning_content).toBeUndefined();
+    expect(body.messages[2].reasoning_content).toBe("再确认日期");
+    if (mode === "none") {
+      expect(body.thinking).toBeUndefined();
+      expect(body.enable_thinking).toBeUndefined();
+    }
+  });
+
+  it.each(["none", "qwen", "thinking"] as LlmReasoningMode[])("observes streaming reasoning even in %s mode", async (mode) => {
+    const baseFetch = vi.fn(async () => new Response('data: {"choices":[{"delta":{"reasoning_content":"分析中"}}]}\n\ndata: [DONE]\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const reasoning: string[] = [];
+    const adapted = createReasoningFetch(mode, baseFetch as typeof fetch, [], (text) => reasoning.push(text));
+    const response = await adapted("https://provider.example/chat/completions", { body: '{"messages":[]}' });
+    expect(await response.text()).toContain("reasoning_content");
+    expect(reasoning).toEqual(["分析中"]);
   });
 });

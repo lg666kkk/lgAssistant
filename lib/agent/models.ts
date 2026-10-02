@@ -67,6 +67,10 @@ export function getModelContextWindowTokens(model: ChatModelId): number {
   }
 }
 
+export function getModelMaxOutputTokens(model: ChatModelId): number {
+  return getRememberedModelMetadata(model)?.maxOutputTokens ?? 4096;
+}
+
 export function resolveChatModel(model: unknown): ChatModelId {
   return chatModelOptions.some((option) => option.id === model)
     ? (model as ChatModelId)

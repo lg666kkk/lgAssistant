@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,7 +23,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { ConfirmDialog, Message } from "@web/components/ui/feedback";
+import { ConfirmDialog } from "@web/components/ui/feedback";
 import { RecurrenceFields } from "./recurrence-fields";
 import { defaultRecurrence, describeCron, recurrenceFromCron, recurrenceToCron, type Recurrence } from "../model/recurrence";
 
@@ -741,8 +743,8 @@ export function ScheduleCenter() {
               </button>
             </header>
             {tabBar}
-            {error && <Message className="mt-4" tone="error">{error}</Message>}
-            {notice && <Message className="mt-4" tone="success">{notice}</Message>}
+            {error && <ToastNotice tone="error">{error}</ToastNotice>}
+            {notice && <ToastNotice tone="success">{notice}</ToastNotice>}
             {activeTab === "tasks" ? (
               <TaskList
                 jobs={jobs}
@@ -946,8 +948,8 @@ function TaskDetail(props: {
         </div>
       </header>
 
-      {props.error && <div role="alert" className="mt-4 border-l-2 border-rose-700 px-3 py-2 text-sm text-rose-300">{props.error}</div>}
-      {props.notice && <div className="mt-4 border-l-2 border-emerald-700 px-3 py-2 text-sm text-emerald-300">{props.notice}</div>}
+      {props.error && <ToastNotice tone="error">{props.error}</ToastNotice>}
+      {props.notice && <ToastNotice tone="success">{props.notice}</ToastNotice>}
 
       <div className="grid max-w-3xl gap-5 py-6">
         <label className="grid gap-1.5">
@@ -1202,11 +1204,7 @@ function RunHistory(props: {
         </div>
       </header>
 
-      {props.error && (
-        <div role="alert" className="mt-4 border-l-2 border-rose-700 px-3 py-2 text-sm text-rose-300">
-          {props.error}
-        </div>
-      )}
+      {props.error && <ToastNotice tone="error">{props.error}</ToastNotice>}
 
       {props.loading ? (
         <div className="py-16 text-center text-sm text-slate-500">加载运行记录...</div>

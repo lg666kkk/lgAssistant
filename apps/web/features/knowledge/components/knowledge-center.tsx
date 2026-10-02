@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { ConfirmDialog, Message } from "@web/components/ui/feedback";
+import { ConfirmDialog } from "@web/components/ui/feedback";
 import { NotionConnectionPanel } from "./notion-connection-panel";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
@@ -802,8 +804,8 @@ export function KnowledgeCenter() {
                   />
                   <div className="mt-3 flex min-h-9 flex-wrap items-center justify-between gap-2">
                     <div className="text-xs">
-                      {profileError && <span className="text-rose-300">{profileError}</span>}
-                      {profileNotice && <span className="text-emerald-300">{profileNotice}</span>}
+                      {profileError && <ToastNotice tone="error">{profileError}</ToastNotice>}
+                      {profileNotice && <ToastNotice tone="success">{profileNotice}</ToastNotice>}
                     </div>
                     <div className="flex items-center gap-2">
                       <button

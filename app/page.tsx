@@ -110,7 +110,6 @@ export default function Home() {
   const [requestedTraceId, setRequestedTraceId] = useState<string | null>(null);
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [sessionDialog, setSessionDialog] = useState<SessionDialogState | null>(null);
-  const [selectedModel, setSelectedModel] = useState<ChatModelId>("");
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
@@ -131,9 +130,27 @@ export default function Home() {
     previousUserId.current = user?.id;
   }, [user?.id]);
 
+  const configuredModels = useMemo(
+    () => (user ? llmCatalog?.models ?? [] : []).filter((model) => model.enabled),
+    [llmCatalog?.models, user],
+  );
+  const selectedModel = configuredModels.find((model) => model.id === activeSession?.selectedModelId)?.id
+    ?? configuredModels.find((model) => model.id === llmCatalog?.preferences.defaultModelId)?.id
+    ?? configuredModels[0]?.id ?? "";
+  const setSelectedModel = (model: ChatModelId) => {
+    if (!activeSession) return;
+    void activeSession.selectModel(model).catch((error) => {
+      console.error("保存聊天模型失败:", error);
+      setAttachmentError("模型已切换，但保存失败，请稍后重试");
+    });
+    rerender();
+  };
   const { loading, streaming, contextUsage } = activeSession || {};
   const isAgentRunning = Boolean(loading || streaming);
   const previewContextUsage = useContextPreview({
+    userId: user?.id,
+    contextRevision: activeSession?.contextRevision ?? 0,
+    modelConfigKey: JSON.stringify(configuredModels.find((model) => model.id === selectedModel)),
     enabled: Boolean(
       user
       && activeSession
@@ -154,10 +171,6 @@ export default function Home() {
   );
   const attachmentsReady = attachments.every(
     (attachment) => attachment.uploadStatus === "ready",
-  );
-  const configuredModels = useMemo(
-    () => (user ? llmCatalog?.models ?? [] : []).filter((model) => model.enabled),
-    [llmCatalog?.models, user],
   );
   useEffect(() => {
     if (window.matchMedia("(max-width: 767px)").matches) {
@@ -195,14 +208,6 @@ export default function Home() {
     sessionScrollPositionsRef.current.set(activeId, container.scrollTop);
   }, [activeCapability, activeId, historyLoaded]);
 
-  useEffect(() => {
-    if (llmCatalogLoading) return;
-    if (configuredModels.some((model) => model.id === selectedModel)) return;
-    const preferred = configuredModels.find((model) =>
-      model.id === llmCatalog?.preferences.defaultModelId) ?? configuredModels[0];
-    setSelectedModel(preferred?.id ?? "");
-  }, [configuredModels, llmCatalog?.preferences.defaultModelId, llmCatalogLoading, selectedModel]);
-
   const handleSend = async () => {
     if (!requireLogin()) return;
     if (
@@ -231,6 +236,7 @@ export default function Home() {
     setInput("");
     setAttachments([]);
     setAttachmentError(null);
+    setSelectedModel(selectedModel);
     moveSessionToTop(activeSession.id);
     requestAnimationFrame(() => inputRef.current?.focus());
     await activeSession.send(text, rerender, {
@@ -643,7 +649,8 @@ export default function Home() {
               onWebSearchEnabledChange={setWebSearchEnabled}
               contextUsage={isAgentRunning
                 ? contextUsage
-                : previewContextUsage ?? contextUsage}
+                : previewContextUsage.usage}
+              contextError={isAgentRunning ? null : previewContextUsage.error}
               selectedModel={selectedModel}
               models={configuredModels}
               modelsLoading={llmCatalogLoading}

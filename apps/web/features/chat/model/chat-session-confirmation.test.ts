@@ -43,6 +43,18 @@ function setup() {
   return { session, manager };
 }
 describe("confirmation UI flow", () => {
+  it("does not persist leaked protocol in a continued reply", async () => {
+    const { session, manager } = setup();
+    vi.mocked(fetchEventSource).mockImplementationOnce(async (_url, options) => {
+      for (const event of [
+        { type: "text", content: "正在查询。<｜DSML｜calls><｜DSML｜invoke name=\"read_tool_artifact\">secret" },
+        { type: "done" },
+      ]) options!.onmessage!({ id: "", event: "", data: JSON.stringify(event) });
+    });
+    await session.confirmToolCall(0, 0, vi.fn());
+    expect(session.messages[0].content).toBe("请确认\n\n正在查询。");
+    expect(manager.updateAssistantMessage).toHaveBeenCalledWith("message", "请确认\n\n正在查询。", expect.any(Object));
+  });
   it("streams the continued response and only sends a server handle", async () => {
     const { session, manager } = setup();
     vi.mocked(fetchEventSource).mockImplementation(async (_url, options) => {

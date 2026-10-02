@@ -10,6 +10,8 @@ import {
   type RetrievalPlan,
 } from "@/lib/agent/rag/types";
 import { createSearchNotesTool } from "./search-notes";
+import type { EvidenceBundle } from "@/lib/agent/rag/types";
+import { countTokensFromText } from "@/lib/agent/runtime/tokenizer";
 
 function searchResult(overrides: Partial<SearchResult> = {}): SearchResult {
   return {
@@ -197,7 +199,7 @@ describe("search_notes bounded evidence loop", () => {
         }),
         searchResult({
           id: "chunk-2",
-          content: "同一父段落里的另一个 child。",
+          content: "RAG 同一父段落里的另一个 child。",
           parentKey: "page-1:0:100",
           parentContent,
           embedding: [0, 1],
@@ -358,5 +360,68 @@ describe("search_notes bounded evidence loop", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+
+describe("visible evidence regression", () => {
+  it("retains the matched child at the end of a long parent", async () => {
+    const child = "退款窗口为 30 天，退款审批由财务负责人处理。";
+    const tool = createTestTool(vi.fn().mockResolvedValue(response([searchResult({
+      content: child, parentContent: "无关背景。".repeat(3000) + child, parentKey: "refund-parent",
+    })], 0.5)));
+    const result = await tool.execute({ query: "退款窗口 30 天" }, { userId: "u" });
+    expect(result.content).toContain(child);
+    expect(countTokensFromText(result.content)).toBeLessThanOrEqual(2400);
+    const data = result.data as { evidenceBundle: EvidenceBundle; results: SearchResult[] };
+    expect(data.evidenceBundle.evidences[0].content).toContain(child);
+    expect(data.results[0].content).toBe(data.evidenceBundle.evidences[0].content);
+    expect(result.metadata?.evidenceSufficient).toBe(true);
+  });
+
+  it("downgrades sufficiency when an oversized child loses the actual answer", async () => {
+    const tool = createTestTool(vi.fn().mockResolvedValue(response([searchResult({
+      content: "alpha ".repeat(8000) + " beta gamma delta epsilon",
+    })], 0.5)));
+    const result = await tool.execute({ query: "alpha beta gamma delta epsilon" }, { userId: "u" });
+    const bundle = (result.data as { evidenceBundle: EvidenceBundle }).evidenceBundle;
+    expect(bundle.grade.sufficient).toBe(false);
+    expect(bundle.grade.queryCoverage).toBe(0.2);
+    expect(result.metadata?.evidenceSufficient).toBe(false);
+    expect(result.content).toContain("整体证据充分性不足");
+    expect(countTokensFromText(result.content)).toBeLessThanOrEqual(2400);
+  });
+
+  it("removes evidence that loses all query support after truncation", async () => {
+    const tool = createTestTool(vi.fn().mockResolvedValue(response([searchResult({
+      content: "irrelevant ".repeat(8000) + " alpha beta gamma",
+    })], .5)));
+    const result = await tool.execute({ query: "alpha beta gamma" }, { userId: "u" });
+    const data = result.data as { results: SearchResult[]; evidenceBundle: EvidenceBundle };
+    expect(data.results).toHaveLength(0);
+    expect(data.evidenceBundle.evidences).toHaveLength(0);
+    expect(data.evidenceBundle.grade.acceptedEvidenceIds).toHaveLength(0);
+    expect(result.content).toBe("没有找到足以支持回答的个人知识库证据");
+  });
+
+  it("preserves multiple matched children from a deduplicated parent", async () => {
+    const first = searchResult({ content: "alpha evidence", parentKey: "shared", parentContent: "alpha evidence beta evidence" });
+    const second = searchResult({ id: "chunk-2", content: "beta evidence", parentKey: "shared", parentContent: first.parentContent });
+    const tool = createTestTool(vi.fn().mockResolvedValue(response([first, second], 0.5)));
+    const result = await tool.execute({ query: "alpha beta" }, { userId: "u" });
+    expect(result.content).toContain("alpha evidence");
+    expect(result.content).toContain("beta evidence");
+    expect((result.data as { evidenceBundle: EvidenceBundle }).evidenceBundle.evidences).toHaveLength(1);
+  });
+
+  it("rechecks every multi-hop subquestion against visible content", async () => {
+    const plan = retrievalPlan(["alpha", "beta gamma delta epsilon"]);
+    plan.queryType = "multi-hop";
+    const search = vi.fn().mockResolvedValueOnce(response([searchResult({ content: "alpha" })], .5))
+      .mockResolvedValueOnce(response([searchResult({ id: "chunk-2", pageId: "page-2", content: "beta ".repeat(8000) + " gamma delta epsilon" })], .5));
+    const result = await createTestTool(search, plan).execute({ query: "alpha beta gamma delta epsilon" }, { userId: "u" });
+    const bundle = (result.data as { evidenceBundle: EvidenceBundle }).evidenceBundle;
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(bundle.grade).toMatchObject({ sufficient: false, reason: "missing_subquestion_evidence" });
   });
 });

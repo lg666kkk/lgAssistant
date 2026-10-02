@@ -70,6 +70,8 @@ export class ChatSession {
   streamingMessage: Message | null = null;
   error: string | null = null;
   contextUsage: ContextUsageEventData | null = null;
+  selectedModelId: ChatModelId | null = null;
+  contextRevision = 0;
   historyLoading = false;
   historyLoaded: boolean;
   hasOlderMessages = false;
@@ -90,12 +92,31 @@ export class ChatSession {
     this.sessionManager = sessionManager ?? new SessionManager(userId);
   }
 
+  private modelSaveQueue: Promise<void> = Promise.resolve();
+  private modelSaveFailed = false;
+
+  selectModel(model: ChatModelId): Promise<void> {
+    if (this.selectedModelId === model && !this.modelSaveFailed) return this.modelSaveQueue;
+    this.selectedModelId = model;
+    this.modelSaveFailed = false;
+    this.contextRevision += 1;
+    if (this.isNewSession) return Promise.resolve();
+    // Serialize rapid changes so the persisted preference matches the latest selection.
+    const save = this.modelSaveQueue.catch(() => {}).then(() =>
+      this.sessionManager.updateSessionModel(this.id, model));
+    this.modelSaveQueue = save.catch((error) => {
+      this.modelSaveFailed = true;
+      throw error;
+    });
+    return this.modelSaveQueue;
+  }
+
   private mapDatabaseMessage(msg: import("./session-manager").Message): Message {
     return {
       id: msg.id,
       createdAt: msg.created_at,
       role: msg.role,
-      content: msg.content,
+      content: msg.role === "assistant" ? sanitizeModelText(msg.content) : msg.content,
       attachments: msg.metadata?.attachments,
       sources: msg.sources,
       toolCalls: msg.metadata?.toolCalls,
@@ -123,6 +144,7 @@ export class ChatSession {
         this.messages = dbMessages.map((message) => this.mapDatabaseMessage(message));
         this.hasOlderMessages = dbMessages.length === ChatSession.MESSAGE_PAGE_SIZE;
         this.historyLoaded = true;
+        this.contextRevision += 1;
       } catch (error) {
         console.error("加载会话失败:", error);
       } finally {
@@ -205,6 +227,7 @@ export class ChatSession {
     const attachments = options.attachments ?? [];
 
     this.loading = true;
+    this.contextUsage = null;
     this.requestStartedAt = Date.now();
     this.currentModel = options.model ?? null;
     this.manuallyAborted = false;
@@ -216,7 +239,7 @@ export class ChatSession {
     // 如果是新会话，先创建数据库记录
     if (this.isNewSession) {
       try {
-        await this.sessionManager.createSession(this.title, this.id);
+        await this.sessionManager.createSession(this.title, this.id, this.selectedModelId ?? options.model);
         this.isNewSession = false;
       } catch (error) {
         console.error("创建会话失败:", error);
@@ -424,6 +447,7 @@ export class ChatSession {
       this.loading = false;
       this.streaming = false;
       this.requestStartedAt = null;
+      this.contextRevision += 1;
       this.abortController = null;
       onUpdate();
       const next = this.pendingRequests.shift();
@@ -513,6 +537,7 @@ export class ChatSession {
       onUpdate(); return;
     }
     this.loading = true; this.streaming = true; this.error = null;
+    this.contextUsage = null;
     this.requestStartedAt = Date.now();
     this.abortController = new AbortController();
     onUpdate();
@@ -522,6 +547,8 @@ export class ChatSession {
     try {
       const apply = (event: AgentEvent) => {
         if (event.type === "error") throw new Error(event.message || event.error);
+
+        if (event.type === "context_usage") this.contextUsage = event.usage;
 
         if (event.type === "tool_call") {
           const old = this.messages.flatMap(item => item.toolCalls ?? []).find(call => call.id === event.toolCall.id);
@@ -567,7 +594,10 @@ export class ChatSession {
         onmessage: event => {
           if (!event.data) return;
           const data = JSON.parse(event.data) as AgentEvent;
-          if (data.type === "done") completed = true;
+          if (data.type === "done") {
+            completed = true;
+            followup.content = sanitizeModelText(followup.content);
+          }
           apply(data);
           onUpdate();
         },
@@ -578,6 +608,7 @@ export class ChatSession {
       this.error = error instanceof Error && error.name !== "AbortError" ? error.message : "确认请求已中止，远端操作可能已执行。再次确认将查询已有结果，不会重复执行。";
     } finally {
       try {
+        message.content = sanitizeModelText(message.content);
         if (this.requestStartedAt !== null) message.durationMs = Math.max(0, Date.now() - this.requestStartedAt);
         const metadata = { toolCalls: message.toolCalls, modelUsages: message.modelUsages, reasoning: message.reasoning, plan: message.plan, planSteps: message.planSteps, durationMs: this.requestStartedAt === null ? undefined : Math.max(0, Date.now() - this.requestStartedAt) };
         if (message.id) {
@@ -588,6 +619,7 @@ export class ChatSession {
         }
       } catch { this.error = this.error || "执行结果已返回，但消息保存失败，请稍后刷新核实。"; }
       if (this.requestStartedAt !== null) message.durationMs = Math.max(0, Date.now() - this.requestStartedAt);
+      this.contextRevision += 1;
       this.loading = false; this.streaming = false; this.streamingMessage = null; this.requestStartedAt = null; this.abortController = null; onUpdate();
     }
   }

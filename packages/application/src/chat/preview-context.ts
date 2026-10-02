@@ -1,22 +1,14 @@
+import { buildChatPrompt, selectChatTools } from "./request-context";
+import { prepareRequestContext } from "@/lib/agent/runtime/request-context";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ContextUsageEventData } from "@repo/contracts";
-import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import {
   buildRetrievalPlan,
-  filterToolsForRetrievalRoute,
 } from "@/lib/agent/rag/retrieval-router";
 import {
   buildContextUsageBreakdown,
-  estimateModelRequestTokens,
 } from "@/lib/agent/runtime/context-usage";
-import {
-  AGENT_LOOP_OUTPUT_RESERVE,
-  AGENT_LOOP_TOKEN_BUDGET,
-  CONTEXT_COMPACTION_WINDOW_CAP,
-} from "@/lib/agent/runtime/limits";
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
-import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
-import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import type { ChatApplicationDependencies } from "./ports";
 import { openExternalToolSession } from "../mcp/session";
 
@@ -155,20 +147,12 @@ export async function previewChatContextUseCase(
     // Preview only needs schemas; it never executes remote tools.
     await external.close();
   }
-  const routeToolDefinitions = filterToolsForRetrievalRoute(
-    toolRegistry.list(),
-    retrievalPlan.route,
-    { webEnabled: webSearchEnabled },
-  ).filter((tool) =>
-    memoryConfig?.enabled
-    || !["recall_memory", "search_memory_history"].includes(tool.name));
-  const tools = selectedModel.supportsTools
-    ? filterToolsForUserIntent(
-        toolRegistry.listForModel(routeToolDefinitions),
-        draftText,
-      )
-    : [];
-  const prompt = buildPromptPipe({
+  const { definitions: routeToolDefinitions, tools } = selectChatTools({
+    registry: toolRegistry, retrievalPlan, webSearchEnabled,
+    memoryEnabled: Boolean(memoryConfig?.enabled), supportsTools: selectedModel.supportsTools,
+    query: draftText,
+  });
+  const prompt = buildChatPrompt({
     userMessage: draftText,
     userProfile: userProfile.content,
     userProfileMetadata: {
@@ -178,24 +162,16 @@ export async function previewChatContextUseCase(
       contentChars: userProfile.content.length,
     },
     webSearchEnabled,
-    toolOrchestration: renderToolOrchestrationPolicy(
-      routeToolDefinitions,
-      retrievalPlan,
-    ),
+    toolDefinitions: routeToolDefinitions,
     retrievalPlan,
     maxTokens: 4_200,
   });
-  const estimatedTokens = estimateModelRequestTokens({
-    messages,
-    system: prompt.systemPrompt,
-    tools,
+  const prepared = prepareRequestContext({
+    messages, system: prompt.systemPrompt, tools,
+    contextWindow: selectedModel.contextWindow, maxOutputTokens: selectedModel.maxOutputTokens,
   });
+  const { estimatedTokens, workingWindowTokens } = prepared;
   const modelWindowTokens = selectedModel.contextWindow;
-  const workingWindowTokens = Math.min(
-    modelWindowTokens,
-    CONTEXT_COMPACTION_WINDOW_CAP,
-  );
-  const requiredTokens = estimatedTokens + AGENT_LOOP_OUTPUT_RESERVE;
 
   return {
     model: selectedModel.id,
@@ -204,22 +180,18 @@ export async function previewChatContextUseCase(
     workingWindowTokens,
     modelWindowTokens,
     remainingTokens: Math.max(0, workingWindowTokens - estimatedTokens),
+    availableInputTokens: prepared.availableInputTokens,
+    outputReserveTokens: prepared.outputReserveTokens,
+    safetyMarginTokens: prepared.safetyMarginTokens,
+    compacted: prepared.compacted,
+    canFit: prepared.canFit,
     phase: "before_model",
     breakdown: buildContextUsageBreakdown({
-      messages,
+      messages: prepared.messages,
       system: prompt.systemPrompt,
       tools,
       systemSegments: prompt.segments,
       totalTokens: estimatedTokens,
     }),
-    runBudget: {
-      spentTokens: 0,
-      maxTokens: AGENT_LOOP_TOKEN_BUDGET,
-      remainingTokens: AGENT_LOOP_TOKEN_BUDGET,
-      nextRequestTokens: estimatedTokens,
-      outputReserveTokens: AGENT_LOOP_OUTPUT_RESERVE,
-      requiredTokens,
-      canContinue: requiredTokens <= AGENT_LOOP_TOKEN_BUDGET,
-    },
   };
 }

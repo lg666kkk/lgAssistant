@@ -203,3 +203,12 @@ RAG_RERANK_API_KEY=
 - `headingPath` 来自结构化分块，对 Markdown-like Notion 文本效果较好；PDF/网页导入需要各自的 loader。
 
 完整设计、迁移和消融方法见 `docs/rag/rag-retrieval-quality.md`。
+
+## 2026-10-02 检索正确性更新
+
+- 中文关键词改为统一双字词项，数据库使用加权 `lexical_vector` 和 GIN 索引；查询不再通过正文 `%LIKE%` 逐条扫描。部署顺序：correctness 迁移 → `20261002-rag-lexical-search.sql`。
+- 投喂上下文优先保留命中 child，同一 parent 的多个命中 child 合并后再扩展背景，最终保持 2400 token 上限。
+- 证据充分性依据正文覆盖率与独立来源判断，高相似度、双路命中和重复 child 数量均不再单独构成充分证据；保留数字和引号实体约束。
+- parent 去重与裁剪后重新评分，多跳问题逐个检查最终可见证据；不足时在工具正文提示保守引用。未通过最终最低相关性门槛的来源会被移除并重新分配预算。
+- 检索结果缓存使用独立策略版本使旧候选失效，EvidenceBundle 协议版本保持兼容。回答校验仍按既有产品策略仅记录 Trace。
+- 新增 36 条来源标注的离线回归与 `test:rag-context`，真实语义质量仍需用户知识库的人工标签和线上评估。

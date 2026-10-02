@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { SEARCH_PROVIDER_DEFINITIONS } from "@/lib/search/catalog";
 import { useAuth } from "@web/lib/auth/use-auth";
 
@@ -16,7 +18,6 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { Message } from "@web/components/ui/feedback";
 import type {
   SearchProviderId,
   UserSearchCatalog,
@@ -154,7 +155,7 @@ export function SearchEngineCenter() {
           </button>
         </div>
 
-        {(error || notice) && <Message className="mt-5" tone={error ? "error" : "success"}>{error ?? notice}</Message>}
+        {(error || notice) && <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>}
 
         {loading ? (
           <div className="flex h-64 items-center justify-center text-slate-500">
@@ -272,16 +273,10 @@ export function SearchEngineCenter() {
                       官方文档 <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                   </div>
-                  {testStates[provider.id] && (
-                    <div className={`mt-3 rounded-md border px-2.5 py-2 text-xs ${
-                      testStates[provider.id]?.status === "ok"
-                        ? "border-emerald-900/60 bg-emerald-950/20 text-emerald-300"
-                        : testStates[provider.id]?.status === "error"
-                          ? "border-rose-900/60 bg-rose-950/20 text-rose-300"
-                          : "border-slate-800 bg-slate-950/50 text-slate-400"
-                    }`}>
+                  {testStates[provider.id] && testStates[provider.id]?.status !== "testing" && (
+                    <ToastNotice tone={testStates[provider.id]?.status === "ok" ? "success" : "error"}>
                       {testStates[provider.id]?.message}
-                    </div>
+                    </ToastNotice>
                   )}
                 </article>
               ))}

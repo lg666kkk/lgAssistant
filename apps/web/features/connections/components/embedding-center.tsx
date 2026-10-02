@@ -1,12 +1,13 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   BrainCircuit,
-  Check,
   Database,
   FileSearch,
   KeyRound,
@@ -17,7 +18,6 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { Message } from "@web/components/ui/feedback";
 import type {
   EmbeddingProviderId,
   UserEmbeddingConfigView,
@@ -227,7 +227,7 @@ export function EmbeddingCenter() {
           </button>
         </div>
 
-        {(error || notice) && <Message className="mt-5" tone={error ? "error" : "success"}>{error ?? notice}</Message>}
+        {(error || notice) && <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>}
 
         {loading ? (
           <div className="flex h-64 items-center justify-center text-slate-500">
@@ -339,17 +339,7 @@ export function EmbeddingCenter() {
                   {testState?.tone === "testing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                   测试连接
                 </button>
-                {testState && (
-                  <div className={`flex items-center gap-2 text-sm ${
-                    testState.tone === "ok"
-                      ? "text-emerald-300"
-                      : testState.tone === "error" ? "text-rose-300" : "text-slate-400"
-                  }`}>
-                    {testState.tone === "ok" && <Check className="h-4 w-4" />}
-                    {testState.tone === "error" && <AlertCircle className="h-4 w-4" />}
-                    {testState.text}
-                  </div>
-                )}
+                {testState && testState.tone !== "testing" && <ToastNotice tone={testState.tone === "ok" ? "success" : "error"}>{testState.text}</ToastNotice>}
               </div>
             </section>
 

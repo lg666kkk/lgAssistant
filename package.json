@@ -29,6 +29,8 @@
     "test:eval": "vitest run lib/agent/eval",
     "eval:langfuse": "tsx scripts/langfuse-eval.ts",
     "test:rag": "tsx scripts/rag-eval.ts",
+    "test:rag-context": "tsx scripts/rag-eval.ts --tool-context",
+    "test:rag-regression": "vitest run lib/agent/eval/rag-regression.test.ts",
     "test:rag-ablation": "tsx scripts/rag-ablation.ts",
     "test:rag-groundedness": "tsx scripts/rag-groundedness-eval.ts",
     "test:rag-routing": "tsx scripts/rag-routing-eval.ts",

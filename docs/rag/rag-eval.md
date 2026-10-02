@@ -180,3 +180,40 @@ error
 是不是 top results 明显跑偏
 是不是检索耗时过高
 ```
+
+## P1 回归与最终上下文评估
+
+```bash
+# 36 条固定召回、带来源标签的离线案例，不依赖真实 Notion/API。
+npm run test:rag-regression
+# 真实知识库：评估 search_notes 最终可见的正文，而不只评估粗检索结果。
+npm run test:rag-context -- --user-id <uuid> --dataset <labelled-cases.json> --out reports/rag-eval/context.json
+```
+
+离线案例在 `lib/agent/eval/datasets/rag-regression.ts`，覆盖直接检索、中文词项、专有名词、相似主题、多跳与无答案。来源字段引用项目代码；固定召回分数刻意包含高相似度的无关候选，用来检查融合、MMR、parent 扩展、裁剪和证据门槛。它们不衡量真实 embedding 的语义召回率，也不替代用户知识库人工标注。
+
+真实用例 JSON 的格式与 `RagEvalCase` 一致。正例应使用知识库实际 `pageId`，多跳场景可用 `expectedAllPageIds` 要求每篇来源都存在。`expectedEvidenceSufficient` 用于检测无答案/部分覆盖是否被错误判为充分，仅支持 `--tool-context` 模式。关键词检查使用最终可见正文；报告新增 `sufficiencyAccuracy` 和 `maxContextTokens`。原来的 `test:rag` 保留原始检索评估，用于召回消融；两种模式分别维护 baseline。
+
+```json
+[
+  {
+    "id": "cross-document-comparison",
+    "question": "比较我笔记里的两个方案",
+    "expectedAllPageIds": ["替换为真实页面ID-A", "替换为真实页面ID-B"],
+    "expectedKeywords": ["替换为答案关键内容"],
+    "expectedEvidenceSufficient": true,
+    "category": "multi-hop"
+  }
+]
+```
+
+中文索引迁移见 `docs/schemas/migrations/20261002-rag-lexical-search.sql`，在 correctness 迁移之后执行。该迁移新增并回填 `lexical_vector` 生成列和 GIN 索引；已有文档无需重新调用 embedding。索引按正文/标题/heading 生成一致的中文双字词项，标题和 heading 加权。迁移会对表执行 DDL，生产应用前应安排适合数据量的维护窗口。
+
+SQL 回归脚本可使用独立的 PGlite 临时运行时，不需要更改项目依赖或连接生产库：
+
+```bash
+npm install --prefix /tmp/personal-assistant-rag-sql-check @electric-sql/pglite@0.5.8 --no-audit --no-fund
+node --import tsx scripts/rag-lexical-sql-check.mjs --pglite-path /tmp/personal-assistant-rag-sql-check/node_modules/@electric-sql/pglite/dist/index.js
+```
+
+该脚本检查迁移重复执行、中文召回、JS/SQL 词项一致性、GIN 执行计划、租户隔离和过滤。它使用独立数据库与文本向量占位字段，不测试 pgvector/HNSW。

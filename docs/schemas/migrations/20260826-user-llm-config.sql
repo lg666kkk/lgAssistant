@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS user_llm_models (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT user_llm_models_reasoning_check CHECK (reasoning_mode IN ('none', 'deepseek')),
+  CONSTRAINT user_llm_models_reasoning_check CHECK (reasoning_mode IN ('none', 'auto-on', 'auto-off', 'deepseek', 'deepseek-off', 'qwen', 'qwen-off', 'thinking', 'thinking-off')),
   CONSTRAINT user_llm_models_model_id_length CHECK (char_length(model_id) BETWEEN 1 AND 180),
   CONSTRAINT user_llm_models_display_name_length CHECK (char_length(display_name) BETWEEN 1 AND 120),
   CONSTRAINT user_llm_models_context_window_check CHECK (context_window BETWEEN 4096 AND 2000000),

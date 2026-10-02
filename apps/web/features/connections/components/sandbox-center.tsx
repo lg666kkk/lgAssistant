@@ -1,7 +1,9 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, Save, Zap } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LoaderCircle, Save, Zap } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
 
 type E2BConfig = {
@@ -86,11 +88,7 @@ export function SandboxCenter() {
         <div className="border-b border-slate-800 pb-5">
           <h2 className="text-xl font-semibold text-slate-100">沙盒环境</h2>
         </div>
-        {notice && (
-          <div role="status" className={`mt-5 flex items-center gap-2 rounded-md border px-3 py-2.5 text-sm ${notice.ok ? "border-emerald-900/70 text-emerald-300" : "border-rose-900/70 text-rose-300"}`}>
-            {notice.ok && <CheckCircle2 className="h-4 w-4 shrink-0" />}{notice.text}
-          </div>
-        )}
+        {notice && <ToastNotice tone={notice.ok ? "success" : "error"}>{notice.text}</ToastNotice>}
         {loading ? (
           <div className="flex h-48 items-center justify-center gap-2 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" />加载沙盒配置</div>
         ) : (

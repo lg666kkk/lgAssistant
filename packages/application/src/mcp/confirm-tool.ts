@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 import { createTrace, finalizeAnswerTrace } from "@/lib/agent/runtime/trace";
+import { ModelToolProtocolError } from "@/lib/agent/runtime/output-sanitizer";
 import {
   getToolCallKey,
   enqueueSources,
@@ -357,14 +358,15 @@ export async function confirmTool(
                 resumed.stopReason !== "error";
               response = { events, pending: false };
             }
-          } catch {
+          } catch (error) {
             trace.completed = false;
             trace.stopReason = "error";
             response = {
               events,
               pending: false,
-              continuationError:
-                "工具结果已记录，但后续生成失败。请发送新消息继续，勿重复执行该操作。",
+              continuationError: error instanceof ModelToolProtocolError
+                ? `${error.message} 工具结果已保留，可以发送新消息继续。`
+                : "工具结果已记录，但后续生成失败。请发送新消息继续，勿重复执行该操作。",
             };
           }
         }

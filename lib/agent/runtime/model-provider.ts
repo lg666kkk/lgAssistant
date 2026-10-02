@@ -1,3 +1,4 @@
+import { prepareRequestContext, assertRequestContextFits } from "./request-context";
 import type { ChatModelId } from "@/lib/agent/models";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
@@ -7,10 +8,11 @@ import {
   type LanguageModelUsage,
 } from "ai";
 import type Anthropic from "@anthropic-ai/sdk";
-import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { createModelTextFilter, sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { resolveUserLlmModel } from "@/lib/llm/config-service";
 import { createSafeProviderFetch } from "@/lib/llm/url-safety";
-import type { ResolvedUserLlmModel } from "@/lib/llm/types";
+import type { LlmReasoningMode, ResolvedUserLlmModel } from "@/lib/llm/types";
+import { resolveThinkingMode } from "@/lib/llm/reasoning";
 import type { ModelPricingCnyPerMillionTokens } from "@/lib/agent/models";
 import {
   SPAN_LABEL_METADATA_KEY,
@@ -45,7 +47,7 @@ type DeepSeekAssistantMessage = ModelMessage & {
   reasoning_content?: string;
 };
 
-function isDeepSeekChatCompletionsRequest(input: RequestInfo | URL) {
+function isChatCompletionsRequest(input: RequestInfo | URL) {
   const url = typeof input === "string"
     ? input
     : input instanceof URL
@@ -54,20 +56,37 @@ function isDeepSeekChatCompletionsRequest(input: RequestInfo | URL) {
   return url.includes("/chat/completions");
 }
 
-function withDeepSeekThinkingBody(
+function withReasoningBody(
   body: string,
+  mode: LlmReasoningMode,
   messages: DeepSeekAssistantMessage[] = [],
 ) {
+  if (mode === "none" && !messages.some((message) => message.reasoning_content)) return body;
+  let payload: Record<string, unknown>;
   try {
-    const payload = JSON.parse(body) as Record<string, unknown>;
-    payload.thinking = { type: "enabled" };
-    payload.reasoning_effort = "high";
-    delete payload.temperature;
-    delete payload.top_p;
-    delete payload.presence_penalty;
-    delete payload.frequency_penalty;
+    payload = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return body;
+  }
+  mode = resolveThinkingMode(mode, "", typeof payload.model === "string" ? payload.model : "");
+  try {
+    if (mode === "qwen" || mode === "qwen-off") {
+      payload.enable_thinking = mode === "qwen";
+    } else if (mode !== "none") {
+      payload.thinking = { type: mode.endsWith("-off") ? "disabled" : "enabled" };
+    }
+    if (mode === "deepseek") {
+      payload.reasoning_effort = "high";
+      delete payload.temperature;
+      delete payload.top_p;
+      delete payload.presence_penalty;
+      delete payload.frequency_penalty;
+    } else if (mode !== "none") {
+      // Thinking APIs may enforce model-specific sampling defaults.
+      delete payload.temperature;
+    }
 
-    if (Array.isArray(payload.messages)) {
+    if (!mode.endsWith("-off") && Array.isArray(payload.messages)) {
       const assistantReasoning = messages
         .filter((message) => message.role === "assistant")
         .map((message) => message.reasoning_content);
@@ -141,16 +160,25 @@ export function createDeepSeekThinkingFetch(
   messages: DeepSeekAssistantMessage[] = [],
   onReasoningDelta?: (text: string) => void,
 ): typeof fetch {
+  return createReasoningFetch("deepseek", baseFetch, messages, onReasoningDelta);
+}
+
+export function createReasoningFetch(
+  mode: LlmReasoningMode,
+  baseFetch: typeof fetch = fetch,
+  messages: DeepSeekAssistantMessage[] = [],
+  onReasoningDelta?: (text: string) => void,
+): typeof fetch {
   return async (input, init) => {
     if (
-      !isDeepSeekChatCompletionsRequest(input)
+      !isChatCompletionsRequest(input)
       || typeof init?.body !== "string"
     ) {
       return baseFetch(input, init);
     }
     const response = await baseFetch(input, {
       ...init,
-      body: withDeepSeekThinkingBody(init.body, messages),
+      body: withReasoningBody(init.body, mode, messages),
     });
     return observeReasoningStream(response, onReasoningDelta);
   };
@@ -184,7 +212,7 @@ export function createStrategyDiagnosticFetch(
 
 type ExecutionModel = Pick<
   ResolvedUserLlmModel,
-  "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing"
+  "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "contextWindow" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing"
 >;
 
 function configuredPricing(
@@ -220,17 +248,17 @@ async function createProvider(
   onReasoningDelta?: (text: string) => void,
 ) {
   const runtimeModel = await resolveExecutionModel(model, telemetryMetadata);
+  const requestMessages = [...messages];
   const safeFetch = createSafeProviderFetch(runtimeModel.baseUrl);
   const observedFetch = telemetryMetadata?.operation === "execution.strategy"
     ? createStrategyDiagnosticFetch(safeFetch, telemetryMetadata.requestId, model)
     : safeFetch;
-  const providerFetch = runtimeModel.reasoningMode === "deepseek"
-    ? createDeepSeekThinkingFetch(
-        observedFetch,
-        messages as DeepSeekAssistantMessage[],
-        onReasoningDelta,
-      )
-    : observedFetch;
+  const providerFetch = createReasoningFetch(
+    resolveThinkingMode(runtimeModel.reasoningMode, runtimeModel.baseUrl, runtimeModel.modelId),
+    observedFetch,
+    requestMessages as DeepSeekAssistantMessage[],
+    onReasoningDelta,
+  );
   const provider = createOpenAI({
     name: "user-openai-compatible",
     apiKey: runtimeModel.apiKey,
@@ -240,6 +268,9 @@ async function createProvider(
   return {
     model: provider.chat(runtimeModel.modelId),
     runtimeModel,
+    setRequestMessages(next: ModelMessage[]) {
+      requestMessages.splice(0, requestMessages.length, ...next);
+    },
   };
 }
 
@@ -398,13 +429,19 @@ export async function callModelWithProvider(input: {
     reasoningContent += reasoningDelta;
     input.onReasoningDelta?.(reasoningDelta);
   });
+  const prepared = prepareRequestContext({
+    messages: input.messages, tools: input.tools, system: input.system,
+    contextWindow: provider.runtimeModel.contextWindow, maxOutputTokens: provider.runtimeModel.maxOutputTokens,
+  });
+  assertRequestContextFits(prepared);
+  provider.setRequestMessages(prepared.messages);
   const result = streamText({
     abortSignal: input.signal,
     model: provider.model,
     maxOutputTokens: provider.runtimeModel.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
     system: input.system,
-    messages: toAIMessages(input.messages),
+    messages: toAIMessages(prepared.messages),
     tools: toAITools(input.tools),
     experimental_telemetry: {
       isEnabled: true,
@@ -422,11 +459,13 @@ export async function callModelWithProvider(input: {
   let finishReason: string | undefined;
   let usage: LanguageModelUsage | undefined;
   const toolCalls: any[] = [];
+  const textFilter = createModelTextFilter();
 
   for await (const part of result.fullStream) {
     if (part.type === "text-delta") {
       text += part.text;
-      input.onTextDelta?.(part.text);
+      const safeText = textFilter.push(part.text);
+      if (safeText) input.onTextDelta?.(safeText);
     } else if (part.type === "tool-call") {
       toolCalls.push(part);
     } else if (part.type === "finish") {
@@ -437,6 +476,9 @@ export async function callModelWithProvider(input: {
     }
   }
 
+  const remainingText = textFilter.finish();
+  if (remainingText) input.onTextDelta?.(remainingText);
+  textFilter.assertValid();
   const content: ModelContentBlock[] = [];
   input.signal?.throwIfAborted();
   const sanitizedText = sanitizeModelText(text);
@@ -549,12 +591,18 @@ export async function streamTextWithProvider(input: {
     input.messages,
     input.onReasoningDelta,
   );
+  const prepared = prepareRequestContext({
+    messages: input.messages, tools: [], system: input.system,
+    contextWindow: provider.runtimeModel.contextWindow, maxOutputTokens: provider.runtimeModel.maxOutputTokens,
+  });
+  assertRequestContextFits(prepared);
+  provider.setRequestMessages(prepared.messages);
   const result = streamText({
     model: provider.model,
     maxOutputTokens: provider.runtimeModel.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
     system: input.system,
-    messages: toAIMessages(input.messages),
+    messages: toAIMessages(prepared.messages),
     abortSignal: input.signal,
     experimental_telemetry: {
       isEnabled: true,

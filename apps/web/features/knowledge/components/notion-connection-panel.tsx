@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,7 +14,6 @@ import {
   TestTubeDiagonal,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { Message } from "@web/components/ui/feedback";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
 const inputClass = "h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-700 disabled:opacity-50";
@@ -138,7 +139,7 @@ export function NotionConnectionPanel({
         </div>
       ) : (
         <div className="space-y-4 p-4">
-          {(error || notice) && <Message tone={error ? "error" : "success"}>{error ?? notice}</Message>}
+          {(error || notice) && <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>}
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px]">
             <label className="block">
@@ -203,11 +204,7 @@ export function NotionConnectionPanel({
             </div>
           </div>
 
-          {testResult && (
-            <div className={`rounded-md border px-3 py-2 text-sm ${testResult.ok ? "border-emerald-900 bg-emerald-950/20 text-emerald-300" : "border-rose-900 bg-rose-950/30 text-rose-300"}`}>
-              {testResult.text}
-            </div>
-          )}
+          {testResult && <ToastNotice tone={testResult.ok ? "success" : "error"}>{testResult.text}</ToastNotice>}
         </div>
       )}
     </section>

@@ -1,6 +1,7 @@
 type ModelMetadata = {
   contextWindow: number;
   supportsImages: boolean;
+  maxOutputTokens?: number;
 };
 
 const modelMetadata = new Map<string, ModelMetadata>();
@@ -12,4 +13,3 @@ export function rememberModelMetadata(modelId: string, metadata: ModelMetadata) 
 export function getRememberedModelMetadata(modelId: string) {
   return modelMetadata.get(modelId);
 }
-

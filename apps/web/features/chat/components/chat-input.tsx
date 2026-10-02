@@ -19,6 +19,7 @@ type ChatInputProps = {
   isRunning?: boolean;
   webSearchEnabled: boolean;
   contextUsage?: ContextUsageEventData | null;
+  contextError?: string | null;
   selectedModel: ChatModelId;
   models: UserLlmModel[];
   modelsLoading?: boolean;
@@ -86,6 +87,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       isRunning = false,
       webSearchEnabled,
       contextUsage,
+      contextError,
       selectedModel,
       models,
       modelsLoading = false,
@@ -132,19 +134,6 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
         : contextPercent >= 75
           ? "#fbbf24"
           : "#22d3ee";
-    const runBudgetPercent = contextUsage?.runBudget
-      ? Math.min(
-          100,
-          Math.round(
-            contextUsage.runBudget.spentTokens
-            / contextUsage.runBudget.maxTokens
-            * 100,
-          ),
-        )
-      : 0;
-    const runBudgetColor = runBudgetPercent >= 90
-      ? "#f87171"
-      : runBudgetPercent >= 75 ? "#fbbf24" : "#22d3ee";
     const breakdownItems = contextUsage?.breakdown
       ? contextBreakdownLabels
           .map(([key, label]) => ({ key, label, tokens: contextUsage.breakdown![key] }))
@@ -328,7 +317,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                           className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
                           aria-label={
                             contextUsage
-                              ? `当前上下文已用 ${contextPercent}%${contextUsage.runBudget ? `，本轮 Agent 预算已用 ${runBudgetPercent}%` : ""}`
+                              ? `当前上下文已用 ${contextPercent}%`
                               : "正在估算当前上下文"
                           }
                           style={{
@@ -341,13 +330,6 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                             className="h-2.5 w-2.5 rounded-full bg-slate-900"
                             aria-hidden="true"
                           />
-                          {contextUsage?.runBudget && (
-                            <span
-                              className="absolute -right-0.5 -top-0.5 h-1 w-1 rounded-full ring-1 ring-slate-900"
-                              style={{ backgroundColor: runBudgetColor }}
-                              aria-hidden="true"
-                            />
-                          )}
                         </button>
                       </Tooltip.Trigger>
                       <Tooltip.Portal>
@@ -360,7 +342,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                             <div className="space-y-3">
                               <div className="space-y-1">
                                 <div className="flex items-center justify-between gap-3 font-medium text-slate-100">
-                                  <span>当前工作上下文</span>
+                                  <span>{isRunning ? "本次调用上下文" : "下次请求上下文预估"}</span>
                                   <span>{contextPercent}%</span>
                                 </div>
                                 <div className="h-1.5 overflow-hidden rounded-full bg-slate-700">
@@ -370,8 +352,15 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                                   预计 ~{formatTokens(contextUsage.estimatedTokens)} / {formatTokens(contextUsage.workingWindowTokens)}
                                 </div>
                                 <div className="text-slate-400">
-                                  剩余 ~{formatTokens(contextUsage.remainingTokens)} · 模型上限 {formatTokens(contextUsage.modelWindowTokens)}
+                                  可增加输入 ~{formatTokens(contextUsage.availableInputTokens ?? contextUsage.remainingTokens)} · 配置窗口 {formatTokens(contextUsage.modelWindowTokens)}
                                 </div>
+                                {contextUsage.outputReserveTokens !== undefined && (
+                                  <div className="text-slate-400">
+                                    输出预留 {formatTokens(contextUsage.outputReserveTokens)} · 安全余量 {formatTokens(contextUsage.safetyMarginTokens ?? 0)}
+                                  </div>
+                                )}
+                                {contextUsage.compacted && <div className="text-slate-400">已压缩发送上下文，原始聊天记录保留</div>}
+                                {contextUsage.canFit === false && <div className="text-amber-300">压缩后仍超出容量，请缩短输入或选择更大窗口的模型</div>}
                               </div>
 
                               {breakdownItems.length > 0 && (
@@ -388,31 +377,9 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                                 </div>
                               )}
 
-                              {contextUsage.runBudget && (
-                                <div className="border-t border-slate-700/70 pt-2">
-                                  <div className="flex items-center justify-between gap-3 font-medium text-slate-300">
-                                    <span>本轮 Agent 累计预算</span>
-                                    <span style={{ color: runBudgetColor }}>{runBudgetPercent}%</span>
-                                  </div>
-                                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-700">
-                                    <div className="h-full rounded-full" style={{ width: `${runBudgetPercent}%`, backgroundColor: runBudgetColor }} />
-                                  </div>
-                                  <div className="mt-1.5">
-                                    已用 {formatTokens(contextUsage.runBudget.spentTokens)} / {formatTokens(contextUsage.runBudget.maxTokens)}
-                                  </div>
-                                  <div className="text-slate-400">
-                                    下次输入 ~{formatTokens(contextUsage.runBudget.nextRequestTokens)} + 输出预留 {formatTokens(contextUsage.runBudget.outputReserveTokens)}
-                                  </div>
-                                  {!contextUsage.runBudget.canContinue && (
-                                    <div className="mt-1 rounded bg-rose-950/50 px-2 py-1 text-rose-300">
-                                      剩余 {formatTokens(contextUsage.runBudget.remainingTokens)}，不足以承担下一次调用
-                                    </div>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           ) : (
-                            <span>正在估算当前上下文…</span>
+                            <span>{contextError ?? "正在重新估算上下文…"}</span>
                           )}
                           <Tooltip.Arrow className="fill-slate-900" />
                         </Tooltip.Content>

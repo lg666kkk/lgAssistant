@@ -38,6 +38,7 @@ export function useChatManager() {
           const sessions = dbSessions.map((dbSession) => {
             const session = new ChatSession(dbSession.id, userId);
             session.title = dbSession.title;
+            session.selectedModelId = dbSession.model || null;
             session.contextUsage = dbSession.metadata?.contextUsage ?? null;
             return session;
           });

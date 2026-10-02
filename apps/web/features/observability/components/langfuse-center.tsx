@@ -1,16 +1,15 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
-  AlertCircle,
-  Check,
   ExternalLink,
   KeyRound,
   LoaderCircle,
-  RotateCcw,
   Save,
   Server,
   Zap,
@@ -145,16 +144,7 @@ export function LangfuseCenter() {
           </a>
         </div>
 
-        {(error || notice) && (
-          <div className={`mt-5 flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${
-            error
-              ? "border-rose-900/70 bg-rose-950/30 text-rose-300"
-              : "border-amber-900/70 bg-amber-950/20 text-amber-300"
-          }`}>
-            {error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <RotateCcw className="mt-0.5 h-4 w-4 shrink-0" />}
-            <span>{error ?? notice}</span>
-          </div>
-        )}
+        {(error || notice) && <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>}
 
         {loading ? (
           <div className="flex h-64 items-center justify-center text-slate-500">
@@ -238,16 +228,7 @@ export function LangfuseCenter() {
                 </label>
               </div>
 
-              {testResult && (
-                <div className={`flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${
-                  testResult.tone === "ok"
-                    ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
-                    : "border-rose-900/70 bg-rose-950/20 text-rose-300"
-                }`}>
-                  {testResult.tone === "ok" ? <Check className="mt-0.5 h-4 w-4" /> : <AlertCircle className="mt-0.5 h-4 w-4" />}
-                  <span>{testResult.text}</span>
-                </div>
-              )}
+              {testResult && <ToastNotice tone={testResult.tone === "ok" ? "success" : "error"}>{testResult.text}</ToastNotice>}
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
                 <div className="flex items-center gap-2 text-xs text-slate-600">

@@ -1,11 +1,12 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
-  BadgeDollarSign,
   Check,
   KeyRound,
   ListFilter,
@@ -20,9 +21,9 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { ConfirmDialog, Message } from "@web/components/ui/feedback";
+import { ModelConfigurationRow } from "./model-configuration-row";
+import { ConfirmDialog } from "@web/components/ui/feedback";
 import type {
-  LlmReasoningMode,
   UserLlmCatalog,
   UserLlmModelDraft,
   UserLlmPreferences,
@@ -127,12 +128,12 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 }
 
 const inputClass = "h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500 disabled:text-slate-500";
-const modelInputClass = "h-9 w-full min-w-0 rounded-md border border-slate-700 bg-slate-950 px-2.5 text-sm text-slate-100 outline-none transition focus:border-cyan-500 disabled:text-slate-500";
 
 export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Props) {
   const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProviderDraft | null>(() => user ? null : { ...createDraft(), models: [] });
+  const [expandedModelIndex, setExpandedModelIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -173,11 +174,13 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
     const selected = providers.find((provider) => provider.id === selectedId) ?? providers[0];
     setSelectedId(selected.id);
     setDraft(providerToDraft(selected));
+    setExpandedModelIndex(null);
   }, [draft, providers, selectedId]);
 
   const selectProvider = (provider: UserLlmProvider) => {
     setSelectedId(provider.id);
     setDraft(providerToDraft(provider));
+    setExpandedModelIndex(null);
     setNotice(null);
     setDiscoveredModels(null);
     setSelectedDiscoveredIds([]);
@@ -186,6 +189,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
   const startNew = (preset?: typeof presets[number]) => {
     setSelectedId(null);
     setDraft(createDraft(preset));
+    setExpandedModelIndex(0);
     setNotice(null);
     setDiscoveredModels(null);
     setSelectedDiscoveredIds([]);
@@ -215,7 +219,10 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
             baseUrl: draft.baseUrl,
             apiKey: draft.apiKey || undefined,
             enabled: draft.enabled,
-            models: draft.models,
+            models: draft.models.map((model) => ({
+              ...model,
+              displayName: model.displayName.trim() || model.modelId.trim(),
+            })),
           }),
         },
       );
@@ -225,7 +232,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
       await onRefresh();
       setSelectedId(nextId);
       setDraft(null);
-      setNotice({ tone: "ok", text: "Provider 和模型配置已加密保存" });
+      setNotice({ tone: "ok", text: "配置已保存" });
     } catch (saveError) {
       setNotice({ tone: "error", text: saveError instanceof Error ? saveError.message : "保存失败" });
     } finally {
@@ -309,6 +316,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
       .map(createDiscoveredModel);
     const retained = draft.models.filter((model) => model.modelId.trim());
     setDraft({ ...draft, models: [...retained, ...additions] });
+    setExpandedModelIndex(null);
     setSelectedDiscoveredIds([]);
     setNotice({
       tone: "ok",
@@ -428,7 +436,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
           </div>
         </section>
 
-        {(error || notice) && <Message className="mt-5" tone={error || notice?.tone === "error" ? "error" : "success"}>{error ?? notice?.text}</Message>}
+        {(error || notice) && <ToastNotice tone={error || notice?.tone === "error" ? "error" : "success"}>{error ?? notice?.text}</ToastNotice>}
 
         {loading && !catalog ? (
           <div className="flex h-64 items-center justify-center text-slate-500">
@@ -464,14 +472,14 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-medium text-slate-200">模型</h3>
-                  <p className="mt-1 text-xs text-slate-500">能力开关决定工具和图片是否允许进入请求。</p>
+                  <p className="mt-1 text-xs text-slate-500">查看已配置的能力与容量，点击「编辑」修改；高级参数默认收起。</p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => void discoverModels()} disabled={Boolean(user) && (discovering)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50">
                     {discovering ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ListFilter className="h-3.5 w-3.5" />}
                     获取模型列表
                   </button>
-                  <button type="button" onClick={() => setDraft({ ...draft, models: [...draft.models, createModel()] })} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900">
+                  <button type="button" onClick={() => { setExpandedModelIndex(draft.models.length); setDraft({ ...draft, models: [...draft.models, createModel()] }); }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-900">
                     <Plus className="h-3.5 w-3.5" />手动添加
                   </button>
                 </div>
@@ -539,71 +547,23 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                   </div>
                 </div>
               )}
-              <div className="mt-3 divide-y divide-slate-800 border-y border-slate-800">
+              <div className="mt-3 overflow-hidden rounded-lg border border-slate-800 divide-y divide-slate-800">
                 {draft.models.map((model, index) => (
-                  <div key={model.id ?? index} className="py-2.5">
-                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:grid-cols-[1.2fr_1.2fr_.7fr_.7fr_auto]">
-                      <input className={modelInputClass} value={model.modelId} onChange={(event) => updateModel(index, { modelId: event.target.value, displayName: model.displayName || event.target.value })} placeholder="模型 ID" aria-label="模型 ID" />
-                      <input className={modelInputClass} value={model.displayName} onChange={(event) => updateModel(index, { displayName: event.target.value })} placeholder="显示名称" aria-label="显示名称" />
-                      <input type="number" className={modelInputClass} value={model.contextWindow} onChange={(event) => updateModel(index, { contextWindow: Number(event.target.value) })} title="上下文窗口" aria-label="上下文窗口" />
-                      <input type="number" className={modelInputClass} value={model.maxOutputTokens} onChange={(event) => updateModel(index, { maxOutputTokens: Number(event.target.value) })} title="最大输出 Token" aria-label="最大输出 Token" />
-                      <button type="button" disabled={Boolean(user) && (draft.models.length <= 1)} onClick={() => setDraft({ ...draft, models: draft.models.filter((_, modelIndex) => modelIndex !== index) })} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-rose-950/40 hover:text-rose-300 disabled:opacity-30 md:col-start-3 md:row-start-1 xl:col-start-5" title="删除模型" aria-label="删除模型">
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400">
-                      <label className="flex h-7 items-center gap-1.5"><input type="checkbox" checked={model.enabled} onChange={(event) => updateModel(index, { enabled: event.target.checked })} className="accent-cyan-500" />启用</label>
-                      <label className="flex h-7 items-center gap-1.5"><input type="checkbox" checked={model.supportsTools} onChange={(event) => updateModel(index, { supportsTools: event.target.checked })} className="accent-cyan-500" />工具调用</label>
-                      <label className="flex h-7 items-center gap-1.5"><input type="checkbox" checked={model.supportsImages} onChange={(event) => updateModel(index, { supportsImages: event.target.checked })} className="accent-cyan-500" />图片输入</label>
-                      <label className="flex h-7 items-center gap-1.5">
-                        Reasoning
-                        <select value={model.reasoningMode} onChange={(event) => updateModel(index, { reasoningMode: event.target.value as LlmReasoningMode })} className="h-7 rounded-md border border-slate-700 bg-slate-950 px-2 text-slate-300">
-                          <option value="none">关闭</option>
-                          <option value="deepseek">DeepSeek reasoning_content</option>
-                        </select>
-                      </label>
-                      <label className="flex h-7 items-center gap-1.5">
-                        Temp
-                        <input type="number" min="0" max="2" step="0.1" value={model.temperature} onChange={(event) => updateModel(index, { temperature: Number(event.target.value) })} className="h-7 w-16 rounded-md border border-slate-700 bg-slate-950 px-2 text-slate-300 outline-none transition focus:border-cyan-500" aria-label="Temperature" />
-                      </label>
-                    </div>
-                    <details className="mt-2 border-t border-slate-800/70 pt-2">
-                      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-slate-500 hover:text-slate-300">
-                        <BadgeDollarSign className="h-4 w-4" />
-                        <span>费用单价</span>
-                        <span className={model.pricing.inputCacheHit !== null ? "text-emerald-500" : "text-amber-500"}>
-                          {model.pricing.inputCacheHit !== null ? "已配置" : "未配置"}
-                        </span>
-                      </summary>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                        {([
-                          ["inputCacheHit", "缓存命中输入", model.pricing.inputCacheHit],
-                          ["inputCacheMiss", "缓存未命中输入", model.pricing.inputCacheMiss],
-                          ["output", "输出", model.pricing.output],
-                        ] as const).map(([key, label, value]) => (
-                          <label key={key} className="block min-w-0">
-                            <span className="mb-1 block text-[11px] text-slate-500">{label}（¥/百万 Token）</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.000001"
-                              value={value ?? ""}
-                              onChange={(event) => updateModel(index, {
-                                pricing: {
-                                  ...model.pricing,
-                                  [key]: event.target.value === "" ? null : Number(event.target.value),
-                                },
-                              })}
-                              placeholder="未配置"
-                              className={modelInputClass}
-                              aria-label={`${model.displayName || model.modelId} ${label}价格`}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </details>
-                  </div>
+                  <ModelConfigurationRow
+                    key={model.id ?? index}
+                    model={model}
+                    baseUrl={draft.baseUrl}
+                    expanded={expandedModelIndex === index}
+                    canRemove={!user || draft.models.length > 1}
+                    onToggle={() => setExpandedModelIndex((current) => current === index ? null : index)}
+                    onChange={(patch) => updateModel(index, patch)}
+                    onRemove={() => {
+                      setDraft({ ...draft, models: draft.models.filter((_, modelIndex) => modelIndex !== index) });
+                      setExpandedModelIndex((current) => current === null || current === index ? null : current > index ? current - 1 : current);
+                    }}
+                  />
                 ))}
+                {draft.models.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-400">暂无模型，获取模型列表或手动添加。</p>}
               </div>
             </div>
 

@@ -3,7 +3,7 @@ import {
   createKnowledgeEvidenceItems,
   summarizeEvidenceBundle,
 } from "@/lib/agent/rag/evidence";
-import { gradeKnowledgeEvidence } from "@/lib/agent/rag/evidence-grader";
+import { gradeKnowledgeEvidence, knowledgeScore } from "@/lib/agent/rag/evidence-grader";
 import { QueryResultCache } from "@/lib/agent/rag/query-cache";
 import { createRetryQuery } from "@/lib/agent/rag/retrieval-router";
 import {
@@ -189,23 +189,36 @@ function buildAttempt(input: {
   };
 }
 
+const WEAK_EVIDENCE_NOTICE = "证据提示：以下候选通过了最低相关性要求，但整体证据充分性不足。只能保守引用，并明确说明不确定性。";
+
+/** Matched children precede surrounding text so prefix truncation cannot lose the hit. */
+function matchedContext(result: SearchResult, siblings: SearchResult[], maxTokens: number) {
+  const children = Array.from(new Set(siblings.map((item) => item.content)));
+  const parent = result.parentContent;
+  if (!parent) return children.join("\n\n");
+  if (children.every((child) => parent.includes(child)) && countTokensFromText(parent) <= maxTokens) return parent;
+  if (children.length === 1 && parent.startsWith(children[0])) return parent;
+  let surrounding = parent;
+  for (const child of children) surrounding = surrounding.replace(child, "");
+  return [...children, surrounding.trim()].filter(Boolean).join("\n\n");
+}
+
 function buildModelContext(results: SearchResult[], bundle: EvidenceBundle) {
   const separator = "\n\n---\n\n";
   const separatorTokens = countTokensFromText(separator);
-  const gradeNotice = bundle.grade.sufficient
-    ? ""
-    : "证据提示：以下候选通过了最低相关性要求，但整体证据充分性不足。只能保守引用，并明确说明不确定性。";
   const evidenceByChunk = new Map(
     bundle.evidences.map((item) => [item.chunkId, item]),
   );
   const seenParents = new Set<string>();
   const parts: string[] = [];
   let remainingTokens = ragConfig.maxContextTokens
-    - countTokensFromText(gradeNotice)
-    - (gradeNotice ? separatorTokens : 0);
+    - countTokensFromText(WEAK_EVIDENCE_NOTICE)
+    - separatorTokens;
   let contextTruncated = false;
   let dedupedParentCount = 0;
 
+  const visibleEvidence: EvidenceBundle["evidences"] = [];
+  let sourcesLeft = new Set(results.map((result) => result.parentKey ?? result.id)).size;
   for (const result of results) {
     const evidence = evidenceByChunk.get(result.id);
     if (!evidence) continue;
@@ -228,13 +241,15 @@ function buildModelContext(results: SearchResult[], bundle: EvidenceBundle) {
     ].filter(Boolean).join(" / ");
     const header = `[${evidence.evidenceId}] ${result.pageTitle}${heading}\n链接：${result.pageUrl}\n分数：${scores}\n`;
     const prefixTokens = (parts.length > 0 ? separatorTokens : 0) + countTokensFromText(header);
-    const availableContentTokens = remainingTokens - prefixTokens;
+    const availableContentTokens = Math.floor(remainingTokens / Math.max(1, sourcesLeft)) - prefixTokens;
+    sourcesLeft--;
     if (availableContentTokens <= 0) {
       contextTruncated = true;
       break;
     }
 
-    const sourceContent = result.parentContent ?? result.content;
+    const siblings = results.filter((item) => (item.parentKey ?? item.id) === parentKey);
+    const sourceContent = matchedContext(result, siblings, availableContentTokens);
     const truncated = truncateTextByTokens(sourceContent, availableContentTokens);
     if (!truncated.content.trim()) {
       contextTruncated = true;
@@ -244,13 +259,17 @@ function buildModelContext(results: SearchResult[], bundle: EvidenceBundle) {
     const partTokens = countTokensFromText(part);
     remainingTokens -= partTokens + (parts.length > 0 ? separatorTokens : 0);
     parts.push(part);
+    visibleEvidence.push({ ...evidence, content: truncated.content,
+      citation: { ...evidence.citation, quotedText: truncated.content.replace(/\s+/g, " ").trim().slice(0, 240) },
+    });
     contextTruncated ||= truncated.truncated;
     if (remainingTokens <= 0) break;
   }
 
-  const content = [gradeNotice, ...parts].filter(Boolean).join(separator);
+  const content = parts.join(separator);
   return {
     content,
+    evidences: visibleEvidence,
     tokenCount: countTokensFromText(content),
     sourceCount: parts.length,
     contextTruncated,
@@ -275,10 +294,12 @@ function sanitizeResults(results: SearchResult[]) {
 }
 
 function plannedQueries(query: string, plan?: RetrievalPlan) {
-  const queries = new Set([query.trim()]);
+  const multiHop = plan?.queryType === "multi-hop";
+  const queries = new Set(multiHop ? [] : [query.trim()]);
   for (const step of plan?.steps ?? []) {
     if (step.source === "knowledge" && step.query.trim()) queries.add(step.query.trim());
   }
+  if (queries.size === 0) queries.add(query.trim());
   return Array.from(queries).filter(Boolean).slice(0, plan?.maxAttempts ?? 2);
 }
 
@@ -296,12 +317,7 @@ function mergeSearchResults(current: SearchResult[], incoming: SearchResult[]) {
 }
 
 function evidenceScore(result: SearchResult) {
-  return Math.max(
-    result.crossEncoderScore ?? 0,
-    result.rerankScore ?? result.combinedScore,
-    result.similarity,
-    result.keywordScore,
-  );
+  return knowledgeScore(result);
 }
 
 async function withSearchAttemptTimeout<T>(input: {
@@ -419,6 +435,9 @@ export function createSearchNotesTool(options: {
         let lastResponse: RAGSearchResponse | undefined;
         let finalGrade = gradeKnowledgeEvidence(parsed.query, [], []);
         const maxAttempts = options.retrievalPlan?.maxAttempts ?? 2;
+        const multiHop = options.retrievalPlan?.queryType === "multi-hop";
+        const hopGrades: typeof finalGrade[] = [];
+        const hopResponses: Array<{ query: string; results: SearchResult[] }> = [];
         const searchStartedAt = Date.now();
 
         for (let index = 0; index < maxAttempts; index++) {
@@ -437,7 +456,7 @@ export function createSearchNotesTool(options: {
             filters,
             threshold: ragConfig.similarityThreshold,
             limit: parsed.limit,
-            strategyVersion: AGENTIC_RAG_VERSION,
+            strategyVersion: `${AGENTIC_RAG_VERSION}:${ragConfig.retrievalStrategyVersion}`,
           };
           let response = cache.get(cacheKey);
           const cacheHit = Boolean(response);
@@ -481,6 +500,11 @@ export function createSearchNotesTool(options: {
             mergedResults,
             evidenceItems.map((item) => item.evidenceId),
           );
+          if (multiHop) {
+            hopResponses.push({ query, results: response.results });
+            const items = createKnowledgeEvidenceItems(response.results);
+            hopGrades.push(gradeKnowledgeEvidence(query, response.results, items.map((item) => item.evidenceId)));
+          }
           attempts.push(buildAttempt({
             attempt: index + 1,
             query,
@@ -491,13 +515,23 @@ export function createSearchNotesTool(options: {
               ? retry?.reason ?? "planner_secondary_query"
               : undefined,
           }));
-          if (finalGrade.sufficient) break;
+          if (finalGrade.sufficient && !multiHop) break;
         }
 
         if (!lastResponse) {
           throw new Error("检索计划没有生成可执行 query");
         }
 
+        if (multiHop) {
+          const complete = hopGrades.length === queries.length && hopGrades.every((grade) => grade.sufficient);
+          finalGrade = {
+            ...finalGrade,
+            sufficient: complete,
+            grade: complete ? finalGrade.grade : "weak",
+            reason: complete ? "all_subquestions_supported" : "missing_subquestion_evidence",
+            acceptedEvidenceIds: Array.from(new Set(hopGrades.flatMap((grade) => grade.acceptedEvidenceIds))),
+          };
+        }
         const allEvidenceItems = createKnowledgeEvidenceItems(mergedResults);
         const acceptedEvidence = new Set(finalGrade.acceptedEvidenceIds);
         const evidenceItems = allEvidenceItems.filter((item) =>
@@ -542,11 +576,55 @@ export function createSearchNotesTool(options: {
           };
         }
 
-        const modelContext = buildModelContext(results, bundle);
-        const safeResults = sanitizeResults(results);
+        let contextResults = results;
+        let modelContext = buildModelContext(contextResults, bundle);
+        let visibleResults: SearchResult[] = [];
+        // Removing rejected sources can redistribute the budget. Recheck until the
+        // visible source set stabilizes; every repeat removes at least one group.
+        for (let pass = 0; pass <= results.length; pass++) {
+          modelContext = buildModelContext(contextResults, bundle);
+          const visibleByChunk = new Map(modelContext.evidences.map((item) => [item.chunkId, item]));
+          visibleResults = contextResults.flatMap((result) => {
+            const evidence = visibleByChunk.get(result.id);
+            return evidence ? [{ ...result, content: evidence.content, parentContent: undefined }] : [];
+          });
+          finalGrade = gradeKnowledgeEvidence(parsed.query, visibleResults,
+            visibleResults.map((result) => visibleByChunk.get(result.id)!.evidenceId));
+          if (multiHop) {
+            const visibleHopGrades = hopResponses.map((hop) => {
+              // A deduped parent may represent multiple matched children/subquestions.
+              const parents = new Set(hop.results.map((item) => item.parentKey ?? item.id));
+              const visible = visibleResults.filter((item) => parents.has(item.parentKey ?? item.id));
+              return gradeKnowledgeEvidence(hop.query, visible,
+                visible.map((item) => visibleByChunk.get(item.id)!.evidenceId));
+            });
+            const complete = visibleHopGrades.length === queries.length
+              && visibleHopGrades.every((grade) => grade.sufficient);
+            finalGrade = { ...finalGrade, sufficient: complete,
+              grade: complete ? "acceptable" : "weak",
+              reason: complete ? "all_subquestions_supported" : "missing_subquestion_evidence",
+              acceptedEvidenceIds: Array.from(new Set(visibleHopGrades.flatMap((grade) => grade.acceptedEvidenceIds))),
+            };
+          }
+          const acceptedIds = new Set(finalGrade.acceptedEvidenceIds);
+          const acceptedParents = new Set(visibleResults
+            .filter((item) => acceptedIds.has(visibleByChunk.get(item.id)!.evidenceId))
+            .map((item) => item.parentKey ?? item.id));
+          const nextResults = contextResults.filter((item) => acceptedParents.has(item.parentKey ?? item.id));
+          if (nextResults.length === contextResults.length) break;
+          contextResults = nextResults;
+        }
+        bundle.evidences = modelContext.evidences;
+        bundle.grade = finalGrade;
+        if (!finalGrade.sufficient && bundle.evidences.length > 0) {
+          modelContext.content = [WEAK_EVIDENCE_NOTICE, modelContext.content].filter(Boolean).join("\n\n---\n\n");
+          modelContext.tokenCount = countTokensFromText(modelContext.content);
+        }
+        const visibleChunks = new Set(bundle.evidences.map((item) => item.chunkId));
+        const safeResults = sanitizeResults(visibleResults.filter((result) => visibleChunks.has(result.id)));
         return {
           ok: true,
-          content: modelContext.content,
+          content: bundle.evidences.length > 0 ? modelContext.content : "没有找到足以支持回答的个人知识库证据",
           data: {
             query: parsed.query,
             results: safeResults,
@@ -557,9 +635,9 @@ export function createSearchNotesTool(options: {
           },
           metadata: {
             rag: lastResponse.debug,
-            ragReturnedCount: results.length,
+            ragReturnedCount: safeResults.length,
             ragQuery: parsed.query,
-            ragTopResults: buildRagTopResults(results),
+            ragTopResults: buildRagTopResults(visibleResults),
             ragUsedFallback: false,
             ragThresholdFallback: false,
             ragRetryCount: Math.max(0, attempts.length - 1),

@@ -1,7 +1,9 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useEffect, useState, type FormEvent } from "react";
-import { Check, Eye, EyeOff, KeyRound, LoaderCircle, Mail, Save, UserRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LoaderCircle, Mail, Save, UserRound } from "lucide-react";
 import { useAuth } from "@web/lib/auth/use-auth";
 
 const inputClass = "h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500 disabled:text-slate-500";
@@ -17,8 +19,8 @@ export function AccountCenter() {
   const [showPassword, setShowPassword] = useState(false);
   const [savingName, setSavingName] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
-  const [nameNotice, setNameNotice] = useState<{ ok: boolean; text: string } | null>(null);
-  const [passwordNotice, setPasswordNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [nameNotice, setNameNotice] = useState<{ ok: boolean; text: string; validation?: boolean } | null>(null);
+  const [passwordNotice, setPasswordNotice] = useState<{ ok: boolean; text: string; validation?: boolean } | null>(null);
 
   useEffect(() => { setDisplayName(savedName); }, [savedName, user?.id]);
 
@@ -26,7 +28,7 @@ export function AccountCenter() {
     event.preventDefault();
     const name = displayName.trim();
     if (!name || name.length > 60) {
-      setNameNotice({ ok: false, text: "显示名称需要 1 到 60 个字符" });
+      setNameNotice({ ok: false, validation: true, text: "显示名称需要 1 到 60 个字符" });
       return;
     }
     setSavingName(true);
@@ -46,11 +48,11 @@ export function AccountCenter() {
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (password.length < 8) {
-      setPasswordNotice({ ok: false, text: "新密码至少需要 8 个字符" });
+      setPasswordNotice({ ok: false, validation: true, text: "新密码至少需要 8 个字符" });
       return;
     }
     if (password !== confirmPassword) {
-      setPasswordNotice({ ok: false, text: "两次输入的密码不一致" });
+      setPasswordNotice({ ok: false, validation: true, text: "两次输入的密码不一致" });
       return;
     }
     setSavingPassword(true);
@@ -100,9 +102,10 @@ export function AccountCenter() {
               </div>
             </label>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              {nameNotice ? <p role="status" className={`flex items-center gap-1.5 text-xs ${nameNotice.ok ? "text-emerald-400" : "text-rose-400"}`}>
-                {nameNotice.ok && <Check className="h-3.5 w-3.5" aria-hidden="true" />}{nameNotice.text}
-              </p> : <span />}
+              <div className="min-w-0 flex-1">
+                {nameNotice?.validation ? <p role="alert" className="text-xs text-rose-400">{nameNotice.text}</p>
+                  : nameNotice && <ToastNotice tone={nameNotice.ok ? "success" : "error"}>{nameNotice.text}</ToastNotice>}
+              </div>
               <button type="submit" disabled={savingName || !displayName.trim() || displayName.trim() === savedName} className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-500 px-4 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-40">
                 {savingName ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 保存名称
@@ -129,9 +132,10 @@ export function AccountCenter() {
               <input className={inputClass} type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={8} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
             </label>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              {passwordNotice ? <p role="status" className={`flex items-center gap-1.5 text-xs ${passwordNotice.ok ? "text-emerald-400" : "text-rose-400"}`}>
-                {passwordNotice.ok && <Check className="h-3.5 w-3.5" aria-hidden="true" />}{passwordNotice.text}
-              </p> : <span />}
+              <div className="min-w-0 flex-1">
+                {passwordNotice?.validation ? <p role="alert" className="text-xs text-rose-400">{passwordNotice.text}</p>
+                  : passwordNotice && <ToastNotice tone={passwordNotice.ok ? "success" : "error"}>{passwordNotice.text}</ToastNotice>}
+              </div>
               <button type="submit" disabled={savingPassword || !password || !confirmPassword} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-700 px-4 text-sm text-slate-200 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-40">
                 {savingPassword ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                 更新密码

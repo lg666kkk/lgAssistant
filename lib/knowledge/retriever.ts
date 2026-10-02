@@ -14,6 +14,7 @@ import { QueryResultCache } from '@/lib/agent/rag/query-cache';
 import { createUserEmbeddingClient } from '@/lib/embedding-config/service';
 import { resolveUserMeteredModelPrice } from '@/lib/agent/observability/user-metered-pricing';
 import { extractNotionPageId } from './notion-page-id';
+import { lexicalTerms, queryTerms } from './lexical';
 import {
   cosineSimilarity,
   EMBEDDING_MODEL,
@@ -166,12 +167,14 @@ export type VectorSearchRequest = {
   matchThreshold: number;
   matchCount: number;
   userId?: string;
+  filters?: RetrievalFilters;
 };
 
 export type KeywordSearchRequest = {
   queries: string[];
   matchCount: number;
   userId?: string;
+  filters?: RetrievalFilters;
 };
 
 export type RAGRetrieverDependencies = {
@@ -333,6 +336,7 @@ export class RAGRetriever {
       matchCount: candidateLimit,
       userId: options.userId,
       indexVersion: options.indexVersion,
+      filters: options.filters,
     });
     const keywordPathPromise = measureAsync(
       enableKeywordSearch
@@ -340,6 +344,7 @@ export class RAGRetriever {
             queries: rewrittenQueries,
             matchCount: candidateLimit,
             userId: options.userId,
+            filters: options.filters,
           })
         : Promise.resolve([]),
     );
@@ -555,6 +560,7 @@ export class RAGRetriever {
     matchCount: number;
     userId?: string;
     indexVersion?: string;
+    filters?: RetrievalFilters;
   }) {
     const embeddingStartedAt = Date.now();
     let embeddingClient = this.embeddingClient;
@@ -621,6 +627,7 @@ export class RAGRetriever {
         matchThreshold: input.matchThreshold,
         matchCount: input.matchCount,
         userId: input.userId,
+        filters: input.filters,
       })),
     );
 
@@ -671,11 +678,12 @@ export class RAGRetriever {
   }
 
   private async vectorSearch(request: VectorSearchRequest): Promise<SearchResult[]> {
-    const { data, error } = await this.getSupabase().rpc('match_documents', {
+    const { data, error } = await this.getSupabase().rpc(request.filters ? 'match_documents_filtered' : 'match_documents', {
       query_embedding: request.embedding,
       match_threshold: request.matchThreshold,
       match_count: request.matchCount,
       filter_user_id: request.userId ?? null,
+      ...(request.filters ? { retrieval_filters: request.filters } : {}),
     });
 
     if (error) {
@@ -689,14 +697,15 @@ export class RAGRetriever {
     const queryText = buildKeywordQuery(request.queries);
     if (!queryText) return [];
 
-    const { data, error } = await this.getSupabase().rpc('match_documents_keyword', {
+    const { data, error } = await this.getSupabase().rpc(request.filters ? 'match_documents_keyword_filtered' : 'match_documents_keyword', {
       query_text: queryText,
       match_count: request.matchCount,
       filter_user_id: request.userId ?? null,
+      ...(request.filters ? { retrieval_filters: request.filters } : {}),
     });
 
     if (error) {
-      if (isMissingRpcError(error)) {
+      if (!request.filters && isMissingRpcError(error)) {
         console.warn('[rag] match_documents_keyword RPC 不存在，已降级为仅向量检索');
         return [];
       }
@@ -967,7 +976,8 @@ async function applyCrossEncoderRerank(input: {
     scoreById.set(selected[score.index].id, score.score);
   }
 
-  const results = input.candidates
+  // Only compare candidates scored by the same semantic reranker.
+  const results = selected
     .map((candidate) => {
       const crossEncoderScore = scoreById.get(candidate.id);
       if (crossEncoderScore === undefined) return candidate;
@@ -1117,14 +1127,14 @@ function classifyQuery(query: string): QueryType {
   return 'balanced';
 }
 
-function buildKeywordQuery(queries: string[]) {
+export function buildKeywordQuery(queries: string[]) {
   const tokens = new Set<string>();
   for (const query of queries) {
-    for (const token of Array.from(tokenize(query))) {
+    for (const token of Array.from(queryTerms(query))) {
       tokens.add(token);
     }
   }
-  return Array.from(tokens).slice(0, 16).join(' ');
+  return Array.from(tokens).slice(0, 64).join(' ');
 }
 
 function scoreKeywords(queries: string[], candidate: SearchResult) {
@@ -1133,7 +1143,7 @@ function scoreKeywords(queries: string[], candidate: SearchResult) {
 
   let best = 0;
   for (const query of queries) {
-    const queryTokens = tokenize(query);
+    const queryTokens = queryTerms(query);
     if (queryTokens.size === 0) continue;
 
     let hits = 0;
@@ -1146,9 +1156,7 @@ function scoreKeywords(queries: string[], candidate: SearchResult) {
 }
 
 function tokenize(text: string): Set<string> {
-  const normalized = text.toLowerCase();
-  const tokens = normalized.match(/[a-z0-9_./:-]+|[\u4e00-\u9fa5]{2,}/g) ?? [];
-  return new Set(tokens.map((token) => token.trim()).filter(Boolean));
+  return lexicalTerms(text);
 }
 
 function jaccardSimilarity(left: string, right: string) {

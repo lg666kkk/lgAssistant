@@ -40,6 +40,7 @@ export const supabaseConfig = {
  * RAG 配置
  */
 export const ragConfig = {
+  retrievalStrategyVersion: "rag-lexical-context-v1",
   // 向量检索配置
   similarityThreshold: 0.5,  // 相似度阈值
   fallbackSimilarityThreshold: 0.4, // 首次无结果时允许的最低二级阈值，禁止降到 0

@@ -1,25 +1,34 @@
 import type { SearchResult } from "@/lib/knowledge/retriever";
+import { lexicalTerms, queryTerms, termCoverage } from "@/lib/knowledge/lexical";
 import type { EvidenceGrade, EvidenceItem } from "./types";
+
+type ScoredEvidence = {
+  id: string;
+  group: string;
+  score: number;
+  content: string;
+  dualSource: boolean;
+};
 
 export function gradeKnowledgeEvidence(
   query: string,
   results: SearchResult[],
   evidenceIds: string[],
 ): EvidenceGrade {
-  const scored = results.map((result, index) => ({
+  return gradeScored(query, results.map((result, index) => ({
     id: evidenceIds[index],
+    group: result.parentKey ? `${result.pageId}:${result.parentKey}` : result.pageId,
     score: knowledgeScore(result),
-    coverage: lexicalCoverage(query, `${result.pageTitle} ${result.headingPath.join(" ")} ${result.content}`),
+    // Titles identify a source; they do not establish that its body answers the question.
+    content: result.content,
     dualSource: result.retrievalSources.length > 1,
-  }));
-  return gradeScored(scored);
+  })));
 }
 
 export function gradeEvidenceItems(query: string, items: EvidenceItem[]): EvidenceGrade {
-  return gradeScored(items.map((item) => ({
+  return gradeWebScored(items.map((item) => ({
     id: item.evidenceId,
-    score: Math.max(
-      item.scores.crossEncoder ?? 0,
+    score: item.scores.crossEncoder ?? Math.max(
       item.scores.rerank ?? 0,
       item.scores.provider ?? 0,
       item.scores.vector ?? 0,
@@ -30,7 +39,61 @@ export function gradeEvidenceItems(query: string, items: EvidenceItem[]): Eviden
   })));
 }
 
-function gradeScored(items: Array<{
+function gradeScored(query: string, items: ScoredEvidence[]): EvidenceGrade {
+  if (items.length === 0) {
+    return { sufficient: false, grade: "none", reason: "no_results", topScore: null,
+      scoreGap: null, queryCoverage: 0, acceptedEvidenceIds: [] };
+  }
+  const terms = queryTerms(query);
+  const sorted = items.map((item) => ({ ...item, coverage: termCoverage(terms, item.content) }))
+    .sort((left, right) => right.score - left.score);
+  const top = sorted[0];
+  const second = sorted[1];
+  const scoreGap = second ? Math.max(0, top.score - second.score) : null;
+  const accepted = sorted.filter((item) => Number.isFinite(item.score)
+    && item.score >= 0.35 && item.coverage >= 0.12);
+  const covered = new Set<string>();
+  for (const item of accepted) {
+    for (const term of Array.from(lexicalTerms(item.content))) if (terms.has(term)) covered.add(term);
+  }
+  const coverage = terms.size ? covered.size / terms.size : 0;
+  const content = accepted.map((item) => item.content).join("\n").toLowerCase();
+  // Preserve quoted entities and numerical conditions, even if other terms overlap.
+  const required = [
+    ...Array.from(query.matchAll(/[`"“]([^`"”]+)[`"”]/g), (match) => match[1].toLowerCase()),
+    ...(query.match(/\b\d+(?:\.\d+)?\b/g) ?? []),
+  ];
+  const missingCondition = required.some((value) => /\d/.test(value) && /^\d+(?:\.\d+)?$/.test(value)
+    ? !lexicalTerms(content).has(value) : !content.includes(value));
+  const strongSingle = accepted.some((item) => item.coverage >= 0.65
+    && (item.score >= 0.55 || item.dualSource));
+  const independentSources = new Set(accepted.map((item) => item.group)).size >= 2;
+  const sufficient = !missingCondition && coverage >= 0.65 && (strongSingle || independentSources);
+  return {
+    sufficient,
+    grade: sufficient ? coverage >= 0.85 && accepted[0].score >= 0.7 ? "strong" : "acceptable" : "weak",
+    reason: sufficient
+      ? strongSingle ? accepted.some((item) => item.dualSource && item.coverage >= 0.65)
+        ? "vector_keyword_agreement" : "strong_single_evidence" : "multiple_supporting_evidence"
+      : top.score < 0.35 ? "low_top_score"
+        : accepted.length === 0 ? "low_query_coverage"
+          : missingCondition ? "missing_query_condition"
+            : coverage < 0.65 ? "incomplete_query_coverage" : "insufficient_independent_evidence",
+    topScore: top.score,
+    scoreGap,
+    queryCoverage: coverage,
+    acceptedEvidenceIds: accepted.map((item) => item.id),
+  };
+}
+
+export function knowledgeScore(result: SearchResult) {
+  // Ranking/fusion scores are relative to the candidate pool, not confidence.
+  if (result.crossEncoderScore !== undefined) return result.crossEncoderScore;
+  return Math.max(result.similarity, result.keywordRank ?? result.keywordScore);
+}
+
+// Web evidence retains its existing provider confidence policy.
+function gradeWebScored(items: Array<{
   id: string;
   score: number;
   coverage: number;
@@ -92,15 +155,6 @@ function gradeScored(items: Array<{
     queryCoverage: top.coverage,
     acceptedEvidenceIds: accepted.map((item) => item.id),
   };
-}
-
-function knowledgeScore(result: SearchResult) {
-  return Math.max(
-    result.crossEncoderScore ?? 0,
-    result.rerankScore ?? result.combinedScore,
-    result.similarity,
-    result.keywordScore,
-  );
 }
 
 function lexicalCoverage(query: string, text: string) {

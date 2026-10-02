@@ -16,6 +16,9 @@ export type RagEvalCase = {
   expectedKeywords?: string[];
   forbiddenKeywords?: string[];
   expectedNoResult?: boolean;
+  expectedEvidenceSufficient?: boolean;
+  /** Require every source for multi-document questions. */
+  expectedAllPageIds?: string[];
   minKeywordCoverage?: number;
   category?: "direct" | "keyword" | "semantic" | "multi-hop" | "no-result" | "confusing";
   notes?: string;

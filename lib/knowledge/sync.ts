@@ -410,7 +410,7 @@ async function syncNotionPageOnce(
     const supabase = createSupabaseClient();
     const existingPageQuery = supabase
       .from('notion_pages')
-      .select('id, page_id, chunk_count, metadata')
+      .select('id, page_id, page_title, page_url, last_edited_time, chunk_count, metadata')
       .eq('page_id', pageId)
       .eq('user_id', options.userId);
 
@@ -439,6 +439,22 @@ async function syncNotionPageOnce(
       pageContentHash,
       embeddingModel,
     )) {
+      if (existingPage && (
+        existingPage.page_title !== page.title || existingPage.page_url !== page.url
+        || existingPage.last_edited_time !== page.lastEditedTime
+      )) {
+        const { error } = await supabase.rpc('refresh_notion_page_metadata_atomic', {
+          p_user_id: options.userId,
+          p_page_id: pageId,
+          p_page_title: page.title,
+          p_page_url: page.url,
+          p_last_edited_time: page.lastEditedTime,
+          p_expected_content_hash: pageContentHash,
+        });
+        if (error) throw new Error(`更新页面元数据失败: ${error.message}`);
+        return { pageId, pageTitle: page.title, chunksCount: existingPage.chunk_count,
+          success: true, status: 'updated', indexVersion: pageContentHash };
+      }
       emitSyncEvent(options, {
         type: 'page_skipped',
         pageId,
@@ -531,17 +547,6 @@ async function syncNotionPageOnce(
           preview: compactText(chunk.text, 220),
         },
       });
-    }
-
-    if (chunks.length === 0) {
-      return {
-        pageId,
-        pageTitle: page.title,
-        chunksCount: 0,
-        success: true,
-        status: 'skipped',
-        indexVersion: pageContentHash,
-      };
     }
 
     // 3. 生成向量

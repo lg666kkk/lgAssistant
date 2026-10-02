@@ -110,16 +110,23 @@ export class SessionManager {
   /**
    * 创建新会话
    */
-  async createSession(title = '新对话', id?: string): Promise<Session> {
+  async createSession(title = '新对话', id?: string, model?: string): Promise<Session> {
     const userId = await this.getUserId();
     const { data, error } = await this.supabase
       .from('sessions')
-      .insert(id ? { id, title, user_id: userId } : { title, user_id: userId })
+      .insert({ ...(id ? { id } : {}), title, user_id: userId, ...(model ? { model } : {}) })
       .select()
       .single();
 
     if (error) throw error;
     return data;
+  }
+
+  async updateSessionModel(sessionId: string, model: string): Promise<void> {
+    const userId = await this.getUserId();
+    const { error } = await this.supabase.from('sessions').update({ model })
+      .eq('user_id', userId).eq('id', sessionId);
+    if (error) throw error;
   }
 
   /**

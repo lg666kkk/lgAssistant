@@ -1,3 +1,4 @@
+import { prepareRequestContext, assertRequestContextFits } from "./request-context";
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
 import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
@@ -13,7 +14,6 @@ import {
   estimateModelRequestTokens,
 } from "@/lib/agent/runtime/context-usage";
 import {
-  AGENT_LOOP_OUTPUT_RESERVE,
   AGENT_LOOP_TOKEN_BUDGET,
   CONTEXT_COMPACTION_WINDOW_CAP,
 } from "@/lib/agent/runtime/limits";
@@ -23,7 +23,7 @@ import {
 import { saveToolArtifact } from "@/lib/agent/runtime/artifact-store";
 import { createTrace, summarizeText } from "@/lib/agent/runtime/trace";
 import { enqueueEvent } from "@/lib/agent/runtime/events";
-import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
+import { createModelTextFilter } from "@/lib/agent/runtime/output-sanitizer";
 import type { ToolCallEventData } from "@/lib/agent/runtime/events";
 import {
   callModelWithProvider,
@@ -35,6 +35,7 @@ import {
   calculateModelUsageCost,
   defaultChatModel,
   getModelContextWindowTokens,
+  getModelMaxOutputTokens,
   type ModelPricingCnyPerMillionTokens,
   type ChatModelId,
   type ModelUsageBreakdown,
@@ -1021,6 +1022,7 @@ export async function runAgentLoop(
 ): Promise<AgentLoopResult> {
   // 防重复工具调用
   const seenToolCalls = new Set<string>(resume?.executedToolKeys);
+  const outputReserveTokens = getModelMaxOutputTokens(model);
   const tokenBudget = new TokenBudget(AGENT_LOOP_TOKEN_BUDGET);
   tokenBudget.spend(resume?.spentTokens ?? 0);
   const trace = createTrace(requestId, sessionId);
@@ -1177,7 +1179,7 @@ export async function runAgentLoop(
       system,
       tools,
     });
-    if (!tokenBudget.canAfford(estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE)) {
+    if (!tokenBudget.canAfford(estimatedContextTokens + outputReserveTokens)) {
       const forcedCompactionStartedAt = Date.now();
       const forcedCompaction = await compactWithObservation(true);
       loopMessages = forcedCompaction.messages;
@@ -1211,12 +1213,18 @@ export async function runAgentLoop(
       }
     }
 
+    const preparedContext = prepareRequestContext({
+      messages: loopMessages, system, tools,
+      contextWindow: getModelContextWindowTokens(model), maxOutputTokens: outputReserveTokens,
+    });
+    loopMessages = preparedContext.messages;
+    estimatedContextTokens = preparedContext.estimatedTokens;
     const tokenBudgetSnapshot = {
       max: tokenBudget.max,
       spentBefore: tokenBudget.spent,
       remainingBefore: tokenBudget.remaining(),
       requested: estimatedContextTokens,
-      reservedOutputTokens: AGENT_LOOP_OUTPUT_RESERVE,
+      reservedOutputTokens: outputReserveTokens,
     };
     const contextBreakdown = buildContextUsageBreakdown({
       messages: loopMessages,
@@ -1237,6 +1245,11 @@ export async function runAgentLoop(
         workingWindowTokens: runtimeContextWindowTokens,
         modelWindowTokens: getModelContextWindowTokens(model),
         remainingTokens: Math.max(0, runtimeContextWindowTokens - estimatedContextTokens),
+        availableInputTokens: preparedContext.availableInputTokens,
+        outputReserveTokens,
+        safetyMarginTokens: preparedContext.safetyMarginTokens,
+        compacted: compacted.compacted || preparedContext.compacted,
+        canFit: preparedContext.canFit,
         phase,
         breakdown: contextBreakdown,
         runBudget: {
@@ -1244,21 +1257,22 @@ export async function runAgentLoop(
           maxTokens: tokenBudget.max,
           remainingTokens: Math.max(0, tokenBudget.max - spentTokens),
           nextRequestTokens: estimatedContextTokens,
-          outputReserveTokens: AGENT_LOOP_OUTPUT_RESERVE,
-          requiredTokens: estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+          outputReserveTokens: outputReserveTokens,
+          requiredTokens: estimatedContextTokens + outputReserveTokens,
           canContinue:
-            tokenBudget.max - spentTokens
-            >= estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+            preparedContext.canFit && tokenBudget.max - spentTokens
+            >= estimatedContextTokens + outputReserveTokens,
         },
       },
     });
-    const canContinue = tokenBudget.canAfford(
-      estimatedContextTokens + AGENT_LOOP_OUTPUT_RESERVE,
+    const canContinue = preparedContext.canFit && tokenBudget.canAfford(
+      estimatedContextTokens + outputReserveTokens,
     );
     enqueueEvent(
       contextUsageEvent(canContinue ? "before_model" : "blocked", tokenBudget.spent),
       enqueueText,
     );
+    if (!preparedContext.canFit) assertRequestContextFits(preparedContext);
     if (!canContinue) {
       enqueueEvent(
         {
@@ -1728,17 +1742,21 @@ export async function forwardTextStream(
   enqueueText: (text: string) => boolean,
   shouldStop: () => boolean,
 ): Promise<Anthropic.Messages.StopReason | undefined> {
+  const textFilter = createModelTextFilter();
   for await (const text of stream.textStream) {
     if (shouldStop()) {
       break;
     }
 
-    const sanitizedText = sanitizeModelText(text);
+    const sanitizedText = textFilter.push(text);
     if (sanitizedText && !enqueueText(sanitizedText)) {
       break;
     }
   }
 
+  const remainingText = textFilter.finish();
+  if (remainingText && !shouldStop()) enqueueText(remainingText);
+  textFilter.assertValid();
   const finishReason = await stream.finishReason;
   return finishReason === "length" ? "max_tokens" : "end_turn";
 }

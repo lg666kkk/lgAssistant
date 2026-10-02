@@ -1,7 +1,9 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useEffect, useState } from "react";
-import { Check, KeyRound, LoaderCircle, Save, Zap } from "lucide-react";
+import { KeyRound, LoaderCircle, Save, Zap } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
 
 type Config = {
@@ -76,9 +78,7 @@ export function JevCenter() {
           <h2 className="text-xl font-semibold text-slate-100">Jev 结构化决策</h2>
           <p className="mt-1 text-sm text-slate-500">配置 TypeSafe Jev，用于路由、评分和真假判断。它不参与普通聊天回复。</p>
         </div>
-        {notice && <div className={`mt-5 flex items-center gap-2 rounded-md border px-3 py-2.5 text-sm ${notice.ok ? "border-emerald-900/70 text-emerald-300" : "border-rose-900/70 text-rose-300"}`}>
-          {notice.ok ? <Check className="h-4 w-4" /> : <span>!</span>}{notice.text}
-        </div>}
+        {notice && <ToastNotice tone={notice.ok ? "success" : "error"}>{notice.text}</ToastNotice>}
         {loading ? <div className="flex h-52 items-center justify-center text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />加载 Jev 配置</div> : (
           <section className="py-6">
             <div className="grid gap-4 md:grid-cols-2">

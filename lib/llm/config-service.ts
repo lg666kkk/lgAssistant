@@ -5,6 +5,8 @@ import {
 } from "@/lib/runtime-config/service";
 import { rememberModelMetadata } from "./model-metadata-cache";
 import { assertPublicProviderUrl } from "./url-safety";
+import { LLM_REASONING_MODES } from "./types";
+import { resolveThinkingMode } from "./reasoning";
 import type {
   LlmAdapterType,
   LlmReasoningMode,
@@ -137,9 +139,10 @@ function validateModelDraft(input: UserLlmModelDraft) {
   if (!Number.isFinite(input.temperature) || input.temperature < 0 || input.temperature > 2) {
     throw new Error(`${displayName} 的温度必须在 0 到 2 之间`);
   }
-  if (!(["none", "deepseek"] as string[]).includes(input.reasoningMode)) {
+  if (!LLM_REASONING_MODES.includes(input.reasoningMode)) {
     throw new Error(`${displayName} 的 Reasoning 协议无效`);
   }
+  resolveThinkingMode(input.reasoningMode, "", modelId);
   const pricingEntries = [
     ["缓存命中输入价格", input.pricing?.inputCacheHit],
     ["缓存未命中输入价格", input.pricing?.inputCacheMiss],
@@ -195,6 +198,7 @@ function toPublicModel(row: ModelRow, provider: ProviderRow): UserLlmModel {
   rememberModelMetadata(model.id, {
     contextWindow: model.contextWindow,
     supportsImages: model.supportsImages,
+    maxOutputTokens: model.maxOutputTokens,
   });
   return model;
 }

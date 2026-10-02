@@ -83,6 +83,11 @@ export interface ContextUsageEventData {
   workingWindowTokens: number;
   modelWindowTokens: number;
   remainingTokens: number;
+  availableInputTokens?: number;
+  outputReserveTokens?: number;
+  safetyMarginTokens?: number;
+  compacted?: boolean;
+  canFit?: boolean;
   phase?: "before_model" | "after_model" | "blocked";
   breakdown?: ContextUsageBreakdown;
   runBudget?: AgentRunBudgetUsage;

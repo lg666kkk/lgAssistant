@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -19,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { ConfirmDialog, Message } from "@web/components/ui/feedback";
+import { ConfirmDialog } from "@web/components/ui/feedback";
 import type { UserMemoryConfigView } from "@/lib/memory-config/types";
 
 type MemoryRow = {
@@ -253,7 +255,7 @@ export function MemoryCenter() {
         </div>
 
         {(error || notice) && (
-          <Message className="mt-5" tone={error ? "error" : "success"}>{error ?? notice}</Message>
+          <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>
         )}
 
         {loading ? (

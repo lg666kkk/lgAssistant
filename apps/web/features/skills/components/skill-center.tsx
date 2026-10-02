@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +22,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { ConfirmDialog, Message } from "@web/components/ui/feedback";
+import { ConfirmDialog } from "@web/components/ui/feedback";
 
 type Profile = {
   id: "skill-trusted";
@@ -614,7 +616,7 @@ function RunStatusIcon({ status }: { status: string }) {
 
 function Feedback({ error, notice }: { error: string | null; notice: string | null }) {
   if (!error && !notice) return null;
-  return <div className="fixed bottom-5 right-5 z-50 max-w-[calc(100vw-2rem)]"><Message tone={error ? "error" : "success"}>{error ?? notice}</Message></div>;
+  return <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>;
 }
 
 function toDraft(skill: ConfiguredSkill): SkillDraft {

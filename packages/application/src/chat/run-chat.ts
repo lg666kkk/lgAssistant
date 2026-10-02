@@ -1,3 +1,4 @@
+import { buildChatPrompt, selectChatTools } from "./request-context";
 import { createBuiltinToolRegistry } from "@/lib/agent/tools/builtin";
 import {
   ToolSourceType,
@@ -26,16 +27,12 @@ import { createEmptyMemoryRerankTrace } from "@/lib/agent/memory/memory-reranker
 import {
   stripInlineImagesForPersistence,
 } from "@/lib/agent/multimodal";
-import { buildPromptPipe } from "@/lib/agent/prompt/pipe";
 import {
-  filterToolsForRetrievalRoute,
   resolveRetrievalAnchor,
   buildRetrievalPlanWithJev,
 } from "@/lib/agent/rag/retrieval-router";
 import { sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
-import { filterToolsForUserIntent } from "@/lib/agent/tools/tool-intent";
 import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
-import { renderToolOrchestrationPolicy } from "@/lib/agent/tools/orchestration";
 import { redactSensitiveValue } from "@/lib/agent/rag/governance";
 import { withSpanLabel } from "@/lib/agent/observability/span-labels";
 import { verifyGroundedAnswer } from "@/lib/agent/rag/answer-verifier";
@@ -172,21 +169,13 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
   // 给模型看的工具说明
   // 先在完整 ToolDefinition 上按元数据过滤，再投影成模型 schema。若先调用
   // listForModel，会丢失 outputPolicy/orchestration，路由只能退回硬编码工具名。
-  const routeToolDefinitions = filterToolsForRetrievalRoute(
-    toolRegistry.list(),
-    retrievalPlan.route,
-    { webEnabled: enableWebSearch },
-  ).filter((tool) => userMemoryConfig?.enabled || !["recall_memory", "search_memory_history"].includes(tool.name));
-  const routeTools = toolRegistry.listForModel(routeToolDefinitions);
   const latestUserQuery = [...requestTextMessages]
-    .reverse()
-    .find((message) => message.role === "user")?.content ?? "";
-  const tools = selectedRuntimeModel.supportsTools
-    ? filterToolsForUserIntent(
-        routeTools,
-        approvedPlanObjective || latestUserQuery,
-      )
-    : [];
+    .reverse().find((message) => message.role === "user")?.content ?? "";
+  const { definitions: routeToolDefinitions, tools } = selectChatTools({
+    registry: toolRegistry, retrievalPlan, webSearchEnabled: enableWebSearch,
+    memoryEnabled: Boolean(userMemoryConfig?.enabled), supportsTools: selectedRuntimeModel.supportsTools,
+    query: approvedPlanObjective || latestUserQuery,
+  });
   const approvedPlan = body.approvedPlan === undefined
     ? undefined
     : normalizeExecutionPlan(body.approvedPlan, new Set(tools.map((tool) => tool.name)));
@@ -528,7 +517,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
         };
         // Prompt Pipe：构造段 → 排序 → 预算裁剪 → 渲染 system prompt。
         // segments 同时透传给 loop 写进 trace，供详情页按段展示。
-        const prompt = buildPromptPipe({
+        const prompt = buildChatPrompt({
           userMessage: lastUser?.content ?? "",
           userProfile: userProfile.content,
           userProfileMetadata: {
@@ -541,10 +530,7 @@ export async function runChatUseCase(input: RunChatUseCaseInput) {
           memory: memorySystem,
           memoryRecallHint,
           webSearchEnabled: enableWebSearch,
-          toolOrchestration: renderToolOrchestrationPolicy(
-            routeToolDefinitions,
-            retrievalPlan,
-          ),
+          toolDefinitions: routeToolDefinitions,
           retrievalPlan,
           maxTokens: 4200,
         });

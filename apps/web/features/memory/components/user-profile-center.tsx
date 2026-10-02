@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useAuth } from "@web/lib/auth/use-auth";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -16,7 +18,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
-import { Message } from "@web/components/ui/feedback";
 import type { UserProfileView } from "@/lib/user-profile/types";
 
 const STARTER_TEMPLATE = `# 关于我
@@ -120,7 +121,7 @@ export function UserProfileCenter() {
           </button>
         </div>
 
-        {(error || notice) && <Message className="mt-5 shrink-0" tone={error ? "error" : "success"}>{error ?? notice}</Message>}
+        {(error || notice) && <ToastNotice tone={error ? "error" : "success"}>{error ?? notice}</ToastNotice>}
 
         {loading ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />加载用户画像</div>

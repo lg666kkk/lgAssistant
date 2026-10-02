@@ -1,5 +1,7 @@
 "use client";
 
+import { ToastNotice } from "@web/components/ui/toast";
+
 import { useCallback, useEffect, useState } from "react";
 import {
   Plus,
@@ -222,22 +224,8 @@ export function McpCenter() {
             MCP 配置存储尚未初始化，请联系管理员完成数据库更新。
           </div>
         )}
-        {error && (
-          <div
-            role="alert"
-            className="mt-5 rounded-lg border border-rose-900 bg-rose-950/30 p-3 text-sm text-rose-300"
-          >
-            {error}
-          </div>
-        )}
-        {notice && (
-          <div
-            role="status"
-            className="mt-5 rounded-lg border border-emerald-900 bg-emerald-950/20 p-3 text-sm text-emerald-300"
-          >
-            {notice}
-          </div>
-        )}
+        {error && <ToastNotice tone="error">{error}</ToastNotice>}
+        {notice && <ToastNotice tone="success">{notice}</ToastNotice>}
         {editor ? (
           <section
             aria-label={editor.server ? "编辑 MCP 服务" : "添加 MCP 服务"}

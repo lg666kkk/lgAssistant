@@ -26,6 +26,27 @@ function managerForImageSaveFailure(input: {
 }
 
 describe("ChatSession history loading", () => {
+  it("keeps model preferences isolated per session and serializes persistence", async () => {
+    const updateSessionModel = vi.fn(async (_sessionId: string, _model: string) => {});
+    const manager = { updateSessionModel } as unknown as SessionManager;
+    const first = new ChatSession("first", "user", manager);
+    const second = new ChatSession("second", "user", manager);
+    first.messages = [{ role: "user", content: "历史保留" }];
+    const saves = [first.selectModel("model-a"), second.selectModel("model-b"), first.selectModel("model-c")];
+    await Promise.all(saves);
+    expect(first.selectedModelId).toBe("model-c");
+    expect(second.selectedModelId).toBe("model-b");
+    expect(first.messages[0].content).toBe("历史保留");
+    expect(updateSessionModel.mock.calls.filter(([id]) => id === "first")).toEqual([["first", "model-a"], ["first", "model-c"]]);
+  });
+
+  it("keeps a new session preference in memory until the session is created", async () => {
+    const updateSessionModel = vi.fn();
+    const session = new ChatSession(undefined, "user", { updateSessionModel } as unknown as SessionManager);
+    await session.selectModel("model-a");
+    expect(session.selectedModelId).toBe("model-a");
+    expect(updateSessionModel).not.toHaveBeenCalled();
+  });
   it("queues messages while a response is running and removes them by id", async () => {
     const session = new ChatSession("session-1", "user-1", {} as SessionManager);
     session.loading = true;

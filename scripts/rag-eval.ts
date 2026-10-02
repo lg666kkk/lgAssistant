@@ -29,6 +29,8 @@ type CliOptions = {
   experiment: string;
   baseline?: string;
   maxRegression: number;
+  dataset?: string;
+  toolContext: boolean;
 };
 
 type RagCliConfig = {
@@ -51,6 +53,9 @@ type CaseReport = {
   noResultExpected: boolean;
   noResultPassed: boolean | null;
   latencyMs: number;
+  contextTokens?: number;
+  evidenceSufficient?: boolean;
+  sufficiencyPassed?: boolean;
   debug: RAGSearchDebug;
   topResults: Array<{
     rank: number;
@@ -92,10 +97,20 @@ function parseArgs(argv: string[], config: RagCliConfig): CliOptions {
     fusionStrategy: config.fusionStrategy,
     experiment: AGENTIC_RAG_VERSION,
     maxRegression: 0.02,
+    toolContext: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--dataset") {
+      options.dataset = argv[++i];
+      if (!options.dataset) throw new Error("--dataset 缺少 JSON 文件路径");
+      continue;
+    }
+    if (arg === "--tool-context") {
+      options.toolContext = true;
+      continue;
+    }
     if (arg === "--limit") {
       options.limit = parseTopK(argv[++i], config.maxResults);
       continue;
@@ -214,12 +229,12 @@ function compactExcerpt(text: string, maxChars = 240) {
 }
 
 function expectedPageIds(testCase: RagEvalCase) {
-  return [...(testCase.expectedPageIds ?? []), testCase.expectedPageId].filter(
+  return [...(testCase.expectedPageIds ?? []), ...(testCase.expectedAllPageIds ?? []), testCase.expectedPageId].filter(
     (id): id is string => typeof id === "string" && id.length > 0,
   );
 }
 
-function findSourceRank(testCase: RagEvalCase, results: SearchResult[]) {
+function findSourceRank(testCase: RagEvalCase, results: SearchResult[], bodyOnly = false) {
   const pageIds = expectedPageIds(testCase);
   const pageTitles = testCase.expectedPageTitles ?? [];
   const urls = testCase.expectedUrls ?? [];
@@ -234,7 +249,7 @@ function findSourceRank(testCase: RagEvalCase, results: SearchResult[]) {
     }
     const expectedKeywords = testCase.expectedKeywords ?? [];
     if (expectedKeywords.length === 0) return false;
-    const text = `${result.pageTitle}\n${result.content}`;
+    const text = bodyOnly ? result.content : `${result.pageTitle}\n${result.content}`;
     const hits = expectedKeywords.filter((keyword) => includesText(text, keyword)).length;
     return hits / expectedKeywords.length >= (testCase.minKeywordCoverage ?? 0.67);
   });
@@ -243,20 +258,20 @@ function findSourceRank(testCase: RagEvalCase, results: SearchResult[]) {
   return index >= 0 ? index + 1 : 0;
 }
 
-function scoreKeywordCoverage(testCase: RagEvalCase, results: SearchResult[]) {
+function scoreKeywordCoverage(testCase: RagEvalCase, results: SearchResult[], bodyOnly = false) {
   const expectedKeywords = testCase.expectedKeywords ?? [];
   if (expectedKeywords.length === 0) return 1;
 
-  const joined = results.map((result) => `${result.pageTitle}\n${result.content}`).join("\n");
+  const joined = results.map((result) => bodyOnly ? result.content : `${result.pageTitle}\n${result.content}`).join("\n");
   const hits = expectedKeywords.filter((keyword) => includesText(joined, keyword)).length;
   return hits / expectedKeywords.length;
 }
 
-function hasForbiddenKeyword(testCase: RagEvalCase, results: SearchResult[]) {
+function hasForbiddenKeyword(testCase: RagEvalCase, results: SearchResult[], bodyOnly = false) {
   const forbiddenKeywords = testCase.forbiddenKeywords ?? [];
   if (forbiddenKeywords.length === 0) return false;
 
-  const joined = results.map((result) => `${result.pageTitle}\n${result.content}`).join("\n");
+  const joined = results.map((result) => bodyOnly ? result.content : `${result.pageTitle}\n${result.content}`).join("\n");
   return forbiddenKeywords.some((keyword) => includesText(joined, keyword));
 }
 
@@ -265,9 +280,11 @@ function evaluateCase(params: {
   results: SearchResult[];
   debug: RAGSearchDebug;
   latencyMs: number;
+  contextTokens?: number;
+  evidenceSufficient?: boolean;
 }): CaseReport {
   const { testCase, results, debug, latencyMs } = params;
-  const sourceRank = findSourceRank(testCase, results);
+  const sourceRank = findSourceRank(testCase, results, params.contextTokens !== undefined);
   const relevanceMode = expectedPageIds(testCase).length > 0
     || (testCase.expectedPageTitles ?? []).length > 0
     || (testCase.expectedUrls ?? []).length > 0
@@ -275,16 +292,21 @@ function evaluateCase(params: {
       : (testCase.expectedKeywords ?? []).length > 0
         ? "keyword_proxy"
         : "not_evaluated";
-  const sourceHit = sourceRank === null ? true : sourceRank > 0;
-  const keywordCoverage = scoreKeywordCoverage(testCase, results);
+  const sourceHit = (sourceRank === null || sourceRank > 0)
+    && (testCase.expectedAllPageIds ?? []).every((id) => results.some((result) => result.pageId === id));
+  const keywordCoverage = scoreKeywordCoverage(testCase, results, params.contextTokens !== undefined);
   const minKeywordCoverage = testCase.minKeywordCoverage ?? 0.67;
-  const forbiddenHit = hasForbiddenKeyword(testCase, results);
+  const forbiddenHit = hasForbiddenKeyword(testCase, results, params.contextTokens !== undefined);
   const noResultExpected = testCase.expectedNoResult === true;
   const noResultPassed = noResultExpected ? results.length === 0 : null;
 
-  const passed = noResultExpected
+  const sufficiencyPassed = testCase.expectedEvidenceSufficient === undefined
+    ? undefined : params.evidenceSufficient === testCase.expectedEvidenceSufficient;
+  const retrievalPassed = noResultExpected
     ? noResultPassed === true
     : sourceHit && keywordCoverage >= minKeywordCoverage && !forbiddenHit;
+  const passed = retrievalPassed && sufficiencyPassed !== false
+    && (params.contextTokens === undefined || params.contextTokens <= 2400);
 
   return {
     id: testCase.id,
@@ -301,6 +323,9 @@ function evaluateCase(params: {
     noResultExpected,
     noResultPassed,
     latencyMs,
+    contextTokens: params.contextTokens,
+    evidenceSufficient: params.evidenceSufficient,
+    sufficiencyPassed,
     debug,
     topResults: results.map((result, index) => ({
       rank: index + 1,
@@ -355,6 +380,10 @@ function summarize(reports: CaseReport[]) {
     noResultCases: noResultReports.length,
     noResultAccuracy: noResultReports.length ? noResultHits / noResultReports.length : null,
     avgLatencyMs: reports.length ? totalLatencyMs / reports.length : 0,
+    sufficiencyAccuracy: reports.some((report) => report.sufficiencyPassed !== undefined)
+      ? reports.filter((report) => report.sufficiencyPassed).length
+        / reports.filter((report) => report.sufficiencyPassed !== undefined).length : null,
+    maxContextTokens: Math.max(0, ...reports.map((report) => report.contextTokens ?? 0)),
   };
 }
 
@@ -393,9 +422,16 @@ async function main() {
     import("../lib/platform/config"),
   ]);
   const options = parseArgs(process.argv.slice(2), ragConfig);
-  const selectedCases = options.caseIds
-    ? ragEvalCases.filter((testCase) => options.caseIds?.has(testCase.id))
+  const dataset = options.dataset
+    ? JSON.parse(fs.readFileSync(path.resolve(options.dataset), "utf8")) as RagEvalCase[]
     : ragEvalCases;
+  if (!Array.isArray(dataset) || dataset.some((item) => !item || typeof item.id !== "string" || typeof item.question !== "string")) {
+    throw new Error("--dataset 必须是包含 id 和 question 的 RagEvalCase JSON 数组");
+  }
+  if (!options.toolContext && dataset.some((item) => item.expectedEvidenceSufficient !== undefined)) {
+    throw new Error("评估证据充分性需要 --tool-context");
+  }
+  const selectedCases = options.caseIds ? dataset.filter((item) => options.caseIds?.has(item.id)) : dataset;
 
   if (selectedCases.length === 0) {
     throw new Error("没有匹配的 RAG eval case");
@@ -403,10 +439,14 @@ async function main() {
 
   const retriever = new RAGRetriever();
   const reports: CaseReport[] = [];
+  const [{ createSearchNotesTool }, { buildRetrievalPlan }, { QueryResultCache }] = await Promise.all([
+    import("../lib/agent/tools/search-notes"), import("../lib/agent/rag/retrieval-router"),
+    import("../lib/agent/rag/query-cache"),
+  ]);
 
   for (const testCase of selectedCases) {
     const startedAt = Date.now();
-    const response = await retriever.searchWithDebug(testCase.question, {
+    const retrievalOptions = {
       matchThreshold: options.threshold,
       matchCount: options.limit,
       userId: options.userId,
@@ -417,12 +457,32 @@ async function main() {
       enableKeywordSearch: options.enableKeywordSearch,
       enableCrossEncoder: options.enableCrossEncoder,
       fusionStrategy: options.fusionStrategy,
-    });
+    };
+    let response: { results: SearchResult[]; debug: RAGSearchDebug };
+    let contextTokens: number | undefined;
+    let evidenceSufficient: boolean | undefined;
+    if (options.toolContext) {
+      const plan = buildRetrievalPlan({ query: testCase.question, indexVersion: "eval-no-cache",
+        routeDecisionOverride: { route: "knowledge", reason: "knowledge_eval", confidence: 1,
+          freshnessRequired: false, evidenceRequired: true } });
+      const tool = createSearchNotesTool({ retrievalPlan: plan, cache: new QueryResultCache(),
+        retriever: { searchWithDebug: (query, searchOptions) => retriever.searchWithDebug(query,
+          { ...searchOptions, ...retrievalOptions }) } });
+      const result = await tool.execute({ query: testCase.question, limit: options.limit }, { userId: options.userId });
+      if (!result.ok) throw new Error(`${testCase.id}: ${result.error ?? result.content}`);
+      response = result.data as typeof response;
+      contextTokens = Number(result.metadata?.ragContextTokens ?? 0);
+      evidenceSufficient = result.metadata?.evidenceSufficient === true;
+    } else {
+      response = await retriever.searchWithDebug(testCase.question, retrievalOptions);
+    }
     const report = evaluateCase({
       testCase,
       results: response.results,
       debug: response.debug,
       latencyMs: Date.now() - startedAt,
+      contextTokens,
+      evidenceSufficient,
     });
     reports.push(report);
   }
@@ -441,6 +501,8 @@ async function main() {
       limit: options.limit,
       threshold: options.threshold,
       userId: options.userId,
+      toolContext: options.toolContext,
+      dataset: options.dataset,
       enableMmr: options.enableMmr,
       enableRerank: options.enableRerank,
       enableQueryRewrite: options.enableQueryRewrite,

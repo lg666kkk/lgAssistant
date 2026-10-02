@@ -1,5 +1,6 @@
 export type LlmAdapterType = "openai-compatible";
-export type LlmReasoningMode = "none" | "deepseek";
+export const LLM_REASONING_MODES = ["none", "auto-on", "auto-off", "deepseek", "deepseek-off", "qwen", "qwen-off", "thinking", "thinking-off"] as const;
+export type LlmReasoningMode = typeof LLM_REASONING_MODES[number];
 
 export type UserLlmModelPricing = {
   inputCacheHit: number | null;

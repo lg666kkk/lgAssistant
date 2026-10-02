@@ -92,11 +92,9 @@ describe("previewChatContextUseCase", () => {
     expect(
       Object.values(usage.breakdown ?? {}).reduce((sum, tokens) => sum + tokens, 0),
     ).toBe(usage.estimatedTokens);
-    expect(usage.runBudget).toMatchObject({
-      spentTokens: 0,
-      maxTokens: 128_000,
-      outputReserveTokens: 4_096,
-    });
+    expect(usage.runBudget).toBeUndefined();
+    expect(usage.outputReserveTokens).toBe(4096);
+    expect(usage.availableInputTokens).toBe(32000 - usage.estimatedTokens - 4096 - 512);
     expect(dependencies.userContext.resolveModel).toHaveBeenCalledTimes(1);
     expect(dependencies.sessions.resolveLoopMessages).toHaveBeenCalledTimes(1);
   });
