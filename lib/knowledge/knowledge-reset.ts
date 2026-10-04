@@ -1,3 +1,4 @@
+import { deleteAllKnowledgeFiles } from "@/lib/knowledge/files";
 import { getSupabase } from "@/lib/platform/supabase";
 
 export type KnowledgeResetOptions = {
@@ -10,6 +11,7 @@ export type KnowledgeResetOptions = {
 export type KnowledgeResetCounts = {
   notionPages: number;
   documents: number;
+  knowledgeFiles: number;
   compiledWikiPages: number;
   compiledWikiEdges: number;
   knowledgeProfiles: number;
@@ -25,6 +27,7 @@ export type KnowledgeResetResult = {
 const emptyCounts: KnowledgeResetCounts = {
   notionPages: 0,
   documents: 0,
+  knowledgeFiles: 0,
   compiledWikiPages: 0,
   compiledWikiEdges: 0,
   knowledgeProfiles: 0,
@@ -65,12 +68,14 @@ export async function previewKnowledgeReset(
   const counts = { ...emptyCounts };
 
   if (includeRag) {
-    const [notionPages, documents] = await Promise.all([
+    const [notionPages, documents, knowledgeFiles] = await Promise.all([
       countRows("notion_pages", options.userId),
       countRows("documents", options.userId),
+      countRowsIfExists("knowledge_files", options.userId),
     ]);
     counts.notionPages = notionPages;
     counts.documents = documents;
+    counts.knowledgeFiles = knowledgeFiles;
   }
 
   if (includeCompiledWiki) {
@@ -146,6 +151,8 @@ export async function resetKnowledgeBase(
   if (includeRag) {
     await deleteRows("documents", options.userId);
     await deleteRows("notion_pages", options.userId);
+    // 上传文件属于 RAG 原始数据，连同 Storage 对象一起清理。
+    if (counts.knowledgeFiles > 0) await deleteAllKnowledgeFiles(options.userId);
   }
 
   return {

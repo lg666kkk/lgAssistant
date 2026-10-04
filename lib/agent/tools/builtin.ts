@@ -18,6 +18,8 @@ import {
 } from "./memory-recall";
 import { askUserTool } from "./ask-user";
 import type { RetrievalPlan } from "@/lib/agent/rag/types";
+import { VisualAccessRegistry } from './visual-access';
+import { createReadKnowledgeVisualTool } from './read-knowledge-visual';
 
 // 创建一个注册表，并把所有内置工具注册进去。
 export function createBuiltinToolRegistry(options: {
@@ -25,13 +27,16 @@ export function createBuiltinToolRegistry(options: {
   retrievalPlan?: RetrievalPlan;
 } = {}): ToolRegistry {
   const registry = new ToolRegistry();
+  const visualAccess = new VisualAccessRegistry();
 
   registry.register(getCurrentTimeTool);
   registry.register(calculatorTool);
   registry.register(createSearchNotesTool({
     knowledgeProfile: options.knowledgeProfile,
     retrievalPlan: options.retrievalPlan,
+    visualAccess,
   }));
+  registry.register(createReadKnowledgeVisualTool(visualAccess));
   registry.register(createTodoTool);
   registry.register(dailyLeetCodeTool);
   registry.register(leetCodeWrongBookTool);

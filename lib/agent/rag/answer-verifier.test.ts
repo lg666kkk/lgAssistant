@@ -39,6 +39,13 @@ function bundle(): EvidenceBundle {
 }
 
 describe("claim-level groundedness verifier", () => {
+  it('does not equate image loading with an observed fact', () => {
+    const evidence = bundle();
+    evidence.evidences[0].kind = 'visual_loaded';
+    expect(verifyGroundedAnswer('RAG 会先检索相关证据片段。[ev_aaaaaaaaaaaa]', [evidence]).supportedClaimCount).toBe(0);
+    evidence.evidences[0].kind = 'visual_observation';
+    expect(verifyGroundedAnswer('RAG 会先检索相关证据片段。[ev_aaaaaaaaaaaa]', [evidence]).supportedClaimCount).toBe(1);
+  });
   it("accepts a supported claim with a citation after punctuation", () => {
     const report = verifyGroundedAnswer(
       "RAG 会先检索相关证据片段，再基于证据生成回答。[ev_aaaaaaaaaaaa]",

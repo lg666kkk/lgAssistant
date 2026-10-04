@@ -1,6 +1,7 @@
 import { enqueueKnowledgeProfileRefresh } from "@/lib/agent/tools/knowledge-profile";
 import { redactSensitiveText } from "@/lib/agent/rag/governance";
 import { getSupabase } from "@/lib/platform/supabase";
+import { parseFilePageId, syncKnowledgeFile } from "./files";
 import { syncNotionPageTree, syncNotionPages } from "./sync";
 
 export type RagIngestionJobStatus =
@@ -105,8 +106,26 @@ export function nextIngestionFailureState(input: {
 }
 
 async function processJob(job: RagIngestionJob, workerId: string) {
+  const heartbeat = setInterval(() => {
+    void (async () => {
+      // Extend only this claim; a reclaimed job has different attempts and cannot be renewed.
+      const { error } = await getSupabase().from('rag_ingestion_jobs').update({
+        lease_until: new Date(Date.now() + 300_000).toISOString(),
+      }).eq('id', job.id).eq('worker_id', workerId).eq('attempts', job.attempts).eq('status', 'running');
+      if (error) console.warn('[rag-ingestion] lease renewal failed');
+    })().catch(() => console.warn('[rag-ingestion] lease renewal failed'));
+  }, 60_000);
+  heartbeat.unref();
   try {
-    const syncResults = job.tree
+    const fileId = parseFilePageId(job.page_id);
+    const syncResults = fileId
+      ? [await syncKnowledgeFile(fileId, {
+          userId: job.user_id,
+          force: job.force,
+          maxRetries: 0,
+          ingestionLease: { jobId: job.id, workerId, attempts: job.attempts },
+        })]
+      : job.tree
       ? await syncNotionPageTree(job.page_id, {
           userId: job.user_id,
           force: job.force,
@@ -143,6 +162,7 @@ async function processJob(job: RagIngestionJob, workerId: string) {
       })
       .eq("id", job.id)
       .eq("worker_id", workerId)
+      .eq('attempts', job.attempts)
       .eq("status", "running")
       .select("id")
       .maybeSingle();
@@ -170,6 +190,7 @@ async function processJob(job: RagIngestionJob, workerId: string) {
       })
       .eq("id", job.id)
       .eq("worker_id", workerId)
+      .eq('attempts', job.attempts)
       .eq("status", "running")
       .select("id")
       .maybeSingle();
@@ -178,5 +199,7 @@ async function processJob(job: RagIngestionJob, workerId: string) {
       return { id: job.id, status: "lease_lost" as const, error: message };
     }
     return { id: job.id, status, error: message };
+  } finally {
+    clearInterval(heartbeat);
   }
 }

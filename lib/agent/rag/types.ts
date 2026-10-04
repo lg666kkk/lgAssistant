@@ -70,6 +70,11 @@ export type EvidenceScores = {
 };
 
 export type EvidenceCitation = {
+  fileId?: string;
+  sourceVersion?: string;
+  generationId?: string;
+  assetId?: string;
+  pageNumber?: number;
   url?: string;
   headingPath?: string[];
   startChar?: number;
@@ -78,6 +83,7 @@ export type EvidenceCitation = {
 };
 
 export type EvidenceItem = {
+  kind?: 'text' | 'visual_proxy' | 'visual_loaded' | 'visual_observation';
   evidenceId: string;
   source: RetrievalSource;
   chunkId?: string;

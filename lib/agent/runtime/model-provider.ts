@@ -1,4 +1,5 @@
 import { prepareRequestContext, assertRequestContextFits } from "./request-context";
+import { hydrateKnowledgeMedia } from './knowledge-media';
 import type { ChatModelId } from "@/lib/agent/models";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
@@ -212,7 +213,7 @@ export function createStrategyDiagnosticFetch(
 
 type ExecutionModel = Pick<
   ResolvedUserLlmModel,
-  "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "contextWindow" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing"
+  "modelId" | "displayName" | "providerName" | "baseUrl" | "apiKey" | "contextWindow" | "maxOutputTokens" | "temperature" | "reasoningMode" | "pricing" | "supportsImages"
 >;
 
 function configuredPricing(
@@ -373,9 +374,24 @@ function toAITools(tools: Anthropic.Tool[]) {
   );
 }
 
-function toAIMessages(messages: ModelMessage[]) {
+export function toAIMessages(messages: ModelMessage[]) {
   const toolNameByCallId = new Map<string, string>();
-  return messages.map((message) => toAIMessage(message, toolNameByCallId));
+  const result: any[] = [];
+  for (const message of messages) {
+    const images: any[] = [];
+    const normalized = { ...message, content: Array.isArray(message.content)
+      ? message.content.map((block: any) => {
+        if (block.type !== 'tool_result' || !Array.isArray(block.content)) return block;
+        for (const part of block.content) if (part.type === 'image') {
+          images.push({ type: 'text', text: `Untrusted document image for tool_call_id=${block.tool_use_id}. Its evidence/source is identified in the preceding receipt.` }, part);
+        }
+        return { ...block, content: block.content.filter((part: any) => part.type !== 'image') };
+      }) : message.content } as ModelMessage;
+    result.push(toAIMessage(normalized, toolNameByCallId));
+    // Complete every tool receipt before the user image message for compatible providers.
+    if (images.length) result.push(toAIMessage({ role: 'user', content: images }, toolNameByCallId));
+  }
+  return result;
 }
 
 function toAnthropicUsage(
@@ -435,16 +451,21 @@ export async function callModelWithProvider(input: {
   });
   assertRequestContextFits(prepared);
   provider.setRequestMessages(prepared.messages);
+  const hydrated = await hydrateKnowledgeMedia(prepared.messages,
+    typeof input.telemetryMetadata?.userId === 'string' ? input.telemetryMetadata.userId : undefined,
+    input.signal, provider.runtimeModel.supportsImages);
   const result = streamText({
     abortSignal: input.signal,
     model: provider.model,
     maxOutputTokens: provider.runtimeModel.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
     system: input.system,
-    messages: toAIMessages(prepared.messages),
+    messages: toAIMessages(hydrated),
     tools: toAITools(input.tools),
     experimental_telemetry: {
       isEnabled: true,
+      recordInputs: false,
+      recordOutputs: false,
       functionId,
       metadata: compactMetadata(functionId, {
         ...input.telemetryMetadata,
@@ -545,6 +566,8 @@ export async function generateTextWithProvider(input: {
       prompt: input.prompt,
       experimental_telemetry: {
         isEnabled: true,
+      recordInputs: false,
+      recordOutputs: false,
         functionId: input.telemetryFunctionId ?? "generate-text",
         metadata: compactMetadata(input.telemetryFunctionId ?? "generate-text", {
           ...input.telemetryMetadata,
@@ -597,15 +620,20 @@ export async function streamTextWithProvider(input: {
   });
   assertRequestContextFits(prepared);
   provider.setRequestMessages(prepared.messages);
+  const hydrated = await hydrateKnowledgeMedia(prepared.messages,
+    typeof input.telemetryMetadata?.userId === 'string' ? input.telemetryMetadata.userId : undefined,
+    input.signal, provider.runtimeModel.supportsImages);
   const result = streamText({
     model: provider.model,
     maxOutputTokens: provider.runtimeModel.maxOutputTokens,
     temperature: provider.runtimeModel.temperature,
     system: input.system,
-    messages: toAIMessages(prepared.messages),
+    messages: toAIMessages(hydrated),
     abortSignal: input.signal,
     experimental_telemetry: {
       isEnabled: true,
+      recordInputs: false,
+      recordOutputs: false,
       functionId: "final-answer-stream",
       metadata: compactMetadata("final-answer-stream", {
         ...input.telemetryMetadata,

@@ -13,11 +13,11 @@ import {
   RotateCcw,
   Save,
   Settings,
-  Upload,
   type LucideIcon,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
 import { ConfirmDialog } from "@web/components/ui/feedback";
+import { KnowledgeFilePanel } from "./knowledge-file-panel";
 import { NotionConnectionPanel } from "./notion-connection-panel";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
@@ -38,7 +38,9 @@ type KnowledgePage = {
   last_edited_time: string;
   last_synced_at: string;
   chunk_count: number;
+  source_type?: "notion" | "document";
   metadata?: {
+    file_kind?: string;
     content_hash?: string;
     embedding_model?: string;
     chunker_version?: string;
@@ -70,6 +72,7 @@ type WikiPage = {
 type KnowledgeResetCounts = {
   notionPages: number;
   documents: number;
+  knowledgeFiles?: number;
   compiledWikiPages: number;
   compiledWikiEdges: number;
   knowledgeProfiles?: number;
@@ -105,6 +108,15 @@ type IngestionJob = {
   created_at: string;
   updated_at: string;
 };
+
+function SourceBadge({ sourceType, label }: { sourceType: "notion" | "document"; label?: string }) {
+  const isFile = sourceType === "document";
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${isFile ? "bg-violet-950/60 text-violet-300" : "bg-zinc-800 text-zinc-400"}`}>
+      {isFile ? (label ?? "file") : "notion"}
+    </span>
+  );
+}
 
 function formatMetaValue(value: unknown): string {
   if (value === null || value === undefined) return "-";
@@ -518,22 +530,10 @@ export function KnowledgeCenter() {
               onConfigChange={handleNotionConfigChange}
             />
 
-            <section className="rounded-lg border border-zinc-800 bg-zinc-950">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-medium text-zinc-100">文件上传</h2>
-                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-zinc-500">
-                    <span className="rounded bg-zinc-900 px-2 py-0.5">PDF</span>
-                    <span className="rounded bg-zinc-900 px-2 py-0.5">Markdown</span>
-                    <span className="rounded bg-zinc-900 px-2 py-0.5">HTML</span>
-                  </div>
-                </div>
-                <span className="rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-500">暂未开放</span>
-              </div>
-              <div className="flex h-28 items-center justify-center text-zinc-600">
-                <Upload className="h-6 w-6" aria-hidden="true" />
-              </div>
-            </section>
+            <KnowledgeFilePanel
+              enabled={Boolean(user)}
+              onChanged={() => { loadPages(); loadIngestionJobs(); }}
+            />
 
         <section className="rounded-lg border border-zinc-800 bg-zinc-950">
           <div className="border-b border-zinc-800 px-4 py-3">
@@ -931,6 +931,11 @@ export function KnowledgeCenter() {
                     <div className="mt-1 text-lg font-semibold text-zinc-100">
                       {resetPreview.counts.notionPages}
                     </div>
+                    {Boolean(resetPreview.counts.knowledgeFiles) && (
+                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                        含上传文件 {resetPreview.counts.knowledgeFiles}
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
                     <div className="text-zinc-500">Chunks</div>
@@ -1000,8 +1005,9 @@ export function KnowledgeCenter() {
                       >
                         {page.page_title?.trim() || "Untitled"}
                       </a>
-                      <div className="mt-1 font-mono text-xs text-slate-600">
-                        {page.page_id}
+                      <div className="mt-1 flex items-center gap-2 font-mono text-xs text-slate-600">
+                        <SourceBadge sourceType={page.source_type ?? "notion"} label={page.metadata?.file_kind} />
+                        <span className="truncate">{page.page_id}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-300">{page.chunk_count}</td>
@@ -1043,7 +1049,10 @@ export function KnowledgeCenter() {
                   <tbody className="divide-y divide-zinc-800">
                     {ingestionJobs.slice(0, 20).map((job) => (
                       <tr key={job.id}>
-                        <td className="max-w-56 truncate px-4 py-3 font-mono text-xs text-zinc-400">{job.page_id}</td>
+                        <td className="max-w-56 truncate px-4 py-3 font-mono text-xs text-zinc-400">
+                          <SourceBadge sourceType={job.page_id.startsWith("file:") ? "document" : "notion"} />{" "}
+                          {job.page_id}
+                        </td>
                         <td className="px-4 py-3 text-zinc-300">{job.status}</td>
                         <td className="px-4 py-3 text-zinc-500">{job.attempts}/{job.max_attempts}</td>
                         <td className="px-4 py-3 text-zinc-500">{new Date(job.updated_at).toLocaleString()}</td>

@@ -114,6 +114,9 @@ export function buildAtomicDocumentPayload(input: {
   embeddingModel?: string;
   embeddingDimensions?: number;
   embeddingProvider?: string;
+  sourceType?: KnowledgeSourceType;
+  /** 来源特有的 chunk 级元数据（如 PDF 页码），不能覆盖核心字段。 */
+  chunkMetadata?: (chunk: TextChunk) => Record<string, unknown> | undefined;
 }): AtomicDocumentPayload[] {
   if (input.embeddings.length !== input.chunks.length) {
     throw new Error(
@@ -131,6 +134,7 @@ export function buildAtomicDocumentPayload(input: {
       content: chunk.text,
       embedding,
       metadata: {
+        ...input.chunkMetadata?.(chunk),
         page_id: input.pageId,
         page_title: input.pageTitle,
         page_url: input.pageUrl,
@@ -146,7 +150,7 @@ export function buildAtomicDocumentPayload(input: {
         parent_end_char: parentContext.endChar,
         parent_child_count: parentContext.childCount,
         content_hash: hashText(chunk.text),
-        source_type: 'notion',
+        source_type: input.sourceType ?? 'notion',
         embedding_model: input.embeddingModel ?? EMBEDDING_MODEL,
         embedding_dimensions: input.embeddingDimensions ?? EMBEDDING_DIMENSIONS,
         embedding_provider: input.embeddingProvider ?? 'dashscope',
@@ -156,6 +160,26 @@ export function buildAtomicDocumentPayload(input: {
     };
   });
 }
+
+// 与检索过滤 RetrievalFilters.sourceTypes 的取值保持一致。
+export type KnowledgeSourceType = 'notion' | 'document';
+
+/**
+ * 统一的待索引文档：content 需为 Markdown/纯文本，pageId 在用户内唯一。
+ */
+export type SourceDocument = {
+  sourceType: KnowledgeSourceType;
+  pageId: string;
+  title: string;
+  url: string;
+  content: string;
+  lastEditedTime: string;
+  /** 写入 notion_pages.metadata 的来源特有字段。 */
+  pageMetadata?: Record<string, unknown>;
+  additionalUnits?: { content: string; metadata: Record<string, unknown> }[];
+  publication?: { rpc: string; metadata: Record<string, unknown> };
+  chunkMetadata?: (chunk: TextChunk) => Record<string, unknown> | undefined;
+};
 
 /**
  * 同步结果
@@ -218,6 +242,7 @@ export type SyncOptions = {
   maxRetries?: number;
   onEvent?: (event: SyncProgressEvent) => void;
   notionConnection?: ResolvedUserNotionConnection;
+  ingestionLease?: { jobId: string; workerId: string; attempts: number };
 };
 
 async function withNotionConnection(options: SyncOptions): Promise<SyncOptions> {
@@ -385,8 +410,6 @@ async function syncNotionPageOnce(
   });
 
   try {
-    const embeddingRuntime = await createUserEmbeddingClient(options.userId);
-    const embeddingModel = embeddingRuntime.config.modelId;
     // 1. 读取 Notion 页面
     const notionConnection = options.notionConnection;
     if (!notionConnection) throw new Error('Notion 连接未解析');
@@ -395,7 +418,6 @@ async function syncNotionPageOnce(
       maxBlockDepth: notionConnection.maxDepth,
     });
     const page = await notionClient.getPage(pageId);
-    const pageContentHash = hashText(page.content);
     emitSyncEvent(options, {
       type: 'page_read',
       pageId,
@@ -407,319 +429,377 @@ async function syncNotionPageOnce(
       },
     });
 
-    const supabase = createSupabaseClient();
-    const existingPageQuery = supabase
-      .from('notion_pages')
-      .select('id, page_id, page_title, page_url, last_edited_time, chunk_count, metadata')
-      .eq('page_id', pageId)
-      .eq('user_id', options.userId);
-
-    const { data: existingPage, error: existingPageError } =
-      await existingPageQuery.maybeSingle();
-
-    if (existingPageError) {
-      throw new Error(`读取页面元数据失败: ${existingPageError.message}`);
-    }
-    emitSyncEvent(options, {
-      type: 'page_version_checked',
+    return await indexSourceDocument({
+      sourceType: 'notion',
       pageId,
-      pageTitle: page.title,
-      message: existingPage ? '已找到历史索引版本' : '未找到历史索引版本，将创建新索引',
-      metadata: {
-        existingChunkCount: existingPage?.chunk_count ?? 0,
-        contentHash: pageContentHash.slice(0, 12),
-        embeddingModel,
-        chunkerVersion: CHUNKER_VERSION,
-        force: Boolean(options.force),
-      },
-    });
-
-    if (!options.force && isSameIndexedVersion(
-      existingPage?.metadata,
-      pageContentHash,
-      embeddingModel,
-    )) {
-      if (existingPage && (
-        existingPage.page_title !== page.title || existingPage.page_url !== page.url
-        || existingPage.last_edited_time !== page.lastEditedTime
-      )) {
-        const { error } = await supabase.rpc('refresh_notion_page_metadata_atomic', {
-          p_user_id: options.userId,
-          p_page_id: pageId,
-          p_page_title: page.title,
-          p_page_url: page.url,
-          p_last_edited_time: page.lastEditedTime,
-          p_expected_content_hash: pageContentHash,
-        });
-        if (error) throw new Error(`更新页面元数据失败: ${error.message}`);
-        return { pageId, pageTitle: page.title, chunksCount: existingPage.chunk_count,
-          success: true, status: 'updated', indexVersion: pageContentHash };
-      }
-      emitSyncEvent(options, {
-        type: 'page_skipped',
-        pageId,
-        pageTitle: page.title,
-        chunksCount: existingPage?.chunk_count ?? 0,
-        status: 'skipped',
-        message: `内容和索引版本未变化，跳过：${page.title}`,
-      });
-      return {
-        pageId,
-        pageTitle: page.title,
-        chunksCount: existingPage?.chunk_count ?? 0,
-        success: true,
-        status: 'skipped',
-        indexVersion: pageContentHash,
-      };
-    }
-
-    if (options.force) {
-      emitSyncEvent(options, {
-        type: 'page_version_checked',
-        pageId,
-        pageTitle: page.title,
-        message: '已开启强制刷新，将重新生成 chunks 和向量',
-        metadata: {
-          force: true,
-          reason: 'manual_refresh',
-        },
-      });
-    }
-
-    // 2. 切分文本
-    emitSyncEvent(options, {
-      type: 'chunking_start',
-      pageId,
-      pageTitle: page.title,
-      message: '开始按标题和段落结构切分文本',
-      metadata: {
-        contentLength: page.content.length,
-        chunkSize: 700,
-        overlap: 50,
-        minChunkSize: 100,
-        maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
-        overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
-        chunkerVersion: CHUNKER_VERSION,
-      },
-    });
-    const chunks = chunkText(page.content, {
-      chunkSize: 700,
-      overlap: 50,
-      minChunkSize: 100,
-    });
-    emitSyncEvent(options, {
-      type: 'page_chunked',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: chunks.length,
-      message: `已切分为 ${chunks.length} 个 chunk`,
-      metadata: {
-        chunkSize: 700,
-        overlap: 50,
-        minChunkSize: 100,
-        maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
-        overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
-        samples: chunks.slice(0, 5).map((chunk) => ({
-          index: chunk.index,
-          chars: chunk.text.length,
-          tokens: chunk.tokenCount,
-          kind: chunk.kind,
-          range: [chunk.startChar, chunk.endChar],
-          headingPath: chunk.headingPath,
-          preview: compactText(chunk.text),
-        })),
-      },
-    });
-    for (const chunk of chunks.slice(0, 5)) {
-      emitSyncEvent(options, {
-        type: 'chunk_sample',
-        pageId,
-        pageTitle: page.title,
-        chunksCount: chunks.length,
-        message: `Chunk #${chunk.index} · ${chunk.text.length} 字符`,
-        metadata: {
-          index: chunk.index,
-          tokenCount: chunk.tokenCount,
-          kind: chunk.kind,
-          startChar: chunk.startChar,
-          endChar: chunk.endChar,
-          headingPath: chunk.headingPath,
-          preview: compactText(chunk.text, 220),
-        },
-      });
-    }
-
-    // 3. 生成向量
-    emitSyncEvent(options, {
-      type: 'embedding_start',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: chunks.length,
-      message: `开始为 ${chunks.length} 个 chunk 生成向量`,
-      metadata: {
-        embeddingModel,
-        expectedDimensions: embeddingRuntime.config.dimensions,
-        batchSize: EMBEDDING_BATCH_SIZE,
-        totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
-        maxRetriesPerBatch: EMBEDDING_MAX_RETRIES,
-      },
-    });
-    const embeddings = await embeddingRuntime.client.embedBatch(
-      chunks.map((c) => c.text),
-      {
-        idempotencyScope: [
-          options.userId,
-          pageId,
-          pageContentHash,
-          embeddingModel,
-          CHUNKER_VERSION,
-        ].join(':'),
-        onEvent: (event) => emitEmbeddingBatchEvent(
-          options,
-          { id: pageId, title: page.title },
-          event,
-        ),
-      },
-    );
-    emitSyncEvent(options, {
-      type: 'page_embedded',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: chunks.length,
-      message: `已生成 ${embeddings.length} 个向量`,
-      metadata: {
-        embeddingModel,
-        vectorCount: embeddings.length,
-        dimensions: embeddings[0]?.length ?? 0,
-        totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
-        batchSize: EMBEDDING_BATCH_SIZE,
-      },
-    });
-
-    // 4. 原子替换数据库索引
-    const syncStatus = existingPage ? 'updated' : 'created';
-    const documents = buildAtomicDocumentPayload({
-      chunks,
-      embeddings,
-      pageId,
-      pageTitle: page.title,
-      pageUrl: page.url,
+      title: page.title,
+      url: page.url,
+      content: page.content,
       lastEditedTime: page.lastEditedTime,
-      embeddingModel,
-      embeddingDimensions: embeddingRuntime.config.dimensions,
-      embeddingProvider: embeddingRuntime.config.provider,
-    });
-    emitSyncEvent(options, {
-      type: 'db_atomic_replace_start',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: chunks.length,
-      status: syncStatus,
-      message: `开始原子替换页面元数据和 ${documents.length} 个 chunk`,
-      metadata: {
-        rpc: 'sync_notion_page_documents_atomic',
-        tables: ['notion_pages', 'documents'],
-        chunkCount: documents.length,
-        firstChunkHash: documents[0]?.metadata.content_hash?.toString().slice(0, 12),
-      },
-    });
+    }, options);
+  } catch (error) {
+    return failedSyncResult(pageId, options, error);
+  }
+}
 
-    const { data: atomicWriteRows, error: atomicWriteError } = await supabase.rpc(
-      'sync_notion_page_documents_atomic',
-      {
+export function failedSyncResult(
+  pageId: string,
+  options: SyncOptions,
+  error: unknown,
+): SyncResult {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`  ✗ 同步失败: ${message}`);
+  emitSyncEvent(options, {
+    type: 'page_failed',
+    pageId,
+    status: 'failed',
+    message: `同步失败：${message}`,
+    metadata: {
+      error: message,
+    },
+  });
+  return {
+    pageId,
+    pageTitle: '',
+    chunksCount: 0,
+    success: false,
+    status: 'failed',
+    error: message,
+  };
+}
+
+/**
+ * 来源无关的入库核心：版本判断 → 切块 → Embedding → 原子替换。
+ * 失败时抛出异常，由调用方转换为 SyncResult。
+ */
+export async function indexSourceDocument(
+  page: SourceDocument,
+  options: SyncOptions,
+): Promise<SyncResult> {
+  const { pageId } = page;
+  const embeddingRuntime = await createUserEmbeddingClient(options.userId);
+  const embeddingModel = embeddingRuntime.config.modelId;
+  const pageContentHash = hashText(page.additionalUnits || page.publication
+    ? JSON.stringify([page.content, page.additionalUnits, page.publication?.metadata.pipeline_version])
+    : page.content);
+  const supabase = createSupabaseClient();
+  const existingPageQuery = supabase
+    .from('notion_pages')
+    .select('id, page_id, page_title, page_url, last_edited_time, chunk_count, metadata')
+    .eq('page_id', pageId)
+    .eq('user_id', options.userId);
+
+  const { data: existingPage, error: existingPageError } =
+    await existingPageQuery.maybeSingle();
+
+  if (existingPageError) {
+    throw new Error(`读取页面元数据失败: ${existingPageError.message}`);
+  }
+  emitSyncEvent(options, {
+    type: 'page_version_checked',
+    pageId,
+    pageTitle: page.title,
+    message: existingPage ? '已找到历史索引版本' : '未找到历史索引版本，将创建新索引',
+    metadata: {
+      existingChunkCount: existingPage?.chunk_count ?? 0,
+      contentHash: pageContentHash.slice(0, 12),
+      embeddingModel,
+      chunkerVersion: CHUNKER_VERSION,
+      force: Boolean(options.force),
+    },
+  });
+
+  if (!options.force && isSameIndexedVersion(
+    existingPage?.metadata,
+    pageContentHash,
+    embeddingModel,
+  )) {
+    if (existingPage && (
+      existingPage.page_title !== page.title || existingPage.page_url !== page.url
+      || existingPage.last_edited_time !== page.lastEditedTime
+    )) {
+      const { error } = await supabase.rpc('refresh_notion_page_metadata_atomic', {
         p_user_id: options.userId,
         p_page_id: pageId,
         p_page_title: page.title,
         p_page_url: page.url,
         p_last_edited_time: page.lastEditedTime,
-        p_page_metadata: {
-          content_hash: pageContentHash,
-          index_version: pageContentHash,
-          embedding_model: embeddingModel,
-          embedding_dimensions: embeddingRuntime.config.dimensions,
-          embedding_provider: embeddingRuntime.config.provider,
-          chunker_version: CHUNKER_VERSION,
-        },
-        p_documents: documents,
-      },
-    );
-
-    if (atomicWriteError) {
-      throw new Error(`原子替换页面索引失败: ${atomicWriteError.message}`);
+        p_expected_content_hash: pageContentHash,
+      });
+      if (error) throw new Error(`更新页面元数据失败: ${error.message}`);
+      return { pageId, pageTitle: page.title, chunksCount: existingPage.chunk_count,
+        success: true, status: 'updated', indexVersion: pageContentHash };
     }
-
-    const atomicWrite = Array.isArray(atomicWriteRows)
-      ? atomicWriteRows[0]
-      : atomicWriteRows;
-    const insertedCount = Number(atomicWrite?.inserted_count);
-    if (!atomicWrite?.page_row_id || insertedCount !== documents.length) {
-      throw new Error(
-        `原子替换返回异常: inserted=${Number.isFinite(insertedCount) ? insertedCount : 'unknown'}, expected=${documents.length}`,
-      );
-    }
-
     emitSyncEvent(options, {
-      type: 'db_atomic_replace_committed',
+      type: 'page_skipped',
       pageId,
       pageTitle: page.title,
-      chunksCount: insertedCount,
-      status: syncStatus,
-      message: `原子替换已提交：${insertedCount} 个 chunk`,
-      metadata: {
-        rpc: 'sync_notion_page_documents_atomic',
-        pageRowId: atomicWrite.page_row_id,
-        insertedCount,
-        transaction: 'committed',
-      },
+      chunksCount: existingPage?.chunk_count ?? 0,
+      status: 'skipped',
+      message: `内容和索引版本未变化，跳过：${page.title}`,
     });
-
-    emitSyncEvent(options, {
-      type: 'page_written',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: documents.length,
-      status: syncStatus,
-      message: `已写入 ${documents.length} 个文档块`,
-    });
-
-    // 5. 完成
-    emitSyncEvent(options, {
-      type: 'page_done',
-      pageId,
-      pageTitle: page.title,
-      chunksCount: chunks.length,
-      status: syncStatus,
-      message: `同步完成：${page.title}`,
-    });
-
     return {
       pageId,
       pageTitle: page.title,
-      chunksCount: chunks.length,
+      chunksCount: existingPage?.chunk_count ?? 0,
       success: true,
-      status: syncStatus,
+      status: 'skipped',
       indexVersion: pageContentHash,
     };
-  } catch (error: any) {
-    console.error(`  ✗ 同步失败: ${error.message}`);
+  }
+
+  if (options.force) {
     emitSyncEvent(options, {
-      type: 'page_failed',
+      type: 'page_version_checked',
       pageId,
-      status: 'failed',
-      message: `同步失败：${error.message}`,
+      pageTitle: page.title,
+      message: '已开启强制刷新，将重新生成 chunks 和向量',
       metadata: {
-        error: error.message,
+        force: true,
+        reason: 'manual_refresh',
       },
     });
-    return {
+  }
+
+  // 2. 切分文本
+  emitSyncEvent(options, {
+    type: 'chunking_start',
+    pageId,
+    pageTitle: page.title,
+    message: '开始按标题和段落结构切分文本',
+    metadata: {
+      contentLength: page.content.length,
+      chunkSize: 700,
+      overlap: 50,
+      minChunkSize: 100,
+      maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
+      overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
+      chunkerVersion: CHUNKER_VERSION,
+    },
+  });
+  const chunks = chunkText(page.content, {
+    chunkSize: 700,
+    overlap: 50,
+    minChunkSize: 100,
+  });
+  const additionalMetadata = new Map<TextChunk, Record<string, unknown>>();
+  for (const unit of page.additionalUnits ?? []) {
+    for (const chunk of chunkText(unit.content, { minChunkSize: 1, minTokens: 1 })) {
+      chunk.index = chunks.length;
+      chunk.headingPath = [`visual-${String(unit.metadata.asset_id ?? chunk.index)}`];
+      chunks.push(chunk);
+      additionalMetadata.set(chunk, unit.metadata);
+    }
+  }
+  emitSyncEvent(options, {
+    type: 'page_chunked',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    message: `已切分为 ${chunks.length} 个 chunk`,
+    metadata: {
+      chunkSize: 700,
+      overlap: 50,
+      minChunkSize: 100,
+      maxTokens: DEFAULT_CHUNK_MAX_TOKENS,
+      overlapTokens: DEFAULT_CHUNK_OVERLAP_TOKENS,
+      samples: chunks.slice(0, 5).map((chunk) => ({
+        index: chunk.index,
+        chars: chunk.text.length,
+        tokens: chunk.tokenCount,
+        kind: chunk.kind,
+        range: [chunk.startChar, chunk.endChar],
+        headingPath: chunk.headingPath,
+        preview: compactText(chunk.text),
+      })),
+    },
+  });
+  for (const chunk of chunks.slice(0, 5)) {
+    emitSyncEvent(options, {
+      type: 'chunk_sample',
       pageId,
-      pageTitle: '',
-      chunksCount: 0,
-      success: false,
-      status: 'failed',
-      error: error.message,
+      pageTitle: page.title,
+      chunksCount: chunks.length,
+      message: `Chunk #${chunk.index} · ${chunk.text.length} 字符`,
+      metadata: {
+        index: chunk.index,
+        tokenCount: chunk.tokenCount,
+        kind: chunk.kind,
+        startChar: chunk.startChar,
+        endChar: chunk.endChar,
+        headingPath: chunk.headingPath,
+        preview: compactText(chunk.text, 220),
+      },
+    });
+  }
+
+  // 3. 生成向量
+  emitSyncEvent(options, {
+    type: 'embedding_start',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    message: `开始为 ${chunks.length} 个 chunk 生成向量`,
+    metadata: {
+      embeddingModel,
+      expectedDimensions: embeddingRuntime.config.dimensions,
+      batchSize: EMBEDDING_BATCH_SIZE,
+      totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
+      maxRetriesPerBatch: EMBEDDING_MAX_RETRIES,
+    },
+  });
+  const embeddings = await embeddingRuntime.client.embedBatch(
+    chunks.map((c) => c.text),
+    {
+      idempotencyScope: [
+        options.userId,
+        pageId,
+        pageContentHash,
+        embeddingModel,
+        CHUNKER_VERSION,
+      ].join(':'),
+      onEvent: (event) => emitEmbeddingBatchEvent(
+        options,
+        { id: pageId, title: page.title },
+        event,
+      ),
+    },
+  );
+  emitSyncEvent(options, {
+    type: 'page_embedded',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    message: `已生成 ${embeddings.length} 个向量`,
+    metadata: {
+      embeddingModel,
+      vectorCount: embeddings.length,
+      dimensions: embeddings[0]?.length ?? 0,
+      totalBatches: Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE),
+      batchSize: EMBEDDING_BATCH_SIZE,
+    },
+  });
+
+  // 4. 原子替换数据库索引
+  const syncStatus = existingPage ? 'updated' : 'created';
+  const documents = buildAtomicDocumentPayload({
+    chunks,
+    embeddings,
+    pageId,
+    pageTitle: page.title,
+    pageUrl: page.url,
+    lastEditedTime: page.lastEditedTime,
+    embeddingModel,
+    embeddingDimensions: embeddingRuntime.config.dimensions,
+    embeddingProvider: embeddingRuntime.config.provider,
+    sourceType: page.sourceType,
+    chunkMetadata: (chunk) => additionalMetadata.get(chunk) ?? page.chunkMetadata?.(chunk),
+  });
+  // Visual units have their own coordinate system and must never share text parents.
+  for (let i = 0; i < chunks.length; i++) {
+    const metadata = additionalMetadata.get(chunks[i]);
+    if (!metadata) continue;
+    documents[i].metadata = { ...documents[i].metadata, ...metadata,
+      page_id: pageId, source_type: page.sourceType,
+      parent_content: chunks[i].text,
+      parent_key: `${pageId}:visual:${String(metadata.asset_id)}:${chunks[i].index}`,
     };
   }
+  if (page.publication && chunks.length === 0) throw new Error('Visual document contains no indexable units');
+  emitSyncEvent(options, {
+    type: 'db_atomic_replace_start',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    status: syncStatus,
+    message: `开始原子替换页面元数据和 ${documents.length} 个 chunk`,
+    metadata: {
+      rpc: page.publication?.rpc ?? 'sync_notion_page_documents_atomic',
+      tables: ['notion_pages', 'documents'],
+      chunkCount: documents.length,
+      firstChunkHash: documents[0]?.metadata.content_hash?.toString().slice(0, 12),
+    },
+  });
+
+  const { data: atomicWriteRows, error: atomicWriteError } = await supabase.rpc(
+    page.publication?.rpc ?? 'sync_notion_page_documents_atomic',
+    {
+      p_user_id: options.userId,
+      p_page_id: pageId,
+      p_page_title: page.title,
+      p_page_url: page.url,
+      p_last_edited_time: page.lastEditedTime,
+      p_page_metadata: {
+        ...page.pageMetadata,
+        ...page.publication?.metadata,
+        source_type: page.sourceType,
+        content_hash: pageContentHash,
+        index_version: pageContentHash,
+        embedding_model: embeddingModel,
+        embedding_dimensions: embeddingRuntime.config.dimensions,
+        embedding_provider: embeddingRuntime.config.provider,
+        chunker_version: CHUNKER_VERSION,
+      },
+      p_documents: documents,
+    },
+  );
+
+  if (atomicWriteError) {
+    throw new Error(`原子替换页面索引失败: ${atomicWriteError.message}`);
+  }
+
+  const atomicWrite = Array.isArray(atomicWriteRows)
+    ? atomicWriteRows[0]
+    : atomicWriteRows;
+  const insertedCount = Number(atomicWrite?.inserted_count);
+  if (!atomicWrite?.page_row_id || insertedCount !== documents.length) {
+    throw new Error(
+      `原子替换返回异常: inserted=${Number.isFinite(insertedCount) ? insertedCount : 'unknown'}, expected=${documents.length}`,
+    );
+  }
+
+  emitSyncEvent(options, {
+    type: 'db_atomic_replace_committed',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: insertedCount,
+    status: syncStatus,
+    message: `原子替换已提交：${insertedCount} 个 chunk`,
+    metadata: {
+      rpc: 'sync_notion_page_documents_atomic',
+      pageRowId: atomicWrite.page_row_id,
+      insertedCount,
+      transaction: 'committed',
+    },
+  });
+
+  emitSyncEvent(options, {
+    type: 'page_written',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: documents.length,
+    status: syncStatus,
+    message: `已写入 ${documents.length} 个文档块`,
+  });
+
+  // 5. 完成
+  emitSyncEvent(options, {
+    type: 'page_done',
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    status: syncStatus,
+    message: `同步完成：${page.title}`,
+  });
+
+  return {
+    pageId,
+    pageTitle: page.title,
+    chunksCount: chunks.length,
+    success: true,
+    status: syncStatus,
+    indexVersion: pageContentHash,
+  };
 }
 
 /**

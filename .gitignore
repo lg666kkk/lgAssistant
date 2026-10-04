@@ -13,3 +13,4 @@ next-env.d.ts
 reports/rag-eval/*.json
 data/agent-artifacts
 .memsearch/
+.claude/*

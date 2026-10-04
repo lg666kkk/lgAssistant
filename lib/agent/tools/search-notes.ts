@@ -24,6 +24,8 @@ import {
   type SearchResult,
 } from "@/lib/knowledge/retriever";
 import { extractNotionPageId } from "@/lib/knowledge/notion-page-id";
+import { parseVisualRefs } from '@/lib/knowledge/visual-types';
+import type { VisualAccessRegistry } from './visual-access';
 import { ragConfig } from "@/lib/platform/config";
 import {
   defaultToolRuntimePolicy,
@@ -95,6 +97,7 @@ function parseFilters(value: unknown): RetrievalFilters | undefined {
       ? filters.pageIds
           .filter((item): item is string => typeof item === "string")
           .flatMap((item) => {
+            if (/^file:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item)) return [item];
             const pageId = extractNotionPageId(item);
             return pageId ? [pageId] : [];
           })
@@ -239,7 +242,9 @@ function buildModelContext(results: SearchResult[], bundle: EvidenceBundle) {
         ? `CrossEncoder=${result.crossEncoderScore.toFixed(3)}`
         : undefined,
     ].filter(Boolean).join(" / ");
-    const header = `[${evidence.evidenceId}] ${result.pageTitle}${heading}\n链接：${result.pageUrl}\n分数：${scores}\n`;
+    const visualRefs = parseVisualRefs(result.metadata?.visual_refs).slice(0, 6);
+    const visualHeader = visualRefs.length ? `\n可读取视觉资源（read_knowledge_visual）：${visualRefs.map((r) => `${r.assetId}${r.pageNumber ? ` / PDF 第 ${r.pageNumber} 页` : ''}`).join('；')}\n视觉索引描述不是本问题的核实结论，需要视觉细节时读取原图。` : '';
+    const header = `[${evidence.evidenceId}] ${result.pageTitle}${heading}\n链接：${result.pageUrl}\n分数：${scores}${visualHeader}\n`;
     const prefixTokens = (parts.length > 0 ? separatorTokens : 0) + countTokensFromText(header);
     const availableContentTokens = Math.floor(remainingTokens / Math.max(1, sourcesLeft)) - prefixTokens;
     sourcesLeft--;
@@ -348,6 +353,7 @@ export function createSearchNotesTool(options: {
   retrievalPlan?: RetrievalPlan;
   retriever?: SearchNotesRetriever;
   cache?: QueryResultCache<RAGSearchResponse>;
+  visualAccess?: VisualAccessRegistry;
 } = {}): ToolDefinition {
   return {
     name: "search_notes",
@@ -458,7 +464,8 @@ export function createSearchNotesTool(options: {
             limit: parsed.limit,
             strategyVersion: `${AGENTIC_RAG_VERSION}:${ragConfig.retrievalStrategyVersion}`,
           };
-          let response = cache.get(cacheKey);
+          // Unknown index versions cannot safely reuse results across publication/deletion.
+          let response = cacheKey.indexVersion === 'index-unknown' ? undefined : cache.get(cacheKey);
           const cacheHit = Boolean(response);
           if (!response) {
             const elapsedMs = Date.now() - searchStartedAt;
@@ -491,7 +498,7 @@ export function createSearchNotesTool(options: {
               }),
             });
           }
-          if (!cacheHit) cache.set(cacheKey, response);
+          if (!cacheHit && cacheKey.indexVersion !== 'index-unknown') cache.set(cacheKey, response);
           lastResponse = response;
           mergedResults = mergeSearchResults(mergedResults, response.results);
           const evidenceItems = createKnowledgeEvidenceItems(mergedResults);
@@ -622,6 +629,10 @@ export function createSearchNotesTool(options: {
         }
         const visibleChunks = new Set(bundle.evidences.map((item) => item.chunkId));
         const safeResults = sanitizeResults(visibleResults.filter((result) => visibleChunks.has(result.id)));
+        for (const result of safeResults) {
+          options.visualAccess?.grant(context?.userId, context?.requestId,
+            parseVisualRefs(result.metadata?.visual_refs).slice(0, 6));
+        }
         return {
           ok: true,
           content: bundle.evidences.length > 0 ? modelContext.content : "没有找到足以支持回答的个人知识库证据",

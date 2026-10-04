@@ -135,6 +135,20 @@ describe("retrieval router and query planner", () => {
     expect(plan.steps[0].filters?.sourceTypes).toBeUndefined();
   });
 
+  it.each([
+    ["我上传的文件里怎么说部署流程", ["document"]],
+    ["查一下 Notion 里的部署流程", ["notion"]],
+    ["我的资料里怎么说部署流程", ["notion", "document"]],
+  ])("routes source filters for %s", (query, expected) => {
+    const plan = buildRetrievalPlan({ query });
+    expect(plan.route).toBe("knowledge");
+    expect(plan.steps[0].filters?.sourceTypes).toEqual(expected);
+  });
+
+  it("does not route generic upload how-to questions to the knowledge base", () => {
+    expect(buildRetrievalPlan({ query: "怎么用 curl 上传文件到 S3" }).route).not.toBe("knowledge");
+  });
+
   it("normalizes Notion page ids before creating filters", () => {
     const plan = buildRetrievalPlan({
       query: "查一下 Notion 页面 550E8400-E29B-41D4-A716-446655440000",

@@ -39,6 +39,38 @@ describe("RAG atomic sync payload", () => {
     expect(payload[0].embedding).toHaveLength(1024);
   });
 
+  it("tags file chunks with source_type and extra metadata without overriding core fields", () => {
+    const payload = buildAtomicDocumentPayload({
+      chunks: [chunk],
+      embeddings: [embedding()],
+      pageId: "file:00000000-0000-4000-8000-000000000001",
+      pageTitle: "手册",
+      pageUrl: "/api/knowledge/files/00000000-0000-4000-8000-000000000001",
+      lastEditedTime: "2026-10-02T00:00:00.000Z",
+      sourceType: "document",
+      chunkMetadata: () => ({ page_start: 3, page_end: 4, page_id: "spoofed" }),
+    });
+
+    expect(payload[0].metadata).toMatchObject({
+      source_type: "document",
+      page_start: 3,
+      page_end: 4,
+      page_id: "file:00000000-0000-4000-8000-000000000001",
+    });
+  });
+
+  it("defaults source_type to notion", () => {
+    const payload = buildAtomicDocumentPayload({
+      chunks: [chunk],
+      embeddings: [embedding()],
+      pageId: "page-1",
+      pageTitle: "RAG 设计",
+      pageUrl: "https://example.com/rag",
+      lastEditedTime: "2026-07-17T00:00:00.000Z",
+    });
+    expect(payload[0].metadata).toMatchObject({ source_type: "notion" });
+  });
+
   it("rejects a partial embedding response before replacing old chunks", () => {
     expect(() =>
       buildAtomicDocumentPayload({

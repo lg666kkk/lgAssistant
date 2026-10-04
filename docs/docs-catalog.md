@@ -2,12 +2,15 @@
 
 本索引按功能组织当前文档。项目入口见 [README.md](./README.md)。
 
+图文混合文档 RAG：[技术方案](./rag/multimodal-document-rag-design.md)、[实现与启用](./rag/multimodal-document-rag-implementation.md)。
+
 ## 面试题
 
 所有项目与专题面试材料统一放在 `interview/`。
 
 | 文档 | 用途 |
 |---|---|
+| [agent-core-interview-handbook.md](./interview/agent-core-interview-handbook.md) | 面向 AI 应用 / Agent 工程与 AI 全栈的 Runtime、工具调用、记忆、RAG 深讲手册 |
 | [project-modules-interview-guide.md](./interview/project-modules-interview-guide.md) | 项目模块、代码边界与综合面试题 |
 | [rag-interview-questions.md](./interview/rag-interview-questions.md) | RAG 专题面试题 |
 | [memory-system-interview-questions.md](./interview/memory-system-interview-questions.md) | 记忆系统专题面试题 |
@@ -97,6 +100,8 @@
 | [rag-implementation.md](./rag/rag-implementation.md) | RAG 基础实现 |
 | [rag-retrieval-quality.md](./rag/rag-retrieval-quality.md) | 混合检索、RRF、MMR 与 Parent-Child |
 | [agentic-rag-production.md](./rag/agentic-rag-production.md) | Agentic RAG、治理与运维边界 |
+| [rag-file-sources.md](./rag/rag-file-sources.md) | 自定义文件数据源：上传、解析、页码映射与删除竞态 |
+| [document-upload-design.md](./rag/document-upload-design.md) | 上传文档早期设计草案，已被 rag-file-sources.md 取代，仅作远期参考 |
 | [rag-eval.md](./rag/rag-eval.md) | RAG 评估闭环 |
 | [web-toggle-vs-route.md](./rag/web-toggle-vs-route.md) | 联网开关是权限边界，route 只表达优先级 |
 

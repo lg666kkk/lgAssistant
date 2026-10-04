@@ -77,7 +77,6 @@ export function estimateTokens(value: unknown): number {
       record.type === "image"
       && record.source
       && typeof record.source === "object"
-      && (record.source as Record<string, unknown>).type === "base64"
     ) {
       imageCount += 1;
       return { type: "image", source: "[inline image]" };

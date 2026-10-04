@@ -157,6 +157,7 @@ async function executeToolCallInternal(
         scopeId: options.scopeId,
         requestId: options.requestId,
         conversationContext: options.conversationContext,
+        model: options.model,
       }),
       tool.runtime.timeoutSeconds,
       tool.name,

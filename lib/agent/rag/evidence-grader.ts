@@ -15,7 +15,7 @@ export function gradeKnowledgeEvidence(
   results: SearchResult[],
   evidenceIds: string[],
 ): EvidenceGrade {
-  return gradeScored(query, results.map((result, index) => ({
+  const grade = gradeScored(query, results.map((result, index) => ({
     id: evidenceIds[index],
     group: result.parentKey ? `${result.pageId}:${result.parentKey}` : result.pageId,
     score: knowledgeScore(result),
@@ -23,6 +23,14 @@ export function gradeKnowledgeEvidence(
     content: result.content,
     dualSource: result.retrievalSources.length > 1,
   })));
+  const visualCandidates = results.flatMap((result, index) =>
+    result.metadata?.content_kind === 'visual_proxy' && knowledgeScore(result) >= 0.35
+      ? [evidenceIds[index]] : []);
+  if (!visualCandidates.length) return grade;
+  // Relevant locations can be read before their facts are answerable. Retain candidates,
+  // but never let a proxy-only hit count as a fully sufficient visual answer.
+  return { ...grade, sufficient: false, grade: 'weak', reason: 'visual_verification_pending',
+    acceptedEvidenceIds: Array.from(new Set([...grade.acceptedEvidenceIds, ...visualCandidates])) };
 }
 
 export function gradeEvidenceItems(query: string, items: EvidenceItem[]): EvidenceGrade {

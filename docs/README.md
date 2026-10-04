@@ -7,6 +7,7 @@
 
 | 目的 | 文档 |
 |---|---|
+| 准备 AI 应用 / Agent / AI 全栈面试 | [Agent 核心面试手册](./interview/agent-core-interview-handbook.md) |
 | 理解整个项目 | [项目全模块总结与面试题](./interview/project-modules-interview-guide.md) |
 | 查看后续建设优先级 | [企业级 Agent 路线图](./agent/roadmap/enterprise-agent-roadmap.md) |
 | 理解当前 Agentic RAG | [Agentic RAG 生产化实现](./rag/agentic-rag-production.md) |

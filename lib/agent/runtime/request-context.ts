@@ -46,7 +46,16 @@ export function prepareRequestContext(input: {
       messages = messages.map((message) => ({
         ...message,
         content: Array.isArray(message.content) ? message.content.map((block) => {
-          if (block.type !== "tool_result" || typeof block.content !== "string") return block;
+          if (block.type !== 'tool_result') return block;
+          if (Array.isArray(block.content)) {
+            return { ...block, content: block.content.map((part) => {
+              if (part.type !== 'text') return part;
+              const trimmed = truncateToolContent(part.text, Math.max(256, Math.min(2048, Math.floor(historyLimit / 4))));
+              compacted ||= trimmed.truncated;
+              return { ...part, text: trimmed.content };
+            }) };
+          }
+          if (typeof block.content !== 'string') return block;
           const trimmed = truncateToolContent(block.content, Math.max(256, Math.min(2048, Math.floor(historyLimit / 4))));
           compacted ||= trimmed.truncated;
           return { ...block, content: trimmed.content };

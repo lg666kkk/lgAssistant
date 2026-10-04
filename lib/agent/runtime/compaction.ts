@@ -107,8 +107,9 @@ function textFromContent(content: unknown): string {
         return `tool_use ${String(item.name ?? "(unknown)")}: ${JSON.stringify(item.input ?? {})}`;
       }
       if (item.type === "tool_result") {
-        return `tool_result ${String(item.tool_use_id ?? "")}: ${String(item.content ?? "")}`;
+        return `tool_result ${String(item.tool_use_id ?? "")}: ${textFromContent(item.content ?? '')}`;
       }
+      if (item.type === 'image') return '[original document image omitted; retrieve and read again if necessary]';
       return JSON.stringify(item);
     })
     .filter(Boolean)

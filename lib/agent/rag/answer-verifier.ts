@@ -53,7 +53,8 @@ export function verifyGroundedAnswer(
     const unknownCitationIds = citationIds.filter((id) => !evidenceById.has(id));
     const knownEvidence = citationIds.flatMap((id) => {
       const evidence = evidenceById.get(id);
-      return evidence ? [evidence] : [];
+      // A loaded image without a textual observation cannot substantiate lexical claims.
+      return evidence && evidence.kind !== 'visual_loaded' ? [evidence] : [];
     });
 
     // 一句话可以引用多条证据。这里取最高重合度，含义是“至少有一条引用能
@@ -93,7 +94,7 @@ export function verifyGroundedAnswer(
     let best = 0;
     for (const id of candidates) {
       const evidence = evidenceById.get(id);
-      if (!evidence) continue;
+      if (!evidence || evidence.kind === 'visual_loaded') continue;
       best = Math.max(best, lexicalOverlap(check.claim, `${evidence.title} ${evidence.content}`));
     }
     const inherited = best >= MIN_LEXICAL_SUPPORT;
@@ -107,7 +108,7 @@ export function verifyGroundedAnswer(
     const claimWithoutCitations = check.claim.replace(CITATION_PATTERN, "");
     return sum + check.citationIds.filter((id) => {
       const evidence = evidenceById.get(id);
-      return evidence
+      return evidence && evidence.kind !== 'visual_loaded'
         ? lexicalOverlap(claimWithoutCitations, `${evidence.title} ${evidence.content}`)
           >= MIN_LEXICAL_SUPPORT
         : false;

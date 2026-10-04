@@ -20,6 +20,14 @@ function result(overrides: Partial<SearchResult> = {}): SearchResult {
 }
 
 describe("evidence grader", () => {
+  it('retains relevant visual locations without claiming sufficient visual evidence', () => {
+    const grade = gradeKnowledgeEvidence('图中的组件箭头方向', [result({
+      content: 'Visual description not available', similarity: 0.6,
+      metadata: { content_kind: 'visual_proxy' },
+    })], ['ev_aaaaaaaaaaaa']);
+    expect(grade).toMatchObject({ sufficient: false, grade: 'weak',
+      reason: 'visual_verification_pending', acceptedEvidenceIds: ['ev_aaaaaaaaaaaa'] });
+  });
   it("accepts vector and keyword agreement as sufficient evidence", () => {
     const grade = gradeKnowledgeEvidence(
       "RAG 如何召回证据",

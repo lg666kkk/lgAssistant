@@ -20,11 +20,12 @@ export type WebEvidenceResult = {
 export function createKnowledgeEvidenceItems(results: SearchResult[]): EvidenceItem[] {
   return results.map((result) => {
     const metadata = result.metadata ?? {};
-    const documentVersion = stringValue(metadata.content_hash)
+    const documentVersion = stringValue(metadata.source_version) || stringValue(metadata.content_hash)
       || stringValue(metadata.last_edited_time)
       || "version-unknown";
     return {
       evidenceId: evidenceId("knowledge", result.id, documentVersion),
+      kind: metadata.content_kind === 'visual_proxy' ? 'visual_proxy' : 'text',
       source: "knowledge",
       chunkId: result.id,
       documentId: result.pageId,
@@ -40,6 +41,11 @@ export function createKnowledgeEvidenceItems(results: SearchResult[]): EvidenceI
       },
       trustLevel: "private_user_content",
       citation: {
+        fileId: stringValue(metadata.file_id),
+        sourceVersion: stringValue(metadata.source_version),
+        generationId: stringValue(metadata.generation_id),
+        assetId: stringValue(metadata.asset_id),
+        pageNumber: numberValue(metadata.page_start),
         url: result.pageUrl,
         headingPath: result.headingPath,
         startChar: numberValue(metadata.start_char),

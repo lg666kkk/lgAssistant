@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     const supabase = createSupabaseClient();
     const { data, error } = await supabase
       .from("notion_pages")
-      .select("page_id,page_title,page_url,last_edited_time,last_synced_at,chunk_count,metadata")
+      .select("page_id,page_title,page_url,last_edited_time,last_synced_at,chunk_count,metadata,source_type")
       .eq("user_id", user.id)
       .order("last_synced_at", { ascending: false });
 

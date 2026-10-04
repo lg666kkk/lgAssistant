@@ -13,7 +13,7 @@ import {
 import { evaluateWithJev } from "@/lib/jev/client";
 import { resolveUserJevConfig } from "@/lib/jev/service";
 
-const KNOWLEDGE_CUES = /(?:我的|个人|之前|过去|曾经).{0,8}(?:笔记|文档|记录|资料|收藏|整理|写过)|(?:知识库|Notion|笔记里|文档里|记录里)|\b(?:my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|(?:in|from|according\s+to)\s+my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|what\s+did\s+i\s+(?:write|note|save|bookmark)|i\s+(?:wrote|noted|saved|bookmarked))\b/i;
+const KNOWLEDGE_CUES = /(?:我的|个人|之前|过去|曾经).{0,8}(?:笔记|文档|记录|资料|收藏|整理|写过)|(?:知识库|Notion|笔记里|文档里|记录里)|我(?:上传|导入)的?.{0,6}(?:文件|文档|资料|附件|PDF)|(?:上传|导入)的(?:文件|文档|资料|附件|PDF).{0,4}(?:里|中)|\b(?:my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|(?:in|from|according\s+to)\s+my\s+(?:notes?|documents?|docs?|knowledge\s*base|notion)|what\s+did\s+i\s+(?:write|note|save|bookmark)|(?:in|from)\s+(?:the|my)\s+(?:uploaded|attached)\s+(?:files?|documents?|pdfs?)|i\s+(?:wrote|noted|saved|bookmarked))\b/i;
 // freshness 与显式来源必须分开："今天几号"需要新鲜时间，但不要求网页引用；
 // "联网查官网"明确要求 Web 来源，即使内容不随时间变化，也必须有检索证据。
 const PUBLIC_FRESHNESS_CUES = /(?:最新|今天|实时|新闻|价格|政策|发布|近期(?:新闻|动态|政策|版本)|当前(?:价格|政策|版本|状态|排名|天气|汇率)|现在(?:价格|时间|天气|版本))|\b(?:latest|today|current|real[- ]?time|recent\s+(?:news|updates?)|news|price|policy|release)\b/i;
@@ -427,10 +427,11 @@ function extractFilters(query: string, now: Date): RetrievalFilters | undefined 
   if (title) filters.titleContains = title.trim().slice(0, 120);
 
   const sourceTypes: RetrievalFilters["sourceTypes"] = [];
-  if (/Notion|笔记|文档|资料/i.test(query)) sourceTypes.push("notion");
-  if (/(?:上传|导入|附件).{0,6}(?:文档|文件)|\b(?:uploaded|attached|imported)\s+(?:document|file)\b/i.test(query)) {
-    sourceTypes.push("document");
-  }
+  const mentionsUpload = /(?:上传|导入|附件).{0,6}(?:文档|文件)|\b(?:uploaded|attached|imported)\s+(?:document|file)\b/i.test(query);
+  if (/Notion/i.test(query)) sourceTypes.push("notion");
+  if (mentionsUpload) sourceTypes.push("document");
+  // 泛指的“笔记/文档/资料”同时覆盖 Notion 和上传文件，避免把上传文件过滤掉。
+  if (!sourceTypes.length && /笔记|文档|资料/.test(query)) sourceTypes.push("notion", "document");
   if (sourceTypes.length) filters.sourceTypes = Array.from(new Set(sourceTypes));
 
   filters.timeRange = parseTimeRange(query, now);

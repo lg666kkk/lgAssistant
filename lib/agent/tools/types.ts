@@ -14,7 +14,13 @@ export interface ToolResult {
   data?: unknown; // 给程序用的结构化数据
   error?: string; // 失败时的错误信息
   metadata?: Record<string, unknown>; // 额外信息, 比如耗时、来源
+  mediaRefs?: ToolMediaRef[];
 }
+
+export type ToolMediaRef = import('@/lib/knowledge/visual-types').VisualRef & {
+  evidenceId: string;
+  mediaType: string;
+};
 
 export type ToolInputSchema = {
   type: "object";
@@ -127,6 +133,7 @@ export type ToolExecutionContext = {
   scopeId?: string;
   requestId?: string;
   conversationContext?: string[];
+  model?: string;
 };
 
 export const defaultToolRuntimePolicy: ToolRuntimePolicy = {

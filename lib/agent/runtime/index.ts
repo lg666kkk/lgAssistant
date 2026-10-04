@@ -1,4 +1,5 @@
 import { prepareRequestContext, assertRequestContextFits } from "./request-context";
+import { knowledgeMediaBlock } from './knowledge-media';
 import { executeToolCall } from "@/lib/agent/tools/tool-router";
 import { ToolRegistry } from "@/lib/agent/tools/registry";
 import { requiresCitedEvidence } from "@/lib/agent/tools/grounding-policy";
@@ -156,7 +157,7 @@ interface WebSearchContent {
 interface ToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
-  content: string;
+  content: Anthropic.ToolResultBlockParam['content'];
   is_error: boolean;
 }
 
@@ -339,7 +340,7 @@ function shapeToolResultContent(
     return truncateToolContent(toolResult.content, 4_000);
   }
 
-  if (toolName === "search_notes") {
+  if (toolName === "search_notes" || toolName === 'read_knowledge_visual') {
     return truncateToolContent(
       toolResult.content,
       ragConfig.maxContextTokens * 4,
@@ -612,6 +613,15 @@ export async function executeTools(
       // 后续 Trace 上报即可区分 web_search、web_fetch、search_notes，无需让每个
       // 工具重复维护一份可观测性字段。
       evidenceBundles.push({ ...evidenceBundle, toolName: toolUse.name });
+      if (toolUse.name === 'read_knowledge_visual') {
+        for (const evidence of evidenceBundle.evidences) {
+          if (evidence.citation.url) toolSources.push({
+            title: `${evidence.title}${evidence.citation.pageNumber ? ` · PDF 第 ${evidence.citation.pageNumber} 页` : ''}`,
+            notionPageId: evidence.documentId, pageUrl: evidence.citation.url,
+            similarity: 1, excerpt: evidence.content.slice(0, 100),
+          });
+        }
+      }
     }
     if (toolResult.ok && toolDefinition) {
       usedGroundingModes.add(toolDefinition.outputPolicy.grounding);
@@ -748,7 +758,9 @@ export async function executeTools(
     toolResultBlocks.push({
       type: "tool_result",
       tool_use_id: toolUse.id,
-      content: modelContent,
+      content: toolResult.ok && toolResult.mediaRefs?.length
+        ? [{ type: 'text', text: modelContent }, ...toolResult.mediaRefs.slice(0, 3).map(knowledgeMediaBlock)]
+        : modelContent,
       is_error: !toolResult.ok,
     });
     if (toolResult.metadata?.status !== "duplicate_skipped") {
