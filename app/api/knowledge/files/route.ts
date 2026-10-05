@@ -9,6 +9,7 @@ import {
 import { enqueueRagIngestionJob } from "@/lib/knowledge/ingestion-queue";
 import { getSupabase } from "@/lib/platform/supabase";
 import { KnowledgeUploadSizeError, readKnowledgeUploadForm } from "@/lib/knowledge/upload-body";
+import type { VisualProgress } from "@/lib/knowledge/visual-progress";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,15 @@ type FileJobRow = {
   updated_at: string;
 };
 
+type VisualGenerationRow = {
+  file_id: string;
+  status: string;
+  visual_status: string;
+  created_at: string;
+  progress: VisualProgress | null;
+  warnings: string[];
+};
+
 /**
  * 文件列表，附带索引状态（notion_pages）和最近一次入库任务状态。
  */
@@ -40,7 +50,7 @@ export async function GET(req: Request) {
     const pageIds = files.map((file) => filePageId(file.id));
     if (pageIds.length === 0) return Response.json({ files: [] });
     const supabase = getSupabase();
-    const [pagesResult, jobsResult] = await Promise.all([
+    const [pagesResult, jobsResult, generationsResult] = await Promise.all([
       supabase
         .from("notion_pages")
         .select("page_id, page_title, chunk_count, last_synced_at, metadata")
@@ -52,9 +62,15 @@ export async function GET(req: Request) {
         .eq("user_id", user.id)
         .in("page_id", pageIds)
         .order("created_at", { ascending: false }),
+      supabase.from("knowledge_file_generations")
+        .select("file_id, status, visual_status, created_at, progress, warnings")
+        .eq("user_id", user.id)
+        .in("file_id", files.map((file) => file.id))
+        .order("created_at", { ascending: false }),
     ]);
     if (pagesResult.error) throw new Error(pagesResult.error.message);
     if (jobsResult.error) throw new Error(jobsResult.error.message);
+    if (generationsResult.error) throw new Error(generationsResult.error.message);
 
     const pageById = new Map<string, FileIndexRow>(
       ((pagesResult.data ?? []) as FileIndexRow[]).map((page) => [page.page_id, page]),
@@ -63,10 +79,19 @@ export async function GET(req: Request) {
     for (const job of (jobsResult.data ?? []) as FileJobRow[]) {
       if (!latestJobById.has(job.page_id)) latestJobById.set(job.page_id, job);
     }
+    const latestGenerationById = new Map<string, VisualGenerationRow>();
+    for (const generation of (generationsResult.data ?? []) as VisualGenerationRow[]) {
+      if (!latestGenerationById.has(generation.file_id)) latestGenerationById.set(generation.file_id, generation);
+    }
 
     return Response.json({
       files: files.map((file) => {
         const pageId = filePageId(file.id);
+        const job = latestJobById.get(pageId);
+        const generation = latestGenerationById.get(file.id);
+        // A new queued/retried job must not display an earlier attempt's progress.
+        const currentGeneration = generation && (!job || job.status === 'completed'
+          || new Date(generation.created_at).getTime() >= new Date(job.updated_at).getTime()) ? generation : null;
         return {
           id: file.id,
           fileName: file.file_name,
@@ -77,7 +102,8 @@ export async function GET(req: Request) {
           visualEnabled: file.visual_enabled === true,
           pageId,
           index: pageById.get(pageId) ?? null,
-          job: latestJobById.get(pageId) ?? null,
+          job: job ?? null,
+          visualGeneration: currentGeneration,
         };
       }),
     });

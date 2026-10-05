@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+endpoint=${1:-tick}
+request_timeout=300
+case "$endpoint" in
+  tick) ;;
+  rag-ingestion) request_timeout=900 ;;
+  *) echo "Unsupported cron endpoint" >&2; exit 1 ;;
+esac
+
 env_file=/home/ubuntu/personal-assistant/.env.production
 secret_line=$(/usr/bin/grep -m 1 '^CRON_SECRET=' "$env_file" || true)
 secret=${secret_line#CRON_SECRET=}
@@ -19,7 +27,7 @@ fi
   printf 'fail\n'
   printf 'silent\n'
   printf 'show-error\n'
-  printf 'max-time = 300\n'
+  printf 'max-time = %s\n' "$request_timeout"
   printf 'header = "x-cron-secret: %s"\n' "$secret"
-  printf 'url = "http://127.0.0.1:3000/api/cron/tick"\n'
+  printf 'url = "http://127.0.0.1:3000/api/cron/%s"\n' "$endpoint"
 } | /usr/bin/curl --config -

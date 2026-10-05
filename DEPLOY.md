@@ -136,6 +136,22 @@ systemctl list-timers personal-assistant-scheduler.timer
 journalctl -u personal-assistant-scheduler.service -n 50 --no-pager
 ```
 
+文件上传后的解析和入库使用独立队列，需要额外启用入库 worker。每批最多处理
+两个任务，完成后间隔 15 秒再检查队列，同一 service 不会重叠运行：
+
+扫描 PDF 的 OCR 依赖 Poppler、Tesseract 和中英文语言包，Docker 镜像已安装
+`poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim`。
+非容器运行时也需安装这些依赖。OCR 最长运行 10 分钟，入库请求超时为 15 分钟，
+更新后需重新复制入库 service 并执行 `daemon-reload`，以应用新的超时设置。
+
+```bash
+sudo cp deploy/systemd/personal-assistant-rag-ingestion.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now personal-assistant-rag-ingestion.timer
+sudo systemctl start personal-assistant-rag-ingestion.service
+journalctl -u personal-assistant-rag-ingestion.service -n 50 --no-pager
+```
+
 调度器使用 Supabase 原子领取到期任务。首次启用前必须执行
 `docs/schemas/migrations/20260904-reliable-scheduler-channels.sql`。
 

@@ -3,6 +3,7 @@
  */
 
 import path from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import {
   cleanKnowledgeMarkdown,
   imagePlaceholder,
@@ -11,8 +12,11 @@ import {
 import { validateDocxArchive } from './docx-limits';
 import { MAX_VISUAL_ASSETS, MAX_VISUAL_BYTES, type ParsedVisual } from './visual-types';
 import { validateVisualImage } from './visual-renderer';
+import { ocrPdfPages } from './pdf-ocr';
+import { KNOWLEDGE_IMAGE_EXTENSIONS, knowledgeImageMime, normalizeKnowledgeImage } from './image-files';
+import { ocrKnowledgeImage } from './image-ocr';
 
-export type KnowledgeFileKind = 'markdown' | 'text' | 'html' | 'pdf' | 'docx';
+export type KnowledgeFileKind = 'markdown' | 'text' | 'html' | 'pdf' | 'docx' | 'image';
 
 export const KNOWLEDGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 export const KNOWLEDGE_FILE_MAX_CHARS = 2_000_000;
@@ -26,6 +30,7 @@ export const MIME_BY_KIND: Record<KnowledgeFileKind, string> = {
   html: 'text/html',
   pdf: 'application/pdf',
   docx: DOCX_MIME,
+  image: 'image/png',
 };
 
 const KIND_BY_EXTENSION: Record<string, KnowledgeFileKind> = {
@@ -36,6 +41,7 @@ const KIND_BY_EXTENSION: Record<string, KnowledgeFileKind> = {
   '.htm': 'html',
   '.pdf': 'pdf',
   '.docx': 'docx',
+  ...Object.fromEntries(KNOWLEDGE_IMAGE_EXTENSIONS.map((extension) => [extension, 'image' as const])),
 };
 
 export const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = Object.keys(KIND_BY_EXTENSION);
@@ -43,6 +49,7 @@ export const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = Object.keys(KIND_BY_EXTENSION
 export type ParsedKnowledgeFile = {
   title: string;
   content: string;
+  ocrUsed?: boolean;
   /** PDF 每页在 content 中的起始字符偏移，用于给 chunk 标注页码。 */
   pageOffsets?: number[];
   /** 正文中被清理掉的安全链接，偏移对应 content，用于写入 chunk metadata。 */
@@ -78,6 +85,7 @@ export function detectKnowledgeFileKind(
   if (kind === 'pdf' && !startsWith(bytes, [0x25, 0x50, 0x44, 0x46])) {
     throw new Error('文件内容不是有效的 PDF');
   }
+  if (kind === 'image') knowledgeImageMime(fileName, bytes);
   if (kind === 'docx' && !startsWith(bytes, [0x50, 0x4b, 0x03, 0x04])) {
     throw new Error('文件内容不是有效的 docx');
   }
@@ -106,8 +114,88 @@ async function htmlToMarkdown(html: string, visualImages?: Map<string, string>) 
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     bulletListMarker: '-',
+    blankReplacement: (content, node) => node.nodeName === 'DIV' && node.hasAttribute('data-mxgraph')
+      ? drawioRule.replacement(content, node)
+      : content.trim() ? content : (node as HTMLElement & { isBlock?: boolean }).isBlock ? '\n\n' : '',
   });
   turndown.remove(['script', 'style', 'noscript', 'iframe']);
+  // draw.io exports store graph labels and edges in data-mxgraph, not visible HTML.
+  const drawioRule = {
+    filter: (node: HTMLElement) => node.nodeName === 'DIV' && node.hasAttribute('data-mxgraph'),
+    replacement: (_content: string, node: HTMLElement): string => {
+      try {
+        const graph = JSON.parse((node as HTMLElement).getAttribute('data-mxgraph')!);
+        if (typeof graph.xml !== 'string' || !graph.xml.trim()) throw new Error('Missing graph XML');
+        const diagram = new TurndownService({ headingStyle: 'atx',
+          blankReplacement: (content, node) => node.nodeName.toLowerCase() === 'mxgraphmodel'
+            ? graphRule.replacement(content, node)
+            : node.nodeName.toLowerCase() === 'diagram' ? pageRule.replacement(content, node)
+            : content,
+        });
+        diagram.remove(['script', 'style', 'noscript', 'iframe']);
+        const graphRule = {
+          filter: (element: HTMLElement) => element.nodeName.toLowerCase() === 'mxgraphmodel',
+          replacement: (_text: string, model: HTMLElement): string => {
+            const cells = Array.from(model.querySelectorAll('mxcell'));
+            const labels = new Map<string, string>();
+            const labelFor = (cell: Element) => {
+              const wrapper = cell.parentElement;
+              const raw = cell.getAttribute('value') ?? wrapper?.getAttribute('label') ?? '';
+              // Diagram editors wrap ordinary labels in pre/code. Keep each label
+              // inline so chunking cannot separate an edge from its endpoints.
+              return turndown.turndown(raw.replace(/<br\s*\/?\s*>/gi, ' '))
+                .replace(/^```[^\n]*$/gm, '').replace(/\s+/g, ' ').trim();
+            };
+            for (const cell of cells) {
+              if (cell.getAttribute('edge') === '1') continue;
+              const label = labelFor(cell);
+              const id = cell.getAttribute('id') ?? cell.parentElement?.getAttribute('id');
+              if (id && label) labels.set(id, label);
+            }
+            const lines = ['### 图中节点', ...Array.from(labels.values(), (label) => `- ${label}`)];
+            const connections: string[] = [];
+            for (const cell of cells) {
+              if (cell.getAttribute('edge') !== '1') continue;
+              const source = labels.get(cell.getAttribute('source') ?? '');
+              const target = labels.get(cell.getAttribute('target') ?? '');
+              const label = labelFor(cell);
+              if (source && target) {
+                connections.push(`- 源节点：${source}；目标节点：${target}${label ? `；连线文字：${label}` : ''}`);
+              } else if (label) lines.push(`- 连线文字：${label}`);
+            }
+            if (connections.length) lines.push('### 图中连接（按源节点和目标节点记录）', ...connections);
+            if (!labels.size && !connections.length) throw new Error('Graph has no text');
+            return `\n\n${lines.join('\n')}\n\n`;
+          },
+        };
+        diagram.addRule('graphModel', graphRule);
+        const pageRule = {
+          filter: (element: HTMLElement) => element.nodeName.toLowerCase() === 'diagram',
+          replacement: (content: string, page: HTMLElement): string => {
+            if (!page.querySelector('mxgraphmodel')) {
+              const compressed = Buffer.from(page.textContent?.trim() ?? '', 'base64');
+              const xml = decodeURIComponent(inflateRawSync(compressed, {
+                maxOutputLength: KNOWLEDGE_FILE_MAX_CHARS,
+              }).toString('utf8'));
+              if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('Unsupported XML declaration');
+              content = diagram.turndown(xml);
+            }
+            return `\n\n## ${page.getAttribute('name') || '流程图'}\n\n${content}\n\n`;
+          },
+        };
+        diagram.addRule('diagramPage', pageRule);
+        if (graph.xml.length > KNOWLEDGE_FILE_MAX_CHARS || /<!DOCTYPE|<!ENTITY/i.test(graph.xml)) {
+          throw new Error('Graph XML exceeds limits or contains unsupported declarations');
+        }
+        const content = diagram.turndown(graph.xml);
+        if (!content.trim()) throw new Error('Graph has no text');
+        return `\n\n${content}\n\n`;
+      } catch (cause) {
+        throw new Error('无法提取 draw.io 图形内容，请重新导出 HTML 或上传含文字的 PDF', { cause });
+      }
+    },
+  };
+  turndown.addRule('knowledgeDrawio', drawioRule);
   // 图片只留 alt 占位，data: URI 和图片地址都不进入 Markdown。
   turndown.addRule('knowledgeImage', {
     filter: 'img',
@@ -160,7 +248,7 @@ function normalizePdfPageText(text: string) {
     .trim();
 }
 
-async function parsePdf(bytes: Uint8Array) {
+async function parsePdf(bytes: Uint8Array, captureVisuals = false) {
   const { extractText, getDocumentProxy } = await import('unpdf');
   // pdf.js 会转移底层 buffer，传副本避免影响调用方。
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
@@ -174,7 +262,19 @@ async function parsePdf(bytes: Uint8Array) {
     // extractText 不销毁调用方传入的 proxy，包括解析失败的路径。
     await pdf.loadingTask.destroy();
   }
-  const pages = text.map(normalizePdfPageText);
+  let pages = text.map(normalizePdfPageText);
+  const warnings: string[] = [];
+  let ocrUsed = false;
+  if (!pages.some((page) => page.trim())) {
+    try {
+      pages = (await ocrPdfPages(bytes, pages.length)).map(normalizePdfPageText);
+      ocrUsed = true;
+    } catch (error) {
+      if (!captureVisuals) throw error;
+      // Visual indexing can still describe image-only pages when OCR is unavailable.
+      warnings.push(error instanceof Error ? error.message : 'PDF OCR 失败');
+    }
+  }
   const pageOffsets: number[] = [];
   let content = '';
   // 空页不拼接分隔符，保证 content 不含 \n{3,} 且首尾无空白，
@@ -188,7 +288,7 @@ async function parsePdf(bytes: Uint8Array) {
     pageOffsets.push(content.length);
     content += page;
   }
-  return { content, pageOffsets };
+  return { content, pageOffsets, ocrUsed, ...(warnings.length ? { warnings } : {}) };
 }
 
 async function parseDocx(bytes: Uint8Array, captureVisuals = false) {
@@ -234,6 +334,24 @@ export async function parseKnowledgeFile(input: {
   let parsed: ParsedKnowledgeFile;
 
   switch (input.kind) {
+    case 'image': {
+      const mime = knowledgeImageMime(input.fileName, input.bytes);
+      const image = await normalizeKnowledgeImage(input.bytes, mime);
+      const warnings: string[] = [];
+      let content = '';
+      try { content = await ocrKnowledgeImage(image); }
+      catch (error) {
+        if (!input.captureVisuals) throw error;
+        warnings.push(error instanceof Error ? error.message : '图片 OCR 失败');
+      }
+      if (!content && !input.captureVisuals) {
+        throw new Error('图片未识别到文字；如需检索照片、图表或流程图，请启用视觉索引');
+      }
+      parsed = { title: fallbackTitle, content, ocrUsed: Boolean(content), warnings,
+        ...(input.captureVisuals ? { visuals: [{ occurrenceKey: 'image-1', kind: 'embedded_image',
+          bytes: image, mimeType: 'image/jpeg', alt: fallbackTitle, textStart: 0, textEnd: content.length }] } : {}) };
+      break;
+    }
     case 'markdown': {
       const content = decodeUtf8(input.bytes);
       parsed = { title: inferMarkdownTitle(content) ?? fallbackTitle, content };
@@ -252,8 +370,8 @@ export async function parseKnowledgeFile(input: {
       break;
     }
     case 'pdf': {
-      const { content, pageOffsets } = await parsePdf(input.bytes);
-      parsed = { title: fallbackTitle, content, pageOffsets };
+      const { content, pageOffsets, ocrUsed, warnings } = await parsePdf(input.bytes, input.captureVisuals);
+      parsed = { title: fallbackTitle, content, pageOffsets, ocrUsed, warnings };
       if (input.captureVisuals) {
         parsed.visuals = pageOffsets.map((start, i) => ({
           occurrenceKey: `page-${i + 1}`, kind: 'pdf_page', pageNumber: i + 1,
@@ -269,7 +387,7 @@ export async function parseKnowledgeFile(input: {
     }
   }
 
-  if (input.kind !== 'text' && input.kind !== 'pdf') {
+  if (input.kind !== 'text' && input.kind !== 'pdf' && input.kind !== 'image') {
     // 清理后的内容是 chunkText 预处理的不动点，links 偏移与 chunk 区间一致。
     const { content, links } = cleanKnowledgeMarkdown(parsed.content);
     parsed = { ...parsed, content, ...(links.length ? { links } : {}) };
@@ -302,7 +420,7 @@ export async function parseKnowledgeFile(input: {
   if (!parsed.content.trim() && !parsed.visuals?.length) {
     throw new Error(
       input.kind === 'pdf'
-        ? 'PDF 中没有可提取的文本（可能是扫描件，暂不支持 OCR）'
+        ? 'PDF 中没有可提取的文本，OCR 也未识别到文字（可能为空白扫描件或图片不清晰）'
         : '文件中没有可索引的文本内容',
     );
   }

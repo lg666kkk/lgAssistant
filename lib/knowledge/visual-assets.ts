@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getSupabase } from '@/lib/platform/supabase';
 import { renderPdfPage, validateVisualImage } from './visual-renderer';
 import { analyzeKnowledgeVisual, resolveKnowledgeVisionModel } from './visual-analysis';
+import type { VisualProgress } from './visual-progress';
 import { assetRef, MAX_VISUAL_ANALYSIS_ASSETS, VISUAL_BUCKET, VISUAL_PIPELINE_VERSION,
   type ParsedVisual, type VisualAsset, type VisualRef } from './visual-types';
 
@@ -23,11 +24,20 @@ export async function prepareVisualGeneration(input: {
 }): Promise<PreparedVisualGeneration> {
   const db = getSupabase();
   const generationId = randomUUID();
+  const progress: VisualProgress = {
+    stage: 'rendering', total: input.visuals.length, processed: 0,
+    analyzed: 0, failed: 0, skipped: 0, currentPage: null,
+  };
+  const saveProgress = async () => {
+    const { error } = await db.from('knowledge_file_generations').update({ progress })
+      .eq('id', generationId).eq('user_id', input.userId);
+    if (error) throw new Error(`Saving visual progress failed: ${error.message}`);
+  };
   const model = input.analyze ? await resolveKnowledgeVisionModel(input.userId) : null;
   const pipeline = `${VISUAL_PIPELINE_VERSION}:${model?.id ?? 'no-model'}`;
   const { error } = await db.from('knowledge_file_generations').insert({
     id: generationId, user_id: input.userId, file_id: input.fileId,
-    source_version: input.sourceVersion, pipeline_version: pipeline, status: 'preparing',
+    source_version: input.sourceVersion, pipeline_version: pipeline, status: 'preparing', progress,
   });
   if (error) throw new Error(`Creating visual generation failed: ${error.message}`);
   const warnings: string[] = [];
@@ -39,6 +49,9 @@ export async function prepareVisualGeneration(input: {
   const deadline = Date.now() + 240_000;
   for (const visual of input.visuals) {
     input.signal?.throwIfAborted();
+    progress.stage = 'rendering';
+    progress.currentPage = visual.pageNumber ?? null;
+    await saveProgress();
     const asset: VisualAsset = {
       id: randomUUID(), user_id: input.userId, file_id: input.fileId,
       generation_id: generationId, source_version: input.sourceVersion,
@@ -75,6 +88,8 @@ export async function prepareVisualGeneration(input: {
         if (mayAnalyze) {
           analysisCount++;
           asset.analysis_status = 'failed';
+          progress.stage = 'analyzing';
+          await saveProgress();
           const observation = await analyzeKnowledgeVisual({
             model, bytes: image, mimeType: mime, signal: input.signal,
             context: input.content.slice(Math.max(0, (visual.textStart ?? 0) - 500), (visual.textEnd ?? 0) + 500),
@@ -97,6 +112,11 @@ export async function prepareVisualGeneration(input: {
       if (asset.storage_path) await db.storage.from(VISUAL_BUCKET).remove([asset.storage_path]);
       throw new Error('Visual resource was revoked while processing');
     }
+    progress.processed++;
+    if (asset.analysis_status === 'ready') progress.analyzed++;
+    else if (asset.warnings.some((warning) => warning.includes('failed'))) progress.failed++;
+    else progress.skipped++;
+    await saveProgress();
   }
   const status = !model ? 'unconfigured'
     : assets.every((a) => a.analysis_status === 'ready') ? 'ready' : 'partial';
@@ -107,6 +127,7 @@ export async function prepareVisualGeneration(input: {
       + outputTokens * (model.pricing.output ?? 0)) / 1_000_000 : 0 });
   const { error: readyError } = await db.from('knowledge_file_generations').update({
     status: 'ready', visual_status: status, warnings,
+    progress: { ...progress, stage: 'indexing', currentPage: null },
   }).eq('id', generationId).eq('user_id', input.userId);
   if (readyError) throw new Error(`Preparing generation failed: ${readyError.message}`);
   return { id: generationId, expectedGeneration: input.expectedGeneration, assets, warnings,

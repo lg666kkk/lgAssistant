@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deleteAllKnowledgeFiles, deleteKnowledgeFile, syncKnowledgeFile } from './files';
+import { deleteAllKnowledgeFiles, deleteKnowledgeFile, readKnowledgeTextFile, syncKnowledgeFile } from './files';
 
 const mocks = vi.hoisted(() => ({
   rpc: vi.fn(), from: vi.fn(), remove: vi.fn(), download: vi.fn(), index: vi.fn(),
@@ -81,6 +81,27 @@ describe('atomic file deletion', () => {
       .mockResolvedValueOnce({ data: null, error: { message: 'transaction aborted' } });
     await expect(deleteAllKnowledgeFiles(userId)).rejects.toThrow('transaction aborted');
     expect(mocks.remove).toHaveBeenCalledWith([record.storage_path]);
+  });
+});
+
+describe('text file preview', () => {
+  it('keeps original UTF-8 bytes for existing files', async () => {
+    metadataQuery().maybeSingle.mockResolvedValue({ data: record, error: null });
+    const bytes = new TextEncoder().encode('# 中文标题\n正文');
+    mocks.download.mockResolvedValue({ data: new Blob([bytes]), error: null });
+    expect(await readKnowledgeTextFile(userId, fileId)).toEqual({ fileName: record.file_name, bytes });
+  });
+
+  it('does not download a file not owned by the user', async () => {
+    metadataQuery().maybeSingle.mockResolvedValue({ data: null, error: null });
+    expect(await readKnowledgeTextFile(userId, fileId)).toBeNull();
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it('leaves binary file access on the signed URL path', async () => {
+    metadataQuery().maybeSingle.mockResolvedValue({ data: { ...record, file_kind: 'pdf' }, error: null });
+    expect(await readKnowledgeTextFile(userId, fileId)).toBeNull();
+    expect(mocks.download).not.toHaveBeenCalled();
   });
 });
 

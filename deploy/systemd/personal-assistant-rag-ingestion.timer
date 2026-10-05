@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll Personal Assistant knowledge ingestion queue
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=personal-assistant-rag-ingestion.service
+
+[Install]
+WantedBy=timers.target

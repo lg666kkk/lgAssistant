@@ -4,6 +4,7 @@ import {
   createKnowledgeFileSignedUrl,
   deleteKnowledgeFile,
   filePageId,
+  readKnowledgeTextFile,
 } from "@/lib/knowledge/files";
 import { enqueueRagIngestionJob } from "@/lib/knowledge/ingestion-queue";
 import { getSupabase } from '@/lib/platform/supabase';
@@ -19,13 +20,25 @@ function invalidId(id: string) {
 }
 
 /**
- * 引用链接入口：鉴权后跳转到短期签名 URL。
+ * 引用链接入口：文本明确使用 UTF-8，其他文件跳转到短期签名 URL。
  */
 export async function GET(req: Request, { params }: RouteContext) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
   if (invalidId(params.id)) return Response.json({ error: "无效的文件 ID" }, { status: 400 });
   try {
+    const textFile = await readKnowledgeTextFile(user.id, params.id);
+    if (textFile) {
+      // Serve HTML source as plain text as well, so uploaded scripts cannot execute.
+      return new Response(textFile.bytes, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(textFile.fileName).replace(/'/g, '%27')}`,
+          "Cache-Control": "private, no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
     const signedUrl = await createKnowledgeFileSignedUrl(user.id, params.id);
     if (!signedUrl) return Response.json({ error: "文件不存在" }, { status: 404 });
     return Response.redirect(signedUrl, 302);

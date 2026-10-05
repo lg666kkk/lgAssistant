@@ -5,7 +5,10 @@ const pdf = vi.hoisted(() => ({
   destroy: vi.fn(),
   extractText: vi.fn(),
   numPages: 2,
+  ocr: vi.fn(),
 }));
+
+vi.mock('./pdf-ocr', () => ({ ocrPdfPages: pdf.ocr }));
 
 vi.mock('unpdf', () => ({
   getDocumentProxy: vi.fn(async () => ({ numPages: pdf.numPages, loadingTask: { destroy: pdf.destroy } })),
@@ -18,6 +21,7 @@ describe('PDF resource lifecycle', () => {
     pdf.numPages = 2;
     pdf.destroy.mockResolvedValue(undefined);
     pdf.extractText.mockResolvedValue({ text: ['First page', 'Second page'] });
+    pdf.ocr.mockResolvedValue(['', '']);
   });
 
   const input = { fileName: 'report.pdf', kind: 'pdf' as const, bytes: new Uint8Array([37, 80, 68, 70]) };
@@ -44,6 +48,23 @@ describe('PDF resource lifecycle', () => {
     expect(parsed.content).toBe('');
     expect(parsed.visuals?.map((v) => v.pageNumber)).toEqual([1, 2]);
     expect(pdf.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the PDF before starting OCR and reports missing OCR dependencies', async () => {
+    pdf.extractText.mockResolvedValueOnce({ text: ['', ''] });
+    pdf.ocr.mockImplementationOnce(async () => {
+      expect(pdf.destroy).toHaveBeenCalledTimes(1);
+      throw new Error('OCR unavailable');
+    });
+    await expect(parseKnowledgeFile(input)).rejects.toThrow('OCR unavailable');
+  });
+
+  it('can fall back to visual indexing when OCR fails', async () => {
+    pdf.extractText.mockResolvedValueOnce({ text: ['', ''] });
+    pdf.ocr.mockRejectedValueOnce(new Error('OCR unavailable'));
+    const parsed = await parseKnowledgeFile({ ...input, captureVisuals: true });
+    expect(parsed.visuals).toHaveLength(2);
+    expect(parsed.warnings).toEqual(['OCR unavailable']);
   });
 
   it('rejects excessive page counts before text extraction and releases the document', async () => {

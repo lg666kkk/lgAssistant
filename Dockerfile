@@ -21,8 +21,14 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ARG DEBIAN_MIRROR=https://mirrors.cloud.tencent.com
 
-RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
+# Bootstrap HTTPS trust from Node's bundled CA roots in the slim image.
+RUN node -e 'const fs = require("fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("tls").rootCertificates.join("\n") + "\n")' \
+  && sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+  && printf 'Acquire::Retries "3";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-download-retries \
+  && apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
   && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 nodejs \

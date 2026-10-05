@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chunkText } from "./chunking";
 import {
   detectKnowledgeFileKind,
@@ -9,6 +9,12 @@ import { filePageId, parseFilePageId, sanitizeFileName } from "./files";
 
 const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text);
+const ocr = vi.hoisted(() => vi.fn());
+vi.mock('./pdf-ocr', () => ({ ocrPdfPages: ocr }));
+beforeEach(() => {
+  ocr.mockReset();
+  ocr.mockResolvedValue(['', '']);
+});
 
 /** 生成每页一行文本的最小 PDF，xref 偏移按实际字节计算。 */
 function buildPdf(pageTexts: string[]) {
@@ -139,9 +145,25 @@ describe("knowledge file parsing", () => {
     expect(pageRangeForSpan(parsed.pageOffsets, thirdStart, thirdStart + 5)).toEqual({ pageStart: 3, pageEnd: 3 });
   });
 
-  it("reports scanned pdfs without text", async () => {
+  it("reports scanned pdfs when OCR also finds no text", async () => {
     await expect(parseKnowledgeFile({ fileName: "scan.pdf", kind: "pdf", bytes: buildPdf(["", ""]) }))
       .rejects.toThrow("扫描件");
+  });
+
+  it('uses OCR for scans and preserves page offsets after normalization', async () => {
+    ocr.mockResolvedValue(['中文第一页\r\n内容', '', 'Third page']);
+    const parsed = await parseKnowledgeFile({ fileName: 'scan.pdf', kind: 'pdf', bytes: buildPdf(['', '', '']) });
+    expect(parsed.content).toBe('中文第一页\n内容\n\nThird page');
+    expect(parsed.ocrUsed).toBe(true);
+    expect(ocr).toHaveBeenCalledWith(expect.any(Uint8Array), 3);
+    const thirdStart = parsed.content.indexOf('Third');
+    expect(parsed.pageOffsets).toEqual([0, 8, thirdStart]);
+    expect(pageRangeForSpan(parsed.pageOffsets, thirdStart, thirdStart + 5)).toEqual({ pageStart: 3, pageEnd: 3 });
+  });
+
+  it('does not OCR PDFs with an existing text layer', async () => {
+    await parseKnowledgeFile({ fileName: 'text.pdf', kind: 'pdf', bytes: buildPdf(['Native text']) });
+    expect(ocr).not.toHaveBeenCalled();
   });
 
   it("rejects a real PDF over 200 pages before attempting text extraction", async () => {

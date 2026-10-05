@@ -17,6 +17,7 @@ import {
 import { failedSyncResult, indexSourceDocument, type SyncOptions, type SyncResult } from './sync';
 import { prepareVisualGeneration, visualRefsInSpan } from './visual-assets';
 import { assetRef } from './visual-types';
+import { knowledgeImageMime, normalizeKnowledgeImage } from './image-files';
 
 export const KNOWLEDGE_FILE_BUCKET = 'knowledge-files';
 export const KNOWLEDGE_FILE_SIGNED_URL_TTL_SECONDS = 10 * 60;
@@ -96,6 +97,7 @@ export async function uploadKnowledgeFile(input: {
   let kind: KnowledgeFileKind;
   try {
     kind = detectKnowledgeFileKind(fileName, input.bytes);
+    if (kind === 'image') await normalizeKnowledgeImage(input.bytes, knowledgeImageMime(fileName, input.bytes));
   } catch (error) {
     throw new KnowledgeFileError(error instanceof Error ? error.message : String(error), 415);
   }
@@ -113,7 +115,7 @@ export async function uploadKnowledgeFile(input: {
 
   const fileId = randomUUID();
   const storagePath = `${input.userId}/${fileId}/${storageObjectName(fileName, kind)}`;
-  const mimeType = MIME_BY_KIND[kind];
+  const mimeType = kind === 'image' ? knowledgeImageMime(fileName, input.bytes) : MIME_BY_KIND[kind];
   const { error: uploadError } = await supabase.storage
     .from(KNOWLEDGE_FILE_BUCKET)
     .upload(storagePath, input.bytes, { contentType: mimeType, upsert: false });
@@ -228,6 +230,7 @@ export async function syncKnowledgeFile(
         size_bytes: file.size_bytes,
         file_sha256: file.sha256,
         page_count: parsed.pageOffsets?.length,
+        ...(parsed.ocrUsed ? { text_extraction: 'ocr', ocr_languages: 'chi_sim+eng' } : {}),
         ...(generation ? { source_version: file.sha256, visual_status: generation.status,
           visual_warnings: [...(parsed.warnings ?? []), ...generation.warnings] } : {}),
       },
@@ -297,6 +300,16 @@ export async function deleteKnowledgeFile(userId: string, fileId: string) {
     console.warn(`[knowledge-files] Storage 对象删除失败 ${storagePath}: ${storageError.message}`);
   }
   return true;
+}
+
+export async function readKnowledgeTextFile(userId: string, fileId: string) {
+  const file = await getKnowledgeFile(userId, fileId);
+  if (!file || !['markdown', 'text', 'html'].includes(file.file_kind)) return null;
+  const { data, error } = await getSupabase().storage
+    .from(KNOWLEDGE_FILE_BUCKET)
+    .download(file.storage_path);
+  if (error || !data) throw new Error(`读取文件失败: ${error?.message ?? '空响应'}`);
+  return { fileName: file.file_name, bytes: new Uint8Array(await data.arrayBuffer()) };
 }
 
 export async function createKnowledgeFileSignedUrl(userId: string, fileId: string) {

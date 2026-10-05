@@ -4,6 +4,8 @@
 
 用户在「知识库 → 数据源」上传 PDF / Markdown / TXT / HTML / DOCX，后台解析为 Markdown 后，复用 Notion 的切块、Embedding、原子写入与检索链路。回答引用可点开原文件，PDF chunk 带页码。
 
+图片扩展（2026-10-05）：支持 PNG、JPG/JPEG、WebP、GIF、BMP、TIFF/TIF，需执行 `docs/schemas/migrations/20261005-rag-image-files.sql` 放开文件类型约束和 Storage MIME 白名单。默认本地中英文 OCR；未识别到文字时提示开启视觉索引，不把文件名当成正文成功入库。视觉索引沿用现有付费确认入口。图片限制为 1600 万像素，GIF/WebP 动图和多页 TIFF 仅处理首帧/首页；BMP 支持常见未压缩编码。OCR/模型输入统一旋转校正、缩放为 JPEG，原文件仍保留在私有 Storage。部署需要安装新增 sharp/bmp-js 依赖及已有 Tesseract 中英文语言包。
+
 ## 1. 核心概念
 
 ### 1.1 「读取层」与「索引层」分离
@@ -80,6 +82,7 @@ export type SourceDocument = {
 - `detectKnowledgeFileKind`：扩展名决定类型，再用文件头校验。PDF 文件头是 `%PDF`；DOCX 是 zip，文件头为 `PK\x03\x04`；文本类文件前 8KB 不能出现 NUL。这样可以挡住改了扩展名的二进制文件。
 - `parseKnowledgeFile`：md 和 txt 直接解码（去 BOM、统一换行）；html 用 turndown；pdf 用 unpdf 按页提取；docx 先用 mammoth 转 HTML，再用 turndown 转 Markdown。专用 table 规则保留表头、行列、空单元格及单元格内格式；没有表头的 DOCX 表格补空表头，正文行不会被吞掉。PDF proxy 在 `finally` 中调用 `loadingTask.destroy()`，成功和提取失败均释放资源。
 - 解析器都通过 `await import()` 懒加载，只在 worker 真正处理到对应类型时才加载 pdf.js 等重依赖。
+- PDF 整份没有文本层时，自动通过 Poppler 逐页渲染，再用 Tesseract 的 `chi_sim+eng` 语言包识别。OCR 保留物理页码偏移，元数据记录 `text_extraction: 'ocr'`；不调用视觉模型。混合型 PDF 暂时仍只提取已有文本层。OCR 失败时，已启用视觉索引的文件仍可回退到视觉处理并记录警告。
 
 ### 2.3 删除与竞态（lib/knowledge/files.ts）
 
@@ -103,6 +106,7 @@ export type SourceDocument = {
 - 单个原文件最多 20MB；multipart 请求体（含所有字段与边界）最多 21MB。
 - 请求体在读取流时累计字节数，超限立即终止并取消上游。`Content-Length` 仅用于提前拒绝，缺失或虚报不能绕过流式限制。超过单文件上限也在 `arrayBuffer()` 前拒绝。
 - PDF 最多 200 页，在文档加载后、提取正文前检查；超限时仍释放 PDF 资源。
+- OCR 逐页串行运行，单页识别最多 60 秒，整份 OCR 最多 10 分钟，文本最多 2,000,000 字符。临时图片在成功和失败后均删除，Tesseract 限制为单线程。
 - DOCX 最多 2,000 个 ZIP 条目，单条目解压后最多 16MB（`word/media/*` 图片只受总量约束），总解压量最多 64MB。在调用 Mammoth 前使用 yauzl 逐条流式解压校验，丢弃验证内容，不累积解压缓冲区。目录声明的大小与实际输出均受检查，伪造小尺寸、加密条目和不支持的压缩格式会被拒绝。
 - 现有解析后 2,000,000 字符上限继续保留。这些限额不替代未来的解析超时、进程内存和用户并发限制。
 
@@ -159,7 +163,7 @@ URL 校验直接用 `new URL(value)`：不传 base 时，相对路径和锚点�
 ## 5. 后续可做
 
 - 文件替换（新版本可用前保留旧版本）、启用/停用开关；
-- 扫描版 PDF 走 OCR；表格类文件（xlsx、csv）；
+- 混合型 PDF 的无文本页补充 OCR；表格类文件（xlsx、csv）；
 - 解析超时及独立进程的内存限制；
 - 解析任务的用户级并发限制；
 - 引用卡片展示页码（metadata 中已有 `page_start/page_end`）和链接（`metadata.links`）；

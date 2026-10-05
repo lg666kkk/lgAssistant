@@ -1,0 +1,10 @@
+[Unit]
+Description=Process Personal Assistant knowledge ingestion queue
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/personal-assistant/deploy/systemd/scheduler-tick.sh rag-ingestion
+TimeoutStartSec=930

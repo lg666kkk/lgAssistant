@@ -22,6 +22,12 @@ import { NotionConnectionPanel } from "./notion-connection-panel";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
 
 type KnowledgeTab = "documents" | "sources" | "tasks" | "processing" | "settings";
+type SourceTab = "notion" | "files";
+
+const sourceTabs: Array<{ id: SourceTab; label: string }> = [
+  { id: "notion", label: "Notion" },
+  { id: "files", label: "文件上传" },
+];
 
 const knowledgeTabs: Array<{ id: KnowledgeTab; label: string; icon: LucideIcon }> = [
   { id: "documents", label: "文档", icon: Files },
@@ -109,6 +115,24 @@ type IngestionJob = {
   updated_at: string;
 };
 
+const ingestionStatusTags: Record<string, { label: string; className: string }> = {
+  queued: { label: "排队中", className: "bg-sky-700 text-white" },
+  running: { label: "处理中", className: "bg-blue-600 text-white" },
+  retry_wait: { label: "等待重试", className: "bg-amber-400 text-zinc-950" },
+  completed: { label: "已完成", className: "bg-emerald-700 text-white" },
+  dead: { label: "失败", className: "bg-rose-600 text-white" },
+  cancelled: { label: "已取消", className: "bg-zinc-600 text-white" },
+};
+
+function IngestionStatusTag({ status }: { status: string }) {
+  const tag = ingestionStatusTags[status] ?? { label: status, className: "bg-zinc-600 text-white" };
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium leading-4 ${tag.className}`}>
+      {tag.label}
+    </span>
+  );
+}
+
 function SourceBadge({ sourceType, label }: { sourceType: "notion" | "document"; label?: string }) {
   const isFile = sourceType === "document";
   return (
@@ -178,6 +202,7 @@ function eventTone(event: SyncEvent) {
 export function KnowledgeCenter() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<KnowledgeTab>("documents");
+  const [sourceTab, setSourceTab] = useState<SourceTab>("notion");
   const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [wikiEdgeCount, setWikiEdgeCount] = useState(0);
@@ -526,13 +551,45 @@ export function KnowledgeCenter() {
 
         {activeTab === "sources" && (
           <div className="space-y-5">
+            <div data-guest-browse role="tablist" aria-label="数据源类型" className="inline-flex max-w-full gap-1 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
+              {sourceTabs.map((tab, index) => (
+                <button
+                  key={tab.id}
+                  id={`knowledge-source-tab-${tab.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={sourceTab === tab.id}
+                  aria-controls={`knowledge-source-panel-${tab.id}`}
+                  tabIndex={sourceTab === tab.id ? 0 : -1}
+                  onClick={() => setSourceTab(tab.id)}
+                  onKeyDown={(event) => {
+                    let nextIndex = index;
+                    if (event.key === "ArrowRight") nextIndex = (index + 1) % sourceTabs.length;
+                    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + sourceTabs.length) % sourceTabs.length;
+                    else if (event.key === "Home") nextIndex = 0;
+                    else if (event.key === "End") nextIndex = sourceTabs.length - 1;
+                    else return;
+                    event.preventDefault();
+                    const nextTab = sourceTabs[nextIndex].id;
+                    setSourceTab(nextTab);
+                    document.getElementById(`knowledge-source-tab-${nextTab}`)?.focus();
+                  }}
+                  className={`min-h-11 rounded-md px-5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${sourceTab === tab.id ? "bg-zinc-800 text-cyan-200 shadow-sm" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div
+              id="knowledge-source-panel-notion"
+              role="tabpanel"
+              aria-labelledby="knowledge-source-tab-notion"
+              hidden={sourceTab !== "notion"}
+              className="space-y-5"
+            >
             <NotionConnectionPanel
               onConfigChange={handleNotionConfigChange}
-            />
-
-            <KnowledgeFilePanel
-              enabled={Boolean(user)}
-              onChanged={() => { loadPages(); loadIngestionJobs(); }}
             />
 
         <section className="rounded-lg border border-zinc-800 bg-zinc-950">
@@ -645,6 +702,19 @@ export function KnowledgeCenter() {
             </div>
           )}
         </section>
+            </div>
+
+            <div
+              id="knowledge-source-panel-files"
+              role="tabpanel"
+              aria-labelledby="knowledge-source-tab-files"
+              hidden={sourceTab !== "files"}
+            >
+              <KnowledgeFilePanel
+                enabled={Boolean(user)}
+                onChanged={() => { loadPages(); loadIngestionJobs(); }}
+              />
+            </div>
           </div>
         )}
 
@@ -1053,7 +1123,7 @@ export function KnowledgeCenter() {
                           <SourceBadge sourceType={job.page_id.startsWith("file:") ? "document" : "notion"} />{" "}
                           {job.page_id}
                         </td>
-                        <td className="px-4 py-3 text-zinc-300">{job.status}</td>
+                        <td className="px-4 py-3"><IngestionStatusTag status={job.status} /></td>
                         <td className="px-4 py-3 text-zinc-500">{job.attempts}/{job.max_attempts}</td>
                         <td className="px-4 py-3 text-zinc-500">{new Date(job.updated_at).toLocaleString()}</td>
                         <td className="max-w-72 truncate px-4 py-3 text-xs text-rose-300">{job.last_error ?? "-"}</td>
