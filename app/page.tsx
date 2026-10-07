@@ -5,6 +5,7 @@ import { useChatManager } from "@web/features/chat/hooks/use-chat-manager";
 import { useContextPreview } from "@web/features/chat/hooks/use-context-preview";
 import { useLlmCatalog } from "@web/features/connections/hooks/use-llm-catalog";
 import { ChatInput } from "@web/features/chat/components/chat-input";
+import { skillReference, type InstalledSkill, parseSlashCommand } from "@web/features/chat/model/slash-commands";
 import { ChatThread } from "@web/features/chat/components/chat-thread";
 import { SiteFooter } from "@web/layout/site-footer";
 import { ImagePreviewDialog, type PreviewImage } from "@web/features/chat/components/image-preview-dialog";
@@ -100,6 +101,8 @@ export default function Home() {
   } = useChatManager();
 
   const [input, setInput] = useState("");
+  const [selectedSkill, setSelectedSkill] = useState<InstalledSkill | null>(null);
+  useEffect(() => { setSelectedSkill(null); }, [activeId, user?.id]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeCapability, setActiveCapability] = useState<PrimaryCapability>("chat");
   const [activeConnectionTab, setActiveConnectionTab] =
@@ -160,7 +163,7 @@ export default function Home() {
     sessionId: activeSession?.id,
     modelId: selectedModel,
     webSearchEnabled,
-    draftText: input,
+    draftText: selectedSkill ? `${skillReference(selectedSkill)} ${input}` : input,
     imageCount: attachments.length,
     isRunning: isAgentRunning,
   });
@@ -208,6 +211,14 @@ export default function Home() {
     sessionScrollPositionsRef.current.set(activeId, container.scrollTop);
   }, [activeCapability, activeId, historyLoaded]);
 
+  const handleCompact = async () => {
+    if (!requireLogin() || !activeSession || !selectedModel || historyLoading) return;
+    if (!activeSession.isRunning && !activeSession.compacting) setInput("");
+    moveSessionToTop(activeSession.id);
+    await activeSession.compactContext(selectedModel, rerender);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
   const handleSend = async () => {
     if (!requireLogin()) return;
     if (
@@ -218,7 +229,19 @@ export default function Home() {
       || !user
       || !selectedModel
     ) return;
-    const text = input;
+    if (activeSession.compacting) return;
+    const command = parseSlashCommand(input);
+    if (command?.name === "compact") {
+      if (command.args) {
+        activeSession.commandStatus = "/compact 不需要参数，请移除参数后重试。";
+        rerender();
+        return;
+      }
+      await handleCompact();
+      return;
+    }
+    const text = selectedSkill ? `${skillReference(selectedSkill)} ${input}` : input;
+    activeSession.commandStatus = null;
     if (!attachmentsReady) {
       setAttachmentError("请等待图片上传完成，或移除上传失败的图片");
       return;
@@ -234,6 +257,7 @@ export default function Home() {
     });
 
     setInput("");
+    setSelectedSkill(null);
     setAttachments([]);
     setAttachmentError(null);
     setSelectedModel(selectedModel);
@@ -452,6 +476,7 @@ export default function Home() {
     const retainedPaths = new Set(request.attachments.map((attachment) => attachment.storagePath));
     const replacedPaths = attachments.flatMap((attachment) =>
       attachment.storagePath && !retainedPaths.has(attachment.storagePath) ? [attachment.storagePath] : []);
+    setSelectedSkill(null);
     setInput(request.content);
     setAttachments(request.attachments.map((attachment) => ({ ...attachment, uploadStatus: "ready" })));
     setAttachmentError(null);
@@ -643,7 +668,11 @@ export default function Home() {
             />
             <ChatInput
               ref={inputRef}
+              userId={user?.id}
               value={input}
+              selectedSkill={selectedSkill}
+              onSelectSkill={setSelectedSkill}
+              onRemoveSkill={() => setSelectedSkill(null)}
               onChange={setInput}
               webSearchEnabled={webSearchEnabled}
               onWebSearchEnabledChange={setWebSearchEnabled}
@@ -651,6 +680,8 @@ export default function Home() {
                 ? contextUsage
                 : previewContextUsage.usage}
               contextError={isAgentRunning ? null : previewContextUsage.error}
+              commandStatus={activeSession?.commandStatus}
+              commandBusy={activeSession?.compacting}
               selectedModel={selectedModel}
               models={configuredModels}
               modelsLoading={llmCatalogLoading}
@@ -663,6 +694,7 @@ export default function Home() {
               onRemoveAttachment={(id) => void handleRemoveAttachment(id)}
               onRetryAttachment={(id) => void handleRetryAttachment(id)}
               onSend={handleSend}
+              onCompact={() => void handleCompact()}
               onStop={handleStop}
               pendingRequests={activeSession?.pendingRequests}
               onRemovePendingRequest={(id) => activeSession?.removePendingRequest(id, rerender)}
@@ -670,7 +702,8 @@ export default function Home() {
               onEditPendingRequest={handleEditPendingRequest}
               isRunning={Boolean(isAgentRunning || historyLoading)}
               disabled={
-                attachmentsUploading
+                Boolean(activeSession?.compacting)
+                || attachmentsUploading
                 || !attachmentsReady
                 || (Boolean(user) && !selectedModel)
                 || (!input.trim() && attachments.length === 0)

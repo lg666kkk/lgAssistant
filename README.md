@@ -6,7 +6,7 @@
 
 ## 已实现能力
 
-- **多模型对话**：支持用户级 Provider、模型发现、默认模型和工具开关，聊天响应采用流式事件协议。
+- **多模型对话**：支持用户级 Provider、模型发现、默认模型和工具开关，聊天响应采用流式事件协议；支持 [Ollama 本地模型](docs/agent/local-models.md)。
 - **上下文与记忆**：包含会话记忆、长期事实、语义记忆、关键词召回、冲突治理、历史版本和上下文预算。
 - **知识库与 RAG**：支持 Notion 接入、异步摄取、文本切块、向量与关键词混合检索、重排、证据评分和 Wiki 编译。
 - **Agent 工具**：内置时间、计算器、联网搜索、知识检索、待办、LeetCode、记忆召回、定时任务和沙箱技能等工具。
@@ -118,7 +118,7 @@ UPSTASH_REDIS_REST_TOKEN=
 # 值必须是 32 字节内容的 Base64 编码，可用 `openssl rand -base64 32` 生成
 CONFIG_ENCRYPTION_KEY=your_base64_key
 
-# 可选：允许编辑服务端运行时配置和共享 Skill 的登录邮箱，多个邮箱用逗号分隔
+# 可选：允许编辑服务端运行时配置 的登录邮箱，多个邮箱用逗号分隔
 CONFIG_ADMIN_EMAILS=you@example.com
 
 # 可选：启用定时任务 tick 时配置
@@ -144,6 +144,8 @@ docker compose -f docker-compose.dev.yml down
 ```
 
 ## Skill 沙箱
+
+Skill 按登录用户隔离；每个用户可自行上传、安装、启停和删除自己的 Skill，无需管理员邮箱。现有安装根据 `created_by` 归属原创建者；新安装使用用户独立的内部 ID，同名 Skill 不会相互覆盖。列表、聊天读取和沙盒执行均检查用户归属。
 
 Skill 使用 E2B 托管 Sandbox。应用 [E2B 运行迁移](docs/schemas/migrations/20260928-e2b-skill-runtime.sql)和[用户密钥迁移](docs/schemas/migrations/20260928-user-sandbox-config.sql)后，登录用户可在“连接 > 沙盒环境”保存自己的 E2B API Key。默认使用 E2B `base` 模板；需要固定依赖时配置 `E2B_SKILL_TEMPLATE_ID`。部署与运行限制见 [E2B Skill Runtime](docs/architecture/e2b-skill-runtime.md)。
 

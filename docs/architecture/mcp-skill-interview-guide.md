@@ -87,7 +87,7 @@ Web: MCP/Skill 管理页                 Web: Chat
 
 ### 4.2 管理与发布
 
-[Skill 页面](../../apps/web/features/skills/components/skill-center.tsx) 支持导入、启停、编辑元数据、软删除、发布版本和测试 Run。`/api/skills`、`/api/skills/versions` 与 `/api/skills/runs` 都要求登录。当前管理 API 对所有登录用户返回 `canEdit: true`，并按 actor ID 记录写入；它不是管理员专属管理，也不是每人私有 Skill 库。删除保留版本和历史 Run，有活跃或排队 Run 时拒绝删除。
+[Skill 页面](../../apps/web/features/skills/components/skill-center.tsx) 支持导入、启停、编辑元数据、软删除、发布版本和测试 Run。`/api/skills`、`/api/skills/versions` 与 `/api/skills/runs` 都要求登录。管理 API 对所有登录用户返回 `canEdit: true`，并通过 `created_by` 隔离列表、读取和写入。Skill 是用户私有资源；同名安装使用独立内部 ID，沙盒版本和执行也检查所属用户。删除保留版本和历史 Run，有活跃或排队 Run 时拒绝删除。
 
 发布时，应用验证语义版本、`node`/`python` 入口、Profile 对应的服务端镜像 digest、Schema 相对路径和 10 MiB Bundle 上限，计算 SHA-256 后通过数据库 RPC 写入不可变版本。页面使用 Base64 JSON 上传，10 MiB Bundle 会膨胀到约 13.3 MiB；这对反向代理请求体大小有实际要求。数据库迁移在 [sandbox-runtime.sql](../schemas/migrations/20260904-sandbox-runtime.sql) 和 [skill-list-detail.sql](../schemas/migrations/20260905-skill-list-detail.sql)。
 

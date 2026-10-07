@@ -99,7 +99,7 @@ export async function GET(req: Request) {
           mimeType: file.mime_type,
           sizeBytes: file.size_bytes,
           createdAt: file.created_at,
-          visualEnabled: file.visual_enabled === true,
+          visualEnabled: file.file_kind === 'image' || file.visual_enabled === true,
           pageId,
           index: pageById.get(pageId) ?? null,
           job: job ?? null,

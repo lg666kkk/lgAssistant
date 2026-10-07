@@ -16,7 +16,7 @@ export function lexicalTerms(text: string): Set<string> {
 
 export function queryTerms(query: string): Set<string> {
   const normalized = query
-    .replace(/(?:请问|帮我|请帮我|介绍一下|解释一下|什么是|是什么|有哪些|有什么|应该|如何|怎么|怎样|为什么|多少|是否|之间|区别|差异|比较|对比)/g, ' ')
+    .replace(/(?:请问|帮我|请帮我|介绍一下|解释一下|讲解一下|讲解|什么是|是什么|有哪些|有什么|应该|如何|怎么|怎样|为什么|多少|是否|之间|区别|差异|比较|对比)/g, ' ')
     .replace(/\b(?:what|which|how|why|is|are|the|a|an|of|to|and|with|please)\b/gi, ' ');
   return lexicalTerms(normalized);
 }

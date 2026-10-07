@@ -18,6 +18,7 @@ import { failedSyncResult, indexSourceDocument, type SyncOptions, type SyncResul
 import { prepareVisualGeneration, visualRefsInSpan } from './visual-assets';
 import { assetRef } from './visual-types';
 import { knowledgeImageMime, normalizeKnowledgeImage } from './image-files';
+import { ocrKnowledgeImage } from './image-ocr';
 
 export const KNOWLEDGE_FILE_BUCKET = 'knowledge-files';
 export const KNOWLEDGE_FILE_SIGNED_URL_TTL_SECONDS = 10 * 60;
@@ -132,6 +133,7 @@ export async function uploadKnowledgeFile(input: {
       size_bytes: input.bytes.byteLength,
       sha256,
       storage_path: storagePath,
+      visual_enabled: kind === 'image',
     })
     .select('*')
     .single();
@@ -191,12 +193,35 @@ export async function syncKnowledgeFile(
     if (error || !blob) throw new Error(`下载文件失败: ${error?.message ?? '空响应'}`);
     const bytes = new Uint8Array(await blob.arrayBuffer());
 
+    const isImage = file.file_kind === 'image';
+    const useVisuals = isImage || file.visual_enabled === true;
     const parsed = await parseKnowledgeFile({
       fileName: file.file_name,
       kind: file.file_kind,
       bytes,
-      captureVisuals: file.visual_enabled === true,
+      captureVisuals: useVisuals,
+      deferImageOcr: isImage,
     });
+    const generation = useVisuals ? await prepareVisualGeneration({
+      userId: options.userId, fileId: file.id, sourceVersion: file.sha256,
+      sourceBytes: bytes, content: parsed.content, visuals: parsed.visuals ?? [],
+      expectedGeneration: file.active_generation_id ?? null, analyze: true,
+    }) : undefined;
+    if (isImage) {
+      const observation = generation?.assets.find((asset) => asset.analysis_status === 'ready' && asset.description.trim());
+      if (observation) {
+        parsed.content = observation.description;
+        parsed.ocrUsed = false;
+      } else {
+        parsed.warnings ??= [];
+        parsed.warnings.push('视觉模型未配置或分析失败，已回退到 OCR');
+        const image = parsed.visuals?.[0]?.bytes;
+        if (!image) throw new Error('图片解析失败，无法执行 OCR 回退');
+        parsed.content = (await ocrKnowledgeImage(image)).trim();
+        parsed.ocrUsed = true;
+        if (!parsed.content) throw new Error('视觉分析不可用，且 OCR 未识别到文字，请配置视觉模型后重新入库');
+      }
+    }
     options.onEvent?.({
       type: 'page_read',
       pageId,
@@ -209,11 +234,6 @@ export async function syncKnowledgeFile(
       },
     });
 
-    const generation = file.visual_enabled ? await prepareVisualGeneration({
-      userId: options.userId, fileId: file.id, sourceVersion: file.sha256,
-      sourceBytes: bytes, content: parsed.content, visuals: parsed.visuals ?? [],
-      expectedGeneration: file.active_generation_id ?? null, analyze: true,
-    }) : undefined;
     const result = await indexSourceDocument({
       sourceType: 'document',
       pageId,
@@ -231,6 +251,7 @@ export async function syncKnowledgeFile(
         file_sha256: file.sha256,
         page_count: parsed.pageOffsets?.length,
         ...(parsed.ocrUsed ? { text_extraction: 'ocr', ocr_languages: 'chi_sim+eng' } : {}),
+        ...(isImage && !parsed.ocrUsed ? { text_extraction: 'vision', vision_model: generation?.modelId } : {}),
         ...(generation ? { source_version: file.sha256, visual_status: generation.status,
           visual_warnings: [...(parsed.warnings ?? []), ...generation.warnings] } : {}),
       },
@@ -258,7 +279,8 @@ export async function syncKnowledgeFile(
           ...(pages ? { page_start: pages.pageStart, page_end: pages.pageEnd } : {}),
           ...(links.length ? { links } : {}),
           ...(generation ? { source_version: file.sha256, generation_id: generation.id,
-            visual_refs: visualRefsInSpan(generation.assets, chunk.startChar, chunk.endChar, pages?.pageStart, pages?.pageEnd) } : {}),
+            visual_refs: isImage ? generation.assets.map(assetRef)
+              : visualRefsInSpan(generation.assets, chunk.startChar, chunk.endChar, pages?.pageStart, pages?.pageEnd) } : {}),
         };
       },
     }, generation ? { ...options, force: true } : options);

@@ -30,7 +30,7 @@ function fakeDatabase() {
     skill_id: "markdown-check", version: "1.0.0", entrypoint: ["node", "scripts/run.mjs"],
     profile_id: "skill-trusted", e2b_template_id: "base", bundle_sha256: "a".repeat(64),
     bundle: "\\x00", input_schema_path: "schemas/input.json", output_schema_path: "schemas/output.json",
-    sandbox_skills: { enabled: true, deleted_at: null },
+    sandbox_skills: { enabled: true, deleted_at: null, created_by: "user-1" },
   };
   let run: Record<string, any> | null = null;
   const from = (table: string) => {
@@ -49,7 +49,10 @@ function fakeDatabase() {
       then: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => Promise.resolve(result()).then(resolve, reject),
     };
     function result() {
-      if (table === "sandbox_skill_versions") return { data: version, error: null };
+      if (table === "sandbox_skill_versions") {
+        const owner = filters.find(([name]) => name === "sandbox_skills.created_by")?.[1];
+        return { data: owner === version.sandbox_skills.created_by ? version : null, error: null };
+      }
       if (action === "insert") {
         run = { ...patch, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         return { data: { ...run }, error: null };
@@ -79,6 +82,17 @@ describe("E2B Skill runs", () => {
   });
 
   afterEach(() => { delete process.env.E2B_API_KEY; });
+
+  it("rejects executing another user's version before creating a run or sandbox", async () => {
+    const database = fakeDatabase();
+    mocks.getSupabase.mockReturnValue(database);
+    await expect(createSkillRun({
+      userId: "user-2", runId: "foreign-run", idempotencyKey: "foreign",
+      skillId: "markdown-check", skillVersion: "1.0.0", skillInput: {},
+    })).rejects.toThrow("不存在或未启用");
+    expect(database.currentRun()).toBeNull();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
 
   it("runs a published version with internet disabled and stores its result", async () => {
     const database = fakeDatabase();

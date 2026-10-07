@@ -4,7 +4,7 @@ import {
   encryptRuntimeConfigValue,
 } from "@/lib/runtime-config/service";
 import { rememberModelMetadata } from "./model-metadata-cache";
-import { assertPublicProviderUrl } from "./url-safety";
+import { assertLlmProviderUrl } from "./provider-access";
 import { LLM_REASONING_MODES } from "./types";
 import { resolveThinkingMode } from "./reasoning";
 import type {
@@ -263,7 +263,7 @@ export async function createUserLlmProvider(input: {
   models: UserLlmModelDraft[];
 }) {
   const name = validateProviderName(input.name);
-  const baseUrl = await assertPublicProviderUrl(input.baseUrl);
+  const baseUrl = await assertLlmProviderUrl(input.baseUrl);
   const apiKey = input.apiKey.trim();
   if (!apiKey || apiKey.length > 4_000) throw new Error("API Key 不能为空或过长");
   if (input.models.length === 0) throw new Error("至少配置一个模型");
@@ -321,7 +321,7 @@ export async function updateUserLlmProvider(input: {
 }) {
   await requireOwnedProvider(input.userId, input.providerId);
   const name = validateProviderName(input.name);
-  const baseUrl = await assertPublicProviderUrl(input.baseUrl);
+  const baseUrl = await assertLlmProviderUrl(input.baseUrl);
   if (input.models.length === 0) throw new Error("至少配置一个模型");
   const models = input.models.map(validateModelDraft);
   const supabase = getSupabase();

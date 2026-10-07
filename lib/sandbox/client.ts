@@ -57,7 +57,7 @@ export async function createSkillRun(input: {
   skillInput: unknown;
 }): Promise<SandboxRun> {
   if (!input.idempotencyKey || input.idempotencyKey.length > 256) throw new Error("幂等键格式错误");
-  const version = await loadVersion(input.skillId, input.skillVersion);
+  const version = await loadVersion(input.userId, input.skillId, input.skillVersion);
   if (!version.e2b_template_id) throw new Error("旧版 Skill 使用本地镜像，请发布新的 E2B 版本");
   const profile = SANDBOX_PROFILES.find((item) => item.id === version.profile_id);
   if (!profile || profile.templateId !== version.e2b_template_id) {
@@ -162,7 +162,7 @@ async function executeSkillRun(runId: string): Promise<void> {
   try {
     apiKey = await getE2BApiKey(run.user_id);
     await appendExecutionLog(runId, startedAt, "credentials_resolved");
-    const version = await loadVersion(run.skill_id, run.skill_version);
+    const version = await loadVersion(run.user_id, run.skill_id, run.skill_version);
     if (!version.e2b_template_id || version.bundle_sha256 !== run.skill_bundle_sha256) {
       throw new Error("Skill 发布版本与 Run 绑定不匹配");
     }
@@ -259,11 +259,12 @@ async function failRun(runId: string, error: unknown): Promise<void> {
   if (updateError) throw new Error(`记录 Skill Run 失败：${updateError.message}`);
 }
 
-async function loadVersion(skillId: string, version: string): Promise<VersionRow> {
+async function loadVersion(userId: string, skillId: string, version: string): Promise<VersionRow> {
+  if (!userId) throw new Error("运行 Skill 需要用户身份");
   const database = getSupabase();
   const { data, error } = await database.from("sandbox_skill_versions")
-    .select("skill_id,version,entrypoint,profile_id,e2b_template_id,bundle_sha256,bundle,input_schema_path,output_schema_path,sandbox_skills!inner(enabled,deleted_at)")
-    .eq("skill_id", skillId).eq("version", version).single();
+    .select("skill_id,version,entrypoint,profile_id,e2b_template_id,bundle_sha256,bundle,input_schema_path,output_schema_path,sandbox_skills!inner(enabled,deleted_at,created_by)")
+    .eq("skill_id", skillId).eq("version", version).eq("sandbox_skills.created_by", userId).single();
   if (error || !data || !data.sandbox_skills?.enabled || data.sandbox_skills.deleted_at) {
     throw new Error("Skill 版本不存在或未启用");
   }

@@ -235,7 +235,7 @@ export function KnowledgeFilePanel({
             {FORMAT_LABELS.map((label) => (
               <span key={label} className="rounded bg-zinc-900 px-2 py-0.5">{label}</span>
             ))}
-            <span className="px-1 py-0.5">单个文件 ≤ 20MB；图片和扫描 PDF 自动进行中英文 OCR。动图 / 多页 TIFF 仅处理首帧 / 首页；视觉分析需另行开启并产生费用。</span>
+            <span className="px-1 py-0.5">单个文件 ≤ 20MB；图片默认使用已配置的视觉模型分析，模型未配置或分析失败时回退到中英文 OCR。扫描 PDF 自动 OCR，文档视觉分析可另行开启。动图 / 多页 TIFF 仅处理首帧 / 首页。</span>
           </div>
         </div>
         <span className="text-xs text-zinc-500">{files.length} 个文件</span>

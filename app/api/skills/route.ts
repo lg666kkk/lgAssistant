@@ -1,4 +1,4 @@
-import { requireUser, requireConfigAdmin } from "@/lib/auth/server";
+import { requireUser } from "@/lib/auth/server";
 import {
   listConfiguredSkills,
   deleteSkillDefinition,
@@ -14,10 +14,10 @@ export async function GET(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
   try {
-    const skills = await listConfiguredSkills();
+    const skills = await listConfiguredSkills(user.id);
     return Response.json({
       ok: true,
-      canEdit: await requireConfigAdmin(req, user),
+      canEdit: true,
       profiles: SANDBOX_PROFILES.filter((profile) => profile.id === "skill-trusted"),
       skills,
     }, { headers: { "Cache-Control": "no-store" } });
@@ -32,7 +32,6 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
-  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   try {
     const form = await req.formData();
     let files = form.getAll("files").filter((value): value is File => value instanceof File);
@@ -54,7 +53,6 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
-  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   const id = new URL(req.url).searchParams.get("id") ?? "";
   try {
     await deleteSkillDefinition({ id, actorId: user.id });
@@ -70,7 +68,6 @@ export async function DELETE(req: Request) {
 export async function PATCH(req: Request) {
   const user = await requireUser(req);
   if (user instanceof Response) return user;
-  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -81,7 +78,7 @@ export async function PATCH(req: Request) {
     return Response.json({ ok: false, error: "Skill ID、名称和启用状态格式错误" }, { status: 400 });
   }
   try {
-    const existing = await listConfiguredSkills();
+    const existing = await listConfiguredSkills(user.id);
     if (!existing.some((skill) => skill.id === body.id)) {
       return Response.json({ ok: false, error: "请通过上传标准 SKILL.md 导入新 Skill" }, { status: 400 });
     }

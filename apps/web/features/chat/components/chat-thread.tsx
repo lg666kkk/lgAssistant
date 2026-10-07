@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type RefObject } from "react";
 import Image from "next/image";
-import { BookOpen, Image as ImageIcon, Wrench } from "lucide-react";
+import { BookOpen, Image as ImageIcon, ScanLine, Wrench } from "lucide-react";
 import type {
   ExecutionPlanData,
   PlanExecutionControlData,
@@ -52,7 +52,7 @@ export function ChatThread({
 }: ChatThreadProps) {
   const [confirmingToolKey, setConfirmingToolKey] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const requestStartedAt = session?.requestStartedAt ?? null;
+  const requestStartedAt = session?.requestStartedAt ?? session?.compactionStartedAt ?? null;
 
   // Keep the active request duration live without adding a timer to every message.
   useEffect(() => {
@@ -65,6 +65,14 @@ export function ChatThread({
   const loading = session?.loading;
   const streaming = session?.streaming;
   const historyLoading = session?.historyLoading ?? false;
+  useEffect(() => {
+    if (messages?.[messages.length - 1]?.command !== "compact") return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages?.length, session?.compacting, scrollRef]);
 
   return (
     <div
@@ -92,6 +100,24 @@ export function ChatThread({
           <p className="mt-20 text-center text-slate-500">发送一条消息开始对话</p>
         )}
         {messages?.map((message, messageIndex) => {
+          if (message.command === "compact") {
+            const running = message.commandState === "running";
+            return message.role === "user" ? (
+              <div key={message.id ?? `compact-user-${messageIndex}`} className="flex justify-end">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/10 px-3 py-1.5 text-sm font-medium text-cyan-300">
+                  <ScanLine className="h-4 w-4" aria-hidden="true" />压缩上下文
+                </span>
+              </div>
+            ) : (
+              <div key={message.id ?? `compact-result-${messageIndex}`} role="status" aria-live="polite" className="px-4 py-3 text-sm text-slate-400">
+                <div className="pb-3 text-xs text-slate-500">{running ? "处理中" : "已处理"} {formatElapsed(message.durationMs ?? Math.max(0, now - (session?.compactionStartedAt ?? now)))}</div>
+                <div className={`flex items-start gap-2 border-t border-slate-800 pt-3 ${message.commandState === "failed" ? "text-rose-400" : ""}`}>
+                  <ScanLine className={`mt-0.5 h-4 w-4 shrink-0 ${running ? "animate-pulse motion-reduce:animate-none" : ""}`} aria-hidden="true" />
+                  <span>{running ? "正在压缩上下文" : message.content}</span>
+                </div>
+              </div>
+            );
+          }
           const isStreaming = Boolean(
             streaming
             && message.role === "assistant"

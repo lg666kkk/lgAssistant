@@ -96,6 +96,8 @@ const terminalStatuses = new Set(["completed", "failed", "timed_out", "cancelled
 
 export function SkillCenter() {
   const { user } = useAuth();
+  const currentUserId = useRef(user?.id);
+  currentUserId.current = user?.id;
   const [skills, setSkills] = useState<ConfiguredSkill[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [canEdit, setCanEdit] = useState(false);
@@ -123,12 +125,14 @@ export function SkillCenter() {
   const selectedProfile = profiles.find((profile) => profile.id === versionDraft.profileId);
 
   const load = async (preferredId?: string | null) => {
-    if (!user) { setLoading(false); return; }
+    const loadingUserId = user?.id;
+    if (!loadingUserId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
       const response = await authFetch("/api/skills", { cache: "no-store" });
       const data = await response.json();
+      if (currentUserId.current !== loadingUserId) return;
       if (!response.ok || !data.ok) throw new Error(data.error || "加载 Skill 失败");
       const nextSkills = (data.skills ?? []) as ConfiguredSkill[];
       setSkills(nextSkills);
@@ -146,13 +150,21 @@ export function SkillCenter() {
       if (nextSkill) setSkillDraft(toDraft(nextSkill));
       setSelectedVersion(nextSkill?.versions.find((version) => version.templateId)?.version ?? "");
     } catch (loadError) {
+      if (currentUserId.current !== loadingUserId) return;
       setError(loadError instanceof Error ? loadError.message : "加载 Skill 失败");
     } finally {
-      setLoading(false);
+      if (currentUserId.current === loadingUserId) setLoading(false);
     }
   };
 
   useEffect(() => {
+    setSkills([]);
+    setCanEdit(false);
+    setSelectedId(null);
+    setRun(null);
+    setSkillDraft(emptySkill());
+    setNotice(null);
+    setError(null);
     const syncViewFromURL = () => {
       const skillId = new URLSearchParams(window.location.search).get("skillId");
       if (skillId === "new") {
@@ -169,7 +181,7 @@ export function SkillCenter() {
     window.addEventListener("popstate", syncViewFromURL);
     return () => window.removeEventListener("popstate", syncViewFromURL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!run || terminalStatuses.has(run.status)) return;
@@ -436,7 +448,7 @@ export function SkillCenter() {
             <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="text-base font-semibold text-slate-100">Skills</h2>
-                <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill` : "登录后查看 Skill"}</p>
+                <p className="mt-1 text-sm text-slate-500">{user ? `${skills.length} 个 Skill · 仅当前账号可见` : "登录后查看 Skill"}</p>
               </div>
               <div role="tablist" aria-label="Skill 管理方式" className="flex w-full flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-900/70 p-1 sm:w-auto">
                 {([["list", "Skill 列表"], ["upload", "本地上传"], ["terminal", "终端安装"]] as const).filter(([tab]) => canEdit || tab === "list").map(([tab, label]) => (

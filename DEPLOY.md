@@ -32,7 +32,7 @@ chmod 600 .env.production
 `redis://redis:6379`；不需要配置 `UPSTASH_REDIS_REST_URL` 或
 `UPSTASH_REDIS_REST_TOKEN`。
 
-启用运行时配置或共享 Skill 编辑前，将 `CONFIG_ADMIN_EMAILS` 设置为允许管理应用的 Supabase
+启用运行时配置编辑前，将 `CONFIG_ADMIN_EMAILS` 设置为允许管理应用的 Supabase
 登录邮箱，并生成加密主密钥：
 
 ```bash

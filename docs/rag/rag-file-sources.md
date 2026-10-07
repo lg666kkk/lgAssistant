@@ -6,6 +6,8 @@
 
 图片扩展（2026-10-05）：支持 PNG、JPG/JPEG、WebP、GIF、BMP、TIFF/TIF，需执行 `docs/schemas/migrations/20261005-rag-image-files.sql` 放开文件类型约束和 Storage MIME 白名单。默认本地中英文 OCR；未识别到文字时提示开启视觉索引，不把文件名当成正文成功入库。视觉索引沿用现有付费确认入口。图片限制为 1600 万像素，GIF/WebP 动图和多页 TIFF 仅处理首帧/首页；BMP 支持常见未压缩编码。OCR/模型输入统一旋转校正、缩放为 JPEG，原文件仍保留在私有 Storage。部署需要安装新增 sharp/bmp-js 依赖及已有 Tesseract 中英文语言包。
 
+Notion 清除（2026-10-06）：先执行 [20261006-clear-notion-knowledge.sql](../schemas/migrations/20261006-clear-notion-knowledge.sql)，再发布应用。「知识库 → 数据源 → Notion → 清除 Notion」一次点击清除当前用户的密钥、笔记 chunks、历史快照和同步任务，并停用连接。涉及这些笔记的编译 Wiki 页面一并移除，自动知识画像失效后重新生成；上传文件、文件索引和自定义画像保留。清除通过单个事务执行，失败整体回滚。连接 revision 与数据库写入检查防止清除前启动的同步重新入库。接口为 `DELETE /api/knowledge/connections/notion`，只使用认证用户 ID；缺少迁移时返回明确错误。
+
 ## 1. 核心概念
 
 ### 1.1 「读取层」与「索引层」分离

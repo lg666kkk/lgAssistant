@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { promisify } from "node:util";
-import { requireUser, requireConfigAdmin } from "@/lib/auth/server";
+import { requireUser } from "@/lib/auth/server";
 import { importStandardSkill } from "@/lib/sandbox/standard-skill";
 
 export const runtime = "nodejs";
@@ -25,6 +25,7 @@ async function collect(root: string) {
   async function walk(dir: string) {
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
       if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (entry.isSymbolicLink()) throw new Error("Skill 安装包不能包含符号链接");
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) await walk(full);
       else if (entry.name === "SKILL.md") found.push(full);
@@ -36,7 +37,6 @@ async function collect(root: string) {
 
 export async function POST(req: Request) {
   const user = await requireUser(req); if (user instanceof Response) return user;
-  if (!await requireConfigAdmin(req, user)) return Response.json({ error: "只有管理员可以修改共享 Skill" }, { status: 403 });
   let source: string;
   try { source = safeSource((await req.json()).package); } catch (e) { return Response.json({ok:false,error:e instanceof Error?e.message:"安装参数错误"},{status:400}); }
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pa-skill-install-"));
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     let total = 0;
     for (const skillPath of skillPaths) {
       const skillRoot = path.dirname(skillPath); const files: File[] = [];
-      const addFiles = async (folder: string): Promise<void> => { for (const entry of await fs.readdir(folder,{withFileTypes:true})) { const full=path.join(folder,entry.name); if(entry.isDirectory()) await addFiles(full); else { const data=await fs.readFile(full); total += data.byteLength; if(total>MAX_BYTES) throw new Error("安装内容超过 10MiB"); const rel=path.relative(skillRoot,full); files.push(new File([data], rel)); } } };
+      const addFiles = async (folder: string): Promise<void> => { for (const entry of await fs.readdir(folder,{withFileTypes:true})) { if(entry.isSymbolicLink()) throw new Error("Skill 安装包不能包含符号链接"); const full=path.join(folder,entry.name); if(entry.isDirectory()) await addFiles(full); else { const data=await fs.readFile(full); total += data.byteLength; if(total>MAX_BYTES) throw new Error("安装内容超过 10MiB"); const rel=path.relative(skillRoot,full); files.push(new File([data], rel)); } } };
       await addFiles(skillRoot); imported.push(await importStandardSkill({ files, actorId: user.id }));
     }
     return Response.json({ok:true,skills:imported},{status:201});

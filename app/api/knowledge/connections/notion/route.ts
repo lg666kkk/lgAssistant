@@ -2,9 +2,25 @@ import { requireUser } from "@/lib/auth/server";
 import {
   getUserNotionConnection,
   updateUserNotionConnection,
+  clearUserNotionConnection,
 } from "@/lib/knowledge/connections/notion-config";
 
 export const runtime = "nodejs";
+
+export async function DELETE(req: Request) {
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
+  try {
+    return Response.json(await clearUserNotionConnection(user.id), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "清除 Notion 数据失败" },
+      { status: 503 },
+    );
+  }
+}
 
 export async function GET(req: Request) {
   const user = await requireUser(req);

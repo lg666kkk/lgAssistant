@@ -22,9 +22,10 @@ export const listSkillsTool: ToolDefinition = {
   },
   riskLevel: "safe",
   input_schema: { type: "object", properties: {}, additionalProperties: false },
-  execute: async (): Promise<ToolResult> => {
+  execute: async (_value: unknown, context?: ToolExecutionContext): Promise<ToolResult> => {
+    if (!context?.userId) return { ok: false, content: "读取 Skill 需要先登录。", error: "Missing userId" };
     try {
-      const skills = (await listConfiguredSkills())
+      const skills = (await listConfiguredSkills(context.userId))
         .filter((skill) => skill.enabled && (skill.skillMd || skill.versions.length > 0))
         .map((skill) => ({
           id: skill.id,
@@ -76,12 +77,13 @@ export const viewSkillTool: ToolDefinition = {
     required: ["skillId"],
     additionalProperties: false,
   },
-  execute: async (value: unknown): Promise<ToolResult> => {
+  execute: async (value: unknown, context?: ToolExecutionContext): Promise<ToolResult> => {
+    if (!context?.userId) return { ok: false, content: "读取 Skill 需要先登录。", error: "Missing userId" };
     if (!value || typeof value !== "object" || typeof (value as { skillId?: unknown }).skillId !== "string") {
       return { ok: false, content: "skillId 为必填项。", error: "Invalid skillId" };
     }
     try {
-      const skill = await getStandardSkill((value as { skillId: string }).skillId);
+      const skill = await getStandardSkill(context.userId, (value as { skillId: string }).skillId);
       const files = Object.keys(skill.supportFiles);
       return {
         ok: true,

@@ -75,13 +75,15 @@ type VersionRow = {
   output_schema_path: string;
 };
 
-export async function listConfiguredSkills(): Promise<ConfiguredSkill[]> {
+export async function listConfiguredSkills(userId: string): Promise<ConfiguredSkill[]> {
+  if (!userId) throw new Error("读取 Skill 需要用户身份");
   const supabase = getSupabase();
   const [{ data: skills, error: skillError }, { data: versions, error: versionError }] = await Promise.all([
-    supabase.from("sandbox_skills").select("id,name,description,enabled,skill_md,support_files,created_at,updated_at").is("deleted_at", null).order("id"),
+    supabase.from("sandbox_skills").select("id,name,description,enabled,skill_md,support_files,created_at,updated_at").eq("created_by", userId).is("deleted_at", null).order("id"),
     supabase
       .from("sandbox_skill_versions")
-      .select("skill_id,version,runtime,entrypoint,profile_id,e2b_template_id,bundle_sha256,network,input_schema_path,output_schema_path,created_at")
+      .select("skill_id,version,runtime,entrypoint,profile_id,e2b_template_id,bundle_sha256,network,input_schema_path,output_schema_path,created_at,sandbox_skills!inner(created_by)")
+      .eq("sandbox_skills.created_by", userId)
       .order("created_at", { ascending: false }),
   ]);
   if (skillError) throw skillDatabaseError("读取 Skill 配置", skillError.message);
@@ -105,12 +107,14 @@ export async function listConfiguredSkills(): Promise<ConfiguredSkill[]> {
   }));
 }
 
-export async function getStandardSkill(skillId: string) {
+export async function getStandardSkill(userId: string, skillId: string) {
+  if (!userId) throw new Error("读取 Skill 需要用户身份");
   if (!SKILL_ID.test(skillId)) throw new Error("Skill ID 格式错误");
   const { data, error } = await getSupabase()
     .from("sandbox_skills")
     .select("id,name,description,enabled,skill_md,support_files,created_at,updated_at")
     .eq("id", skillId)
+    .eq("created_by", userId)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw skillDatabaseError("读取 Skill 内容", error.message);
@@ -126,6 +130,15 @@ export async function getStandardSkill(skillId: string) {
   };
 }
 
+async function requireOwnedSkill(userId: string, skillId: string) {
+  if (!userId) throw new Error("Skill 操作需要用户身份");
+  const { data, error } = await getSupabase().from("sandbox_skills")
+    .select("id").eq("id", skillId).eq("created_by", userId)
+    .is("deleted_at", null).maybeSingle();
+  if (error) throw skillDatabaseError("校验 Skill 归属", error.message);
+  if (!data) throw new Error("Skill 不存在或无权访问");
+}
+
 export async function upsertSkillDefinition(input: {
   id: string;
   name: string;
@@ -139,6 +152,7 @@ export async function upsertSkillDefinition(input: {
   if (!SKILL_ID.test(id)) throw new Error("Skill ID 只能包含小写字母、数字和连字符，最长 64 位");
   if (!name || name.length > 120) throw new Error("Skill 名称长度必须在 1 到 120 之间");
   if (description.length > 2000) throw new Error("Skill 描述不能超过 2000 字符");
+  await requireOwnedSkill(input.actorId, id);
   const { data, error } = await getSupabase().rpc("upsert_sandbox_skill", {
     p_id: id,
     p_name: name,
@@ -154,6 +168,7 @@ export async function upsertSkillDefinition(input: {
 
 export async function deleteSkillDefinition(input: { id: string; actorId: string }) {
   if (!SKILL_ID.test(input.id)) throw new Error("Skill ID 格式错误");
+  await requireOwnedSkill(input.actorId, input.id);
   const { data, error } = await getSupabase().rpc("delete_sandbox_skill", {
     p_id: input.id,
     p_actor_id: input.actorId,
@@ -208,6 +223,7 @@ export async function publishSkillVersion(input: {
   const bundle = Buffer.from(input.bundleBase64, "base64");
   if (bundle.length < 1 || bundle.length > MAX_BUNDLE_BYTES) throw new Error("Skill Bundle 必须在 1B 到 10MiB 之间");
   const bundleSha256 = createHash("sha256").update(bundle).digest("hex");
+  await requireOwnedSkill(input.actorId, skillId);
   const { data, error } = await getSupabase().rpc("publish_sandbox_skill_version", {
     p_skill_id: skillId,
     p_version: version,

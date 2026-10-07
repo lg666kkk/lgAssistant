@@ -52,6 +52,7 @@ type DiscoveredModel = {
 };
 
 const presets = [
+  { name: "Ollama", baseUrl: "http://localhost:11434/v1", modelId: "" },
   { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
   { name: "OpenAI", baseUrl: "https://api.openai.com/v1", modelId: "gpt-4.1-mini" },
   { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", modelId: "openai/gpt-4.1-mini" },
@@ -89,9 +90,9 @@ function createDraft(preset?: typeof presets[number]): ProviderDraft {
   return {
     name: preset?.name ?? "",
     baseUrl: preset?.baseUrl ?? "",
-    apiKey: "",
+    apiKey: preset?.name === "Ollama" ? "ollama" : "",
     enabled: true,
-    models: [createModel(preset?.modelId)],
+    models: [{ ...createModel(preset?.modelId), supportsTools: preset?.name !== "Ollama" }],
   };
 }
 
@@ -313,7 +314,7 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
     const existingIds = new Set(draft.models.map((model) => model.modelId.trim()).filter(Boolean));
     const additions = selectedDiscoveredIds
       .filter((modelId) => !existingIds.has(modelId))
-      .map(createDiscoveredModel);
+      .map((modelId) => ({ ...createDiscoveredModel(modelId), supportsTools: draft.name !== "Ollama" }));
     const retained = draft.models.filter((model) => model.modelId.trim());
     setDraft({ ...draft, models: [...retained, ...additions] });
     setExpandedModelIndex(null);
@@ -455,6 +456,11 @@ export function LanguageModelCenter({ catalog, loading, error, onRefresh }: Prop
                 <FormField label="Base URL">
                   <input className={inputClass} value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" />
                 </FormField>
+                {draft.name === "Ollama" && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    连接应用服务端可访问的 Ollama。点击「获取模型列表」选择已安装模型；本地服务无需真实 API Key，使用预填的 ollama 即可。云端应用需要填写服务端可访问的地址。
+                  </p>
+                )}
               </div>
               <FormField label={draft.id ? "API Key（留空保持原值）" : "API Key"}>
                 <div className="relative">

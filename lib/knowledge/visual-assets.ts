@@ -33,14 +33,18 @@ export async function prepareVisualGeneration(input: {
       .eq('id', generationId).eq('user_id', input.userId);
     if (error) throw new Error(`Saving visual progress failed: ${error.message}`);
   };
-  const model = input.analyze ? await resolveKnowledgeVisionModel(input.userId) : null;
+  const warnings: string[] = [];
+  let model = null;
+  if (input.analyze) {
+    try { model = await resolveKnowledgeVisionModel(input.userId); }
+    catch { warnings.push('Vision model configuration unavailable; text extraction fallback will be used'); }
+  }
   const pipeline = `${VISUAL_PIPELINE_VERSION}:${model?.id ?? 'no-model'}`;
   const { error } = await db.from('knowledge_file_generations').insert({
     id: generationId, user_id: input.userId, file_id: input.fileId,
     source_version: input.sourceVersion, pipeline_version: pipeline, status: 'preparing', progress,
   });
   if (error) throw new Error(`Creating visual generation failed: ${error.message}`);
-  const warnings: string[] = [];
   const assets: VisualAsset[] = [];
   let analysisCount = 0;
   let derivedBytes = 0;
@@ -85,7 +89,7 @@ export async function prepareVisualGeneration(input: {
         asset.storage_path = storagePath; asset.mime_type = mime;
         asset.blob_sha256 = createHash('sha256').update(image).digest('hex');
         asset.render_status = 'ready';
-        if (mayAnalyze) {
+        if (mayAnalyze && model) {
           analysisCount++;
           asset.analysis_status = 'failed';
           progress.stage = 'analyzing';

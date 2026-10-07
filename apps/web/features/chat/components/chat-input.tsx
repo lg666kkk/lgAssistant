@@ -1,11 +1,13 @@
 "use client";
 
-import { forwardRef, useEffect, useRef, useState, type ForwardedRef } from "react";
+import { forwardRef, useEffect, useId, useRef, useState, type ForwardedRef } from "react";
+import { type InstalledSkill, matchSlashCommands, skillSlashQuery, searchInstalledSkills } from "../model/slash-commands";
+import { useInstalledSkills } from "../hooks/use-installed-skills";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import Image from "next/image";
 import { type ChatModelId } from "@/lib/agent/models";
 import type { ComposerImageAttachment } from "@/lib/chat/image-storage";
-import { AlertCircle, ImagePlus, LoaderCircle, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertCircle, Box, ImagePlus, LoaderCircle, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import type { ContextUsageEventData } from "@repo/contracts";
 import type { PendingChatRequest } from "../model/chat-session";
 import { ImagePreviewDialog, type PreviewImage } from "./image-preview-dialog";
@@ -14,12 +16,18 @@ import { SiteFooter } from "@web/layout/site-footer";
 import type { UserLlmModel } from "@/lib/llm/types";
 
 type ChatInputProps = {
+  userId?: string;
   value: string;
+  selectedSkill?: InstalledSkill | null;
+  onSelectSkill: (skill: InstalledSkill) => void;
+  onRemoveSkill: () => void;
   disabled?: boolean;
   isRunning?: boolean;
   webSearchEnabled: boolean;
   contextUsage?: ContextUsageEventData | null;
   contextError?: string | null;
+  commandStatus?: string | null;
+  commandBusy?: boolean;
   selectedModel: ChatModelId;
   models: UserLlmModel[];
   modelsLoading?: boolean;
@@ -34,6 +42,7 @@ type ChatInputProps = {
   onRetryAttachment: (id: string) => void;
   onBeforeImageSelect?: () => boolean;
   onSend: () => void;
+  onCompact: () => void;
   onStop: () => void;
   pendingRequests?: PendingChatRequest[];
   onRemovePendingRequest?: (id: string) => void;
@@ -82,12 +91,18 @@ const contextBreakdownLabels: Array<[
 export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
   function ChatInput(
     {
+      userId,
       value,
+      selectedSkill,
+      onSelectSkill,
+      onRemoveSkill,
       disabled = false,
       isRunning = false,
       webSearchEnabled,
       contextUsage,
       contextError,
+      commandStatus,
+      commandBusy = false,
       selectedModel,
       models,
       modelsLoading = false,
@@ -102,6 +117,7 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
       onRetryAttachment,
       onBeforeImageSelect,
       onSend,
+      onCompact,
       onStop,
       pendingRequests = [],
       onRemovePendingRequest,
@@ -113,6 +129,73 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
     const inputRef = useRef<HTMLDivElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
+    const commandMenuId = useId();
+    const [commandIndex, setCommandIndex] = useState(0);
+    const [commandsDismissed, setCommandsDismissed] = useState(false);
+    const skillQuery = skillSlashQuery(value);
+    const catalog = useInstalledSkills(userId, skillQuery !== null);
+    const matches = searchInstalledSkills(catalog.items, skillQuery ?? "");
+    const commands = matchSlashCommands(value);
+    const menuOpen = !commandsDismissed && skillQuery !== null;
+    const menuItems = [...commands.map((command) => ({
+      key: command.name, ...command, disabled: commandBusy || isRunning, value: command.name, skill: undefined,
+    })), ...matches.map((item) => ({
+      key: `skill:${item.id}`, name: `/${item.name}`, label: "Skill",
+      description: item.description, disabled: !item.enabled, value: "", skill: item,
+    }))];
+    const activeCommandIndex = Math.min(commandIndex, Math.max(0, menuItems.length - 1));
+    useEffect(() => {
+      setCommandIndex(0);
+      setCommandsDismissed(false);
+    }, [value]);
+    useEffect(() => {
+      if (menuOpen) document.getElementById(`${commandMenuId}-${activeCommandIndex}`)?.scrollIntoView({ block: "nearest" });
+    }, [activeCommandIndex, commandMenuId, menuOpen]);
+    const selectCommand = (item: typeof menuItems[number]) => {
+      if (item.skill) {
+        onSelectSkill(item.skill);
+        onChange("");
+      } else {
+        onCompact();
+      }
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+    };
+
+    const removeSkillAtCaret = () => {
+      const el = inputRef.current;
+      const selection = window.getSelection();
+      if (!selectedSkill || !el || !selection?.isCollapsed || !selection.rangeCount) return false;
+      const caret = selection.getRangeAt(0);
+      if (!el.contains(caret.startContainer)) return false;
+      const beforeCaret = caret.cloneRange();
+      beforeCaret.selectNodeContents(el);
+      beforeCaret.setEnd(caret.startContainer, caret.startOffset);
+      if (beforeCaret.toString().length !== 0) return false;
+      onRemoveSkill();
+      return true;
+    };
+
+    useEffect(() => {
+      const el = inputRef.current;
+      if (!el || !selectedSkill) return;
+      const handleBeforeInput = (event: InputEvent) => {
+        if (!event.isComposing && event.inputType === "deleteContentBackward" && removeSkillAtCaret()) {
+          event.preventDefault();
+        }
+      };
+      el.addEventListener("beforeinput", handleBeforeInput);
+      return () => el.removeEventListener("beforeinput", handleBeforeInput);
+    }, [selectedSkill, onRemoveSkill]);
 
     useEffect(() => {
       const el = inputRef.current;
@@ -184,7 +267,36 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 ))}
               </div>
             )}
-            <div className="px-3.5 py-3">
+            <div className="relative px-3.5 py-3">
+              {commandStatus && <div role="status" aria-live="polite" className="mb-2 flex items-center gap-2 text-sm text-slate-300">
+                {commandBusy && <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+                {commandStatus}
+              </div>}
+              {menuOpen && (
+                <div id={commandMenuId} role="listbox" aria-label="斜杠命令与已安装 Skill" className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-xl">
+                  <div role="presentation" className="px-3 py-2 text-xs text-slate-400">
+                    {!userId ? "登录后查看已安装的 Skill" : catalog.loading ? "正在读取已安装 Skill…" : `已安装 Skill · ${matches.length} 个匹配`}
+                    {catalog.error && <div className="mt-1 text-amber-300">{catalog.error}，关闭命令后重新打开可重试</div>}
+                    {userId && !catalog.loading && !catalog.error && menuItems.length === 0 && <div className="mt-1">没有匹配结果，试试 Skill 名称或描述</div>}
+                  </div>
+                  {menuItems.map((command, index) => (
+                    <button
+                      key={command.key}
+                      id={`${commandMenuId}-${index}`}
+                      type="button"
+                      role="option"
+                      aria-selected={index === activeCommandIndex}
+                      aria-disabled={command.disabled}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => { if (!command.disabled) selectCommand(command); }}
+                      className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${index === activeCommandIndex ? "bg-slate-800 text-cyan-200" : "text-slate-300 hover:bg-slate-800"}`}
+                    >
+                      <span className="w-1/3 shrink-0 break-words font-mono text-sm">{command.name}</span>
+                      <span className="min-w-0"><span className="block text-sm font-medium">{command.label}{command.disabled && <span className="ml-2 text-xs text-slate-500">未启用</span>}</span><span className="line-clamp-2 text-xs text-slate-400">{command.description}</span></span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {attachments.length > 0 && (
                 <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                   {attachments.map((attachment) => (
@@ -250,6 +362,13 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                   ))}
                 </div>
               )}
+              <div className="flex min-h-[72px] flex-wrap items-start gap-2">
+                {selectedSkill && (
+                  <span className="mt-1 inline-flex max-w-full shrink-0 items-center gap-1 rounded-md bg-cyan-500/10 px-1.5 py-0.5 text-xs font-medium leading-5 text-cyan-300" aria-label={`已选择 Skill：${selectedSkill.name}`}>
+                    <Box className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 break-words">{selectedSkill.name}</span>
+                  </span>
+                )}
               <div
                 ref={(node) => {
                   inputRef.current = node;
@@ -258,18 +377,46 @@ export const ChatInput = forwardRef<HTMLDivElement, ChatInputProps>(
                 role="textbox"
                 aria-label="消息内容"
                 aria-multiline="true"
+                aria-controls={menuOpen ? commandMenuId : undefined}
+                aria-expanded={menuOpen}
+                aria-haspopup="listbox"
+                aria-activedescendant={menuOpen && menuItems.length ? `${commandMenuId}-${activeCommandIndex}` : undefined}
                 contentEditable
                 suppressContentEditableWarning
-                data-placeholder="给个人知识助手发送消息"
+                data-placeholder={selectedSkill ? "输入任务内容" : "给个人知识助手发送消息，输入 / 查看命令"}
                 onInput={(e) => onChange(e.currentTarget.innerText)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  if (e.key === "Backspace" && removeSkillAtCaret()) {
+                    e.preventDefault();
+                    return;
+                  }
+                  if (menuOpen && !e.shiftKey) {
+                    if (menuItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                      e.preventDefault();
+                      setCommandIndex((activeCommandIndex + (e.key === "ArrowDown" ? 1 : -1) + menuItems.length) % menuItems.length);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setCommandsDismissed(true);
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      const item = menuItems[activeCommandIndex];
+                      if (item && !item.disabled) selectCommand(item);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     onSend();
                   }
                 }}
-                className="max-h-48 min-h-[72px] overflow-y-auto whitespace-pre-wrap break-words text-base leading-6 text-slate-100 outline-none empty:before:text-slate-500 empty:before:content-[attr(data-placeholder)] sm:text-sm"
+                className={`max-h-48 min-h-[72px] min-w-[8rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words text-base leading-6 text-slate-100 outline-none empty:before:text-slate-500 empty:before:content-[attr(data-placeholder)] sm:text-sm sm:leading-6 ${selectedSkill ? "py-1" : ""}`}
               />
+              </div>
               <div className="mt-3 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <button

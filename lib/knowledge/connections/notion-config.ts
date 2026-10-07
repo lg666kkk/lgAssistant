@@ -18,6 +18,7 @@ type NotionConnectionRow = {
   settings: {
     defaultRecursive?: boolean;
     maxDepth?: number;
+    clearedAt?: string;
   } | null;
   revision: number;
   last_test_status: "success" | "failed" | null;
@@ -85,6 +86,20 @@ export async function getUserNotionConnection(userId: string): Promise<UserNotio
   };
 }
 
+/** Clear credentials and imported Notion data in a single database transaction. */
+export async function clearUserNotionConnection(userId: string) {
+  const { data, error } = await getSupabase().rpc("clear_user_notion_knowledge", {
+    p_user_id: userId,
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new Error("请先执行 20261006-clear-notion-knowledge.sql 数据库迁移");
+    }
+    throw new Error(`清除 Notion 数据失败: ${error.message}`);
+  }
+  return { config: await getUserNotionConnection(userId), counts: data };
+}
+
 export async function resolveUserNotionConnection(
   userId: string,
 ): Promise<ResolvedUserNotionConnection> {
@@ -130,6 +145,7 @@ export async function updateUserNotionConnection(input: {
     provider: PROVIDER,
     enabled: input.enabled,
     settings: {
+      ...(existing?.settings?.clearedAt ? { clearedAt: existing.settings.clearedAt } : {}),
       defaultRecursive: input.defaultRecursive,
       maxDepth: boundedDepth(input.maxDepth),
     },

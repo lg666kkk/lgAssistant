@@ -192,7 +192,7 @@ function buildAttempt(input: {
   };
 }
 
-const WEAK_EVIDENCE_NOTICE = "证据提示：以下候选通过了最低相关性要求，但整体证据充分性不足。只能保守引用，并明确说明不确定性。";
+const WEAK_EVIDENCE_NOTICE = "证据提示：以下候选通过了最低相关性要求，但整体证据充分性不足。只能保守引用，并明确说明不确定性。检索不完整不代表文档不存在，不得断言知识库没有某篇文档。";
 
 /** Matched children precede surrounding text so prefix truncation cannot lose the hit. */
 function matchedContext(result: SearchResult, siblings: SearchResult[], maxTokens: number) {
@@ -304,6 +304,11 @@ function plannedQueries(query: string, plan?: RetrievalPlan) {
   for (const step of plan?.steps ?? []) {
     if (step.source === "knowledge" && step.query.trim()) queries.add(step.query.trim());
   }
+  // A model-initiated search may have no knowledge steps in the routed plan.
+  // Retry the user's actual question rather than the same expanded keyword list.
+  if (plan && !plan.steps.some((step) => step.source === "knowledge") && plan.standaloneQuery.trim()) {
+    queries.add(plan.standaloneQuery.trim());
+  }
   if (queries.size === 0) queries.add(query.trim());
   return Array.from(queries).filter(Boolean).slice(0, plan?.maxAttempts ?? 2);
 }
@@ -346,7 +351,7 @@ async function withSearchAttemptTimeout<T>(input: {
 }
 
 const BASE_SEARCH_NOTES_DESCRIPTION =
-  "在用户个人知识库中检索内容。这不是默认检索步骤：只有用户明确要求查知识库、笔记、文档、Notion、过往记录（含“我之前写的/记的/整理的/收藏的”这类说法），或当前问题的实体与主题明显命中本描述中的知识库画像时才调用；普通事实、编程、计算、写作、翻译和公开实时信息问题不要调用。不确定是否命中画像时，优先直接回答或向用户澄清，不要为了保险而检索。调用时把 query 写成当前问题的核心主题和关键实体，不要使用过宽泛的词。调用受显式 Retrieval Router、Query Planner 和 Evidence Grader 约束；最多执行两次同阈值 query。会回传通过最低接受线的证据并标记整体充分性，回答时使用 [evidenceId] 引用。公开实时信息请使用 web_search。";
+  "在用户个人知识库中检索内容。这不是默认检索步骤：只有用户明确要求查知识库、笔记、文档、Notion、过往记录（含“我之前写的/记的/整理的/收藏的”这类说法），或当前问题的实体与主题明显命中本描述中的知识库画像时才调用；普通事实、编程、计算、写作、翻译和公开实时信息问题不要调用。不确定是否命中画像时，优先直接回答或向用户澄清，不要为了保险而检索。调用时把 query 写成当前问题的核心主题和关键实体，不要使用过宽泛的词。调用受显式 Retrieval Router、Query Planner 和 Evidence Grader 约束；最多执行两次同阈值 query。会回传通过最低接受线的证据并标记整体充分性，回答时使用 [evidenceId] 引用。检索结果不是完整文档目录，没命中或证据不足只能说本次未检索到足够证据，不能断言知识库不存在某篇文档。公开实时信息请使用 web_search。";
 
 export function createSearchNotesTool(options: {
   knowledgeProfile?: string;
@@ -442,6 +447,9 @@ export function createSearchNotesTool(options: {
         let finalGrade = gradeKnowledgeEvidence(parsed.query, [], []);
         const maxAttempts = options.retrievalPlan?.maxAttempts ?? 2;
         const multiHop = options.retrievalPlan?.queryType === "multi-hop";
+        // Query expansion helps recall; its extra terms are not user requirements.
+        const evidenceQuery = !multiHop && options.retrievalPlan?.standaloneQuery.trim()
+          ? options.retrievalPlan.standaloneQuery : parsed.query;
         const hopGrades: typeof finalGrade[] = [];
         const hopResponses: Array<{ query: string; results: SearchResult[] }> = [];
         const searchStartedAt = Date.now();
@@ -503,7 +511,7 @@ export function createSearchNotesTool(options: {
           mergedResults = mergeSearchResults(mergedResults, response.results);
           const evidenceItems = createKnowledgeEvidenceItems(mergedResults);
           finalGrade = gradeKnowledgeEvidence(
-            parsed.query,
+            evidenceQuery,
             mergedResults,
             evidenceItems.map((item) => item.evidenceId),
           );
@@ -595,7 +603,7 @@ export function createSearchNotesTool(options: {
             const evidence = visibleByChunk.get(result.id);
             return evidence ? [{ ...result, content: evidence.content, parentContent: undefined }] : [];
           });
-          finalGrade = gradeKnowledgeEvidence(parsed.query, visibleResults,
+          finalGrade = gradeKnowledgeEvidence(evidenceQuery, visibleResults,
             visibleResults.map((result) => visibleByChunk.get(result.id)!.evidenceId));
           if (multiHop) {
             const visibleHopGrades = hopResponses.map((hop) => {

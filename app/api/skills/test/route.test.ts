@@ -55,17 +55,17 @@ function jsonRequest(method: string, body: unknown) {
   });
 }
 
-describe("shared skill routes require administrator privileges for writes", () => {
+describe("user skill routes follow the logged-in user", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.requireUser.mockResolvedValue({ id: "user-1" });
-    mocks.requireConfigAdmin.mockResolvedValue(true);
+    mocks.requireConfigAdmin.mockResolvedValue(false);
     mocks.listConfiguredSkills.mockResolvedValue([skillDraft]);
     mocks.upsertSkillDefinition.mockResolvedValue(skillDraft);
     mocks.publishSkillVersion.mockResolvedValue({ skillId: "markdown-check", version: "1.0.0" });
   });
 
-  it("exposes editing to administrators", async () => {
+  it("exposes editing to every logged-in user", async () => {
     const skills = [skillDraft, { ...skillDraft, id: "enabled-skill", enabled: true }];
     mocks.listConfiguredSkills.mockResolvedValue(skills);
 
@@ -73,20 +73,26 @@ describe("shared skill routes require administrator privileges for writes", () =
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, canEdit: true, skills });
-    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
-  it("keeps the shared catalog readable without granting edit permission", async () => {
-    mocks.requireConfigAdmin.mockResolvedValue(false);
-    expect(await (await GET(new Request("http://localhost/api/skills"))).json()).toMatchObject({ canEdit: false });
+  it("loads only the logged-in user's catalog", async () => {
+    const response = await GET(new Request("http://localhost/api/skills?userId=other-user"));
+    expect(await response.json()).toMatchObject({ canEdit: true });
+    expect(mocks.listConfiguredSkills).toHaveBeenCalledWith("user-1");
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
-  it.each([PATCH, DELETE, POST, IMPORT, INSTALL])("rejects a non-admin write before storage or installation", async (handler) => {
-    mocks.requireConfigAdmin.mockResolvedValue(false);
-    expect((await handler(jsonRequest("POST", skillDraft))).status).toBe(403);
+  it("does not update a skill outside the user's catalog", async () => {
+    mocks.listConfiguredSkills.mockResolvedValue([]);
+    expect((await PATCH(jsonRequest("PATCH", skillDraft))).status).toBe(400);
     expect(mocks.upsertSkillDefinition).not.toHaveBeenCalled();
-    expect(mocks.deleteSkillDefinition).not.toHaveBeenCalled();
-    expect(mocks.publishSkillVersion).not.toHaveBeenCalled();
+  });
+
+  it("permits installation requests without administrator permission", async () => {
+    // Invalid source stops before any subprocess; authorization still succeeds.
+    expect((await INSTALL(jsonRequest("POST", { package: "../bad" }))).status).toBe(400);
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
   it("preserves browser folder paths across multipart serialization", async () => {
@@ -112,7 +118,7 @@ describe("shared skill routes require administrator privileges for writes", () =
       enabled,
       actorId: "user-1",
     });
-    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
   it("deletes a skill using the logged-in actor", async () => {
@@ -120,7 +126,7 @@ describe("shared skill routes require administrator privileges for writes", () =
 
     expect(response.status).toBe(204);
     expect(mocks.deleteSkillDefinition).toHaveBeenCalledWith({ id: "markdown-check", actorId: "user-1" });
-    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
   it("publishes a version using the logged-in actor", async () => {
@@ -128,7 +134,7 @@ describe("shared skill routes require administrator privileges for writes", () =
 
     expect(response.status).toBe(201);
     expect(mocks.publishSkillVersion).toHaveBeenCalledWith({ ...versionDraft, actorId: "user-1" });
-    expect(mocks.requireConfigAdmin).toHaveBeenCalled();
+    expect(mocks.requireConfigAdmin).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -136,6 +142,8 @@ describe("shared skill routes require administrator privileges for writes", () =
     { method: "PATCH", handler: PATCH },
     { method: "DELETE", handler: DELETE },
     { method: "POST", handler: POST },
+    { method: "POST", handler: IMPORT },
+    { method: "POST", handler: INSTALL },
   ])("rejects unauthenticated $method requests before accessing skill storage", async ({ method, handler }) => {
     const unauthorized = Response.json({ error: "Unauthorized" }, { status: 401 });
     mocks.requireUser.mockResolvedValue(unauthorized);

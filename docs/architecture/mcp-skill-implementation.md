@@ -26,7 +26,7 @@ HTTP 入口 [`app/api/chat/route.ts`](../../app/api/chat/route.ts) 负责认证�
 
 | 维度 | MCP | Skill |
 |---|---|---|
-| 能力来源 | 用户配置的远端 MCP 服务 | 共享 Skill 目录和已发布的沙盒版本 |
+| 能力来源 | 用户配置的远端 MCP 服务 | 用户私有 Skill 目录和已发布的沙盒版本 |
 | Agent 可见工具 | 每个获准远端工具各对应一个 `mcp_...` 工具 | 固定三个内置工具：`list_skills`、`view_skill`、`run_skill` |
 | 执行位置 | 远端 MCP 服务 | 读取说明在应用端；可执行版本在 Sandbox Broker/Worker |
 | 隔离含义 | MCP 是协议，不提供沙盒 | 可执行版本由独立容器运行时隔离 |

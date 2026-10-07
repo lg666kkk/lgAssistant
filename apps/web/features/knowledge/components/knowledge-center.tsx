@@ -213,6 +213,7 @@ export function KnowledgeCenter() {
   const [syncTree, setSyncTree] = useState(true);
   const [syncForce, setSyncForce] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [notionClearing, setNotionClearing] = useState(false);
   const [syncEvents, setSyncEvents] = useState<SyncEvent[]>([]);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [notionConfig, setNotionConfig] = useState<UserNotionConnectionView | null>(null);
@@ -297,7 +298,7 @@ export function KnowledgeCenter() {
 
   async function startSync() {
     const input = notionInput.trim();
-    if (!input || syncing || !notionConfig?.enabled || !notionConfig.tokenConfigured) return;
+    if (!input || syncing || notionClearing || !notionConfig?.enabled || !notionConfig.tokenConfigured) return;
 
     setSyncing(true);
     setSyncError(null);
@@ -396,7 +397,7 @@ export function KnowledgeCenter() {
   }
 
   async function startCompile() {
-    if (compiling) return;
+    if (compiling || notionClearing) return;
 
     setCompiling(true);
     setCompileError(null);
@@ -590,6 +591,17 @@ export function KnowledgeCenter() {
             >
             <NotionConnectionPanel
               onConfigChange={handleNotionConfigChange}
+              busy={syncing || compiling || resetting}
+              onClearingChange={setNotionClearing}
+              onCleared={() => {
+                setNotionInput("");
+                setSyncEvents([]);
+                setSyncError(null);
+                setResetPreview(null);
+                loadPages();
+                loadIngestionJobs();
+                loadKnowledgeProfile();
+              }}
             />
 
         <section className="rounded-lg border border-zinc-800 bg-zinc-950">
@@ -613,7 +625,7 @@ export function KnowledgeCenter() {
                 <button
                   type="button"
                   onClick={startSync}
-                  disabled={Boolean(user) && (syncing || !notionInput.trim() || !notionReady)}
+                  disabled={Boolean(user) && (syncing || notionClearing || !notionInput.trim() || !notionReady)}
                   className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                 >
                   {syncing ? "同步中" : "开始同步"}
@@ -740,7 +752,7 @@ export function KnowledgeCenter() {
               <button
                 type="button"
                 onClick={startCompile}
-                disabled={Boolean(user) && (compiling || pages.length === 0)}
+                disabled={Boolean(user) && (compiling || notionClearing || pages.length === 0)}
                 className="rounded-md bg-violet-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
                 {compiling ? "编译中" : "编译 Wiki"}
@@ -949,7 +961,7 @@ export function KnowledgeCenter() {
               <button
                 type="button"
                 onClick={() => setResetConfirmOpen(true)}
-                disabled={Boolean(user) && (resetting || syncing || compiling || (!resetIncludeRag && !resetIncludeCompiledWiki))}
+                disabled={Boolean(user) && (resetting || syncing || compiling || notionClearing || (!resetIncludeRag && !resetIncludeCompiledWiki))}
                 className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
                 确认清空

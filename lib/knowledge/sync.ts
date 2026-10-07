@@ -733,6 +733,9 @@ export async function indexSourceDocument(
         ...page.pageMetadata,
         ...page.publication?.metadata,
         source_type: page.sourceType,
+        ...(page.sourceType === 'notion' ? {
+          notion_connection_revision: options.notionConnection?.revision,
+        } : {}),
         content_hash: pageContentHash,
         index_version: pageContentHash,
         embedding_model: embeddingModel,

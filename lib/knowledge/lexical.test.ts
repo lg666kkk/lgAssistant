@@ -3,6 +3,9 @@ import { lexicalTerms, queryTerms, termCoverage } from './lexical';
 import { buildKeywordQuery } from './retriever';
 
 describe('Chinese lexical retrieval', () => {
+  it('does not grade explanatory request words as required document content', () => {
+    expect(queryTerms('讲解一下记忆系统')).toEqual(queryTerms('记忆系统'));
+  });
   it('matches Chinese terms across different sentence boundaries', () => {
     const query = queryTerms('定时任务应该怎么设计？');
     expect(query).toContain('定时');

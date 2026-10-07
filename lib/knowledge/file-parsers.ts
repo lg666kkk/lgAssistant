@@ -329,6 +329,8 @@ export async function parseKnowledgeFile(input: {
   kind: KnowledgeFileKind;
   bytes: Uint8Array;
   captureVisuals?: boolean;
+  /** Image ingestion runs vision first; OCR is deferred until vision fails. */
+  deferImageOcr?: boolean;
 }): Promise<ParsedKnowledgeFile> {
   const fallbackTitle = stripExtension(input.fileName);
   let parsed: ParsedKnowledgeFile;
@@ -339,7 +341,7 @@ export async function parseKnowledgeFile(input: {
       const image = await normalizeKnowledgeImage(input.bytes, mime);
       const warnings: string[] = [];
       let content = '';
-      try { content = await ocrKnowledgeImage(image); }
+      try { if (!input.deferImageOcr) content = await ocrKnowledgeImage(image); }
       catch (error) {
         if (!input.captureVisuals) throw error;
         warnings.push(error instanceof Error ? error.message : '图片 OCR 失败');

@@ -1,4 +1,5 @@
 export { runChatUseCase, type RunChatUseCaseInput } from "./run-chat";
+export { compactChatContextUseCase } from "./compact-context";
 export {
   previewChatContextUseCase,
   type PreviewChatContextInput,

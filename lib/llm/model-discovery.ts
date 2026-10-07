@@ -1,4 +1,4 @@
-import { assertPublicProviderUrl, createSafeProviderFetch } from "./url-safety";
+import { assertLlmProviderUrl, createLlmProviderFetch } from "./provider-access";
 
 export type DiscoveredLlmModel = {
   id: string;
@@ -61,10 +61,10 @@ export async function discoverOpenAICompatibleModels(input: {
   baseUrl: string;
   apiKey: string;
 }) {
-  const baseUrl = await assertPublicProviderUrl(input.baseUrl);
+  const baseUrl = await assertLlmProviderUrl(input.baseUrl);
   const apiKey = input.apiKey.trim();
   if (!apiKey || apiKey.length > 4_000) throw new Error("API Key 不能为空或过长");
-  const response = await createSafeProviderFetch(baseUrl, 20_000)(modelsUrl(baseUrl), {
+  const response = await createLlmProviderFetch(baseUrl, 20_000)(modelsUrl(baseUrl), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,

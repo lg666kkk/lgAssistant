@@ -120,6 +120,32 @@ function createTestTool(
   });
 }
 
+describe('expanded query evidence regression', () => {
+  it('keeps relevant diagram evidence for the user question and retries its original topic', async () => {
+    const expanded = 'Agent 记忆 持久化 跨会话 记忆管理 memory';
+    const plan = { ...retrievalPlan(['讲解一下Agent的记忆系统']), route: 'no_retrieval' as const, steps: [] };
+    const diagram = searchResult({ pageTitle: '记忆系统-召回',
+      content: '选中的记忆会被包装后放进 Prompt。访问时间更新不参与排序。',
+      similarity: 0.634, vectorScore: 0.726, keywordScore: 0.111,
+    });
+    const search = vi.fn().mockResolvedValue(response([diagram], 0.5));
+    const output = await createTestTool(search, plan).execute({ query: expanded }, { userId: 'u' });
+    expect((output.data as { results: SearchResult[] }).results.map((item) => item.pageTitle)).toContain('记忆系统-召回');
+    expect(search.mock.calls.map((call) => call[0])).toEqual([expanded, plan.standaloneQuery]);
+    expect(output.content).toContain('不得断言知识库没有某篇文档');
+    expect(output.metadata?.ragThresholdFallback).toBe(false);
+  });
+
+  it('still rejects a title-only match with an unrelated body', async () => {
+    const plan = retrievalPlan(['讲解一下记忆系统']);
+    const search = vi.fn().mockResolvedValue(response([searchResult({
+      pageTitle: '记忆系统-召回', content: '今天晴朗，适合出门。', similarity: 0.95,
+    })], 0.5));
+    const output = await createTestTool(search, plan).execute({ query: 'memory 记忆' }, { userId: 'u' });
+    expect((output.data as { results: SearchResult[] }).results).toHaveLength(0);
+  });
+});
+
 describe("search_notes bounded evidence loop", () => {
   it("does not retry when primary retrieval returns evidence", async () => {
     const searchWithDebug = vi.fn().mockResolvedValue(

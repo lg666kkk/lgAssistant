@@ -1,4 +1,4 @@
-import { createSafeProviderFetch } from "./url-safety";
+import { createLlmProviderFetch } from "./provider-access";
 import type { ResolvedUserLlmModel } from "./types";
 
 function completionUrl(baseUrl: string) {
@@ -7,7 +7,7 @@ function completionUrl(baseUrl: string) {
 
 export async function testUserLlmConnection(model: ResolvedUserLlmModel) {
   const startedAt = Date.now();
-  const response = await createSafeProviderFetch(model.baseUrl, 20_000)(
+  const response = await createLlmProviderFetch(model.baseUrl, 20_000)(
     completionUrl(model.baseUrl),
     {
       method: "POST",

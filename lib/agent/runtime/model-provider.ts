@@ -11,7 +11,7 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import { createModelTextFilter, sanitizeModelText } from "@/lib/agent/runtime/output-sanitizer";
 import { resolveUserLlmModel } from "@/lib/llm/config-service";
-import { createSafeProviderFetch } from "@/lib/llm/url-safety";
+import { createLlmProviderFetch } from "@/lib/llm/provider-access";
 import type { LlmReasoningMode, ResolvedUserLlmModel } from "@/lib/llm/types";
 import { resolveThinkingMode } from "@/lib/llm/reasoning";
 import type { ModelPricingCnyPerMillionTokens } from "@/lib/agent/models";
@@ -250,7 +250,7 @@ async function createProvider(
 ) {
   const runtimeModel = await resolveExecutionModel(model, telemetryMetadata);
   const requestMessages = [...messages];
-  const safeFetch = createSafeProviderFetch(runtimeModel.baseUrl);
+  const safeFetch = createLlmProviderFetch(runtimeModel.baseUrl);
   const observedFetch = telemetryMetadata?.operation === "execution.strategy"
     ? createStrategyDiagnosticFetch(safeFetch, telemetryMetadata.requestId, model)
     : safeFetch;

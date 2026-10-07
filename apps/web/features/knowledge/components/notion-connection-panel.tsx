@@ -12,6 +12,7 @@ import {
   LoaderCircle,
   Save,
   TestTubeDiagonal,
+  Trash2,
 } from "lucide-react";
 import { authFetch } from "@web/lib/auth/client";
 import type { UserNotionConnectionView } from "@/lib/knowledge/connections/types";
@@ -20,8 +21,14 @@ const inputClass = "h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px
 
 export function NotionConnectionPanel({
   onConfigChange,
+  onCleared,
+  onClearingChange,
+  busy = false,
 }: {
   onConfigChange?: (config: UserNotionConnectionView) => void;
+  onCleared?: () => void;
+  onClearingChange?: (clearing: boolean) => void;
+  busy?: boolean;
 }) {
   const { user } = useAuth();
   const [config, setConfig] = useState<UserNotionConnectionView | null>(null);
@@ -32,6 +39,7 @@ export function NotionConnectionPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -89,6 +97,28 @@ export function NotionConnectionPanel({
     }
   };
 
+  const clear = async () => {
+    if (!user || clearing || saving || testing || busy) return;
+    setClearing(true);
+    onClearingChange?.(true);
+    setError(null);
+    setNotice(null);
+    setTestResult(null);
+    try {
+      const response = await authFetch("/api/knowledge/connections/notion", { method: "DELETE" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "清除 Notion 数据失败");
+      applyConfig(payload.config as UserNotionConnectionView);
+      setNotice(`已清除 Notion Key 和 ${payload.counts.pages} 篇 Notion 笔记，连接已停用。`);
+      onCleared?.();
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "清除 Notion 数据失败");
+    } finally {
+      setClearing(false);
+      onClearingChange?.(false);
+    }
+  };
+
   const test = async () => {
     setTesting(true);
     setTestResult(null);
@@ -126,7 +156,7 @@ export function NotionConnectionPanel({
             type="checkbox"
             checked={enabled}
             onChange={(event) => { setEnabled(event.target.checked); setNotice(null); }}
-            disabled={Boolean(user) && (loading || saving)}
+            disabled={Boolean(user) && (loading || saving || testing || clearing)}
             className="h-4 w-4 accent-cyan-600"
           />
           启用
@@ -153,7 +183,7 @@ export function NotionConnectionPanel({
                 placeholder={config?.tokenConfigured ? `已配置 ${config.tokenHint}，留空保持不变` : "secret_... 或 ntn_..."}
                 autoComplete="new-password"
                 className={inputClass}
-                disabled={Boolean(user) && (saving || testing)}
+                disabled={Boolean(user) && (saving || testing || clearing)}
               />
             </label>
             <label className="block">
@@ -166,7 +196,7 @@ export function NotionConnectionPanel({
                 step={1}
                 onChange={(event) => setMaxDepth(Number(event.target.value))}
                 className={inputClass}
-                disabled={Boolean(user) && (saving || testing)}
+                disabled={Boolean(user) && (saving || testing || clearing)}
               />
             </label>
           </div>
@@ -177,7 +207,7 @@ export function NotionConnectionPanel({
                 type="checkbox"
                 checked={defaultRecursive}
                 onChange={(event) => setDefaultRecursive(event.target.checked)}
-                disabled={Boolean(user) && (saving || testing)}
+                disabled={Boolean(user) && (saving || testing || clearing)}
                 className="h-4 w-4 accent-cyan-600"
               />
               新同步默认递归子页面
@@ -186,7 +216,7 @@ export function NotionConnectionPanel({
               <button
                 type="button"
                 onClick={() => void test()}
-                disabled={Boolean(user) && (testing || saving || (!token && !config?.tokenConfigured))}
+                disabled={Boolean(user) && (testing || saving || clearing || (!token && !config?.tokenConfigured))}
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-700 px-3 text-sm text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
               >
                 {testing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <TestTubeDiagonal className="h-4 w-4" />}
@@ -195,13 +225,30 @@ export function NotionConnectionPanel({
               <button
                 type="button"
                 onClick={() => void save()}
-                disabled={Boolean(user) && (saving || testing)}
+                disabled={Boolean(user) && (saving || testing || clearing)}
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan-700 px-4 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
               >
                 {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 保存配置
               </button>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 pt-4">
+            <p id="notion-clear-description" className="text-xs leading-5 text-zinc-400">
+              一键清除当前用户的 Notion Key、已入库笔记及相关历史索引，保留上传文件。清除后无法恢复。
+            </p>
+            <button
+              type="button"
+              onClick={() => void clear()}
+              disabled={!user || loading || saving || testing || clearing || busy}
+              aria-describedby="notion-clear-description"
+              aria-busy={clearing}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-md border border-rose-900 px-3 text-sm text-rose-300 hover:bg-rose-950/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400 disabled:opacity-50"
+            >
+              {clearing ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
+              {clearing ? "清除中…" : "清除 Notion"}
+            </button>
           </div>
 
           {testResult && <ToastNotice tone={testResult.ok ? "success" : "error"}>{testResult.text}</ToastNotice>}

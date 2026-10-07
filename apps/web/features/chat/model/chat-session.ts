@@ -1,5 +1,5 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
-import { getAccessToken } from "@web/lib/auth/client";
+import { authFetch, getAccessToken } from "@web/lib/auth/client";
 import type {
   AgentEvent,
   ChatModelId,
@@ -18,6 +18,8 @@ import {
   type ChatImageAttachment,
 } from "@/lib/agent/multimodal";
 export interface Message {
+  command?: "compact";
+  commandState?: "running" | "completed" | "failed";
   id?: string;
   createdAt?: string;
   role: "user" | "assistant";
@@ -72,6 +74,9 @@ export class ChatSession {
   contextUsage: ContextUsageEventData | null = null;
   selectedModelId: ChatModelId | null = null;
   contextRevision = 0;
+  compacting = false;
+  compactionStartedAt: number | null = null;
+  commandStatus: string | null = null;
   historyLoading = false;
   historyLoaded: boolean;
   hasOlderMessages = false;
@@ -95,6 +100,64 @@ export class ChatSession {
   private modelSaveQueue: Promise<void> = Promise.resolve();
   private modelSaveFailed = false;
 
+  async compactContext(model: ChatModelId, onUpdate: () => void) {
+    if (this.isRunning || this.compacting || this.historyLoading) {
+      this.commandStatus = "请等待当前请求结束后再压缩上下文。";
+      onUpdate();
+      return;
+    }
+    const wasNew = this.isNewSession;
+    const userMessage: Message = { role: "user", content: "/compact", command: "compact" };
+    const responseMessage: Message = { role: "assistant", content: "正在压缩上下文", command: "compact", commandState: "running" };
+    this.messages.push(userMessage, responseMessage);
+    this.compacting = true;
+    this.compactionStartedAt = Date.now();
+    this.commandStatus = null;
+    onUpdate();
+    try {
+      if (wasNew) {
+        await this.sessionManager.createSession(this.title, this.id, model);
+        this.isNewSession = false;
+      }
+      const saved = await this.sessionManager.saveUserMessage(this.id, "/compact", { metadata: { command: "compact" } });
+      userMessage.id = saved.id;
+      userMessage.createdAt = saved.created_at;
+      if (wasNew) {
+        responseMessage.content = "当前会话暂无上下文可压缩。";
+        responseMessage.commandState = "completed";
+        return;
+      }
+      const response = await authFetch("/api/chat/compact", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: this.id, model }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "上下文压缩失败");
+      responseMessage.content = result.message;
+      responseMessage.commandState = "completed";
+      this.contextUsage = null;
+      this.contextRevision += 1;
+    } catch (error) {
+      responseMessage.content = error instanceof Error ? error.message : "上下文压缩失败，请重试。";
+      responseMessage.commandState = "failed";
+    } finally {
+      responseMessage.durationMs = Date.now() - (this.compactionStartedAt ?? Date.now());
+      try {
+        const saved = await this.sessionManager.saveAssistantMessage(this.id, responseMessage.content, {
+          metadata: { command: "compact", commandState: responseMessage.commandState, durationMs: responseMessage.durationMs },
+        });
+        responseMessage.id = saved.id;
+        responseMessage.createdAt = saved.created_at;
+      } catch (error) {
+        console.error("保存上下文压缩结果失败:", error);
+      }
+      this.compacting = false;
+      this.compactionStartedAt = null;
+      this.commandStatus = null;
+      onUpdate();
+    }
+  }
+
   selectModel(model: ChatModelId): Promise<void> {
     if (this.selectedModelId === model && !this.modelSaveFailed) return this.modelSaveQueue;
     this.selectedModelId = model;
@@ -116,6 +179,8 @@ export class ChatSession {
       id: msg.id,
       createdAt: msg.created_at,
       role: msg.role,
+      command: msg.metadata?.command === "compact" ? "compact" : undefined,
+      commandState: msg.metadata?.commandState,
       content: msg.role === "assistant" ? sanitizeModelText(msg.content) : msg.content,
       attachments: msg.metadata?.attachments,
       sources: msg.sources,
@@ -194,6 +259,7 @@ export class ChatSession {
     } = {},
   ) {
     const attachments = options.attachments ?? [];
+    if (this.compacting) return;
     if ((!input.trim() && attachments.length === 0)) return;
     if (this.isRunning) {
       this.pendingRequests.push({
@@ -272,7 +338,7 @@ export class ChatSession {
       }
     }
 
-    if (this.messages.length === 1) {
+    if (this.messages.filter((message) => !message.command).length === 1) {
       this.title = input.trim().slice(0, 20) || attachments[0]?.name.slice(0, 20) || "图片对话";
       // 更新数据库中的标题
       try {

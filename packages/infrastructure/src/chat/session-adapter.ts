@@ -61,6 +61,7 @@ async function restoreSessionHistoryFromDatabase(input: {
     .select("role,content,created_at")
     .eq("user_id", input.userId)
     .eq("session_id", input.sessionId)
+    .is("metadata->>command", null)
     .in("role", ["user", "assistant"])
     .order("created_at", { ascending: false })
     .limit(SESSION_FALLBACK_MESSAGE_LIMIT);
